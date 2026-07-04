@@ -3,12 +3,13 @@
 Network-touching calls (Session.exec / DataQuery.exec+get_response) are mocked --
 this sandbox has no outbound access to search.rcsb.org/data.rcsb.org, and the real
 course environment shouldn't need network access just to run the test suite. See
-.claude/CLAUDE.md "Testing" for the rationale.
+.claude/CLAUDE.md "Testing" for the rationale, and conftest.py for the shared
+mock_data_query/mock_l1_query/fake_graphql_entry/sample_candidate_entry fixtures.
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import pytest
 
 from protein_selector.candidates import (
     CandidateEntry,
@@ -21,150 +22,87 @@ from protein_selector.candidates import (
     search_candidate_ids,
 )
 
+# Same five filters the v0 RCSBLigandFinder query used.
+_L1_ATTRIBUTES = {
+    "rcsb_entry_info.polymer_entity_count_protein",
+    "rcsb_entry_info.deposited_nonpolymer_entity_instance_count",
+    "rcsb_entry_info.deposited_atom_count",
+    "exptl.method",
+    "rcsb_entry_info.resolution_combined",
+}
+
 
 class TestBuildL1Query:
     """build_l1_query is pure (no network) -- test its structure directly."""
 
     def test_default_filters_match_v0_script(self):
-        query = build_l1_query()
-        as_dict = query.to_dict()
+        as_dict = build_l1_query().to_dict()
 
         assert as_dict["type"] == "group"
         assert as_dict["logical_operator"] == "and"
+        attributes = {node["parameters"]["attribute"] for node in as_dict["nodes"]}
+        assert attributes == _L1_ATTRIBUTES
 
-        attributes = {
-            node["parameters"]["attribute"] for node in as_dict["nodes"]
-        }
-        # Same five filters the v0 RCSBLigandFinder query used.
-        assert attributes == {
-            "rcsb_entry_info.polymer_entity_count_protein",
-            "rcsb_entry_info.deposited_nonpolymer_entity_instance_count",
-            "rcsb_entry_info.deposited_atom_count",
-            "exptl.method",
-            "rcsb_entry_info.resolution_combined",
-        }
-
-    def test_custom_thresholds_are_applied(self):
-        query = build_l1_query(
-            max_atoms=1234, max_resolution=1.5, method="ELECTRON MICROSCOPY"
-        )
-        as_dict = query.to_dict()
+    @pytest.mark.parametrize(
+        ("kwargs", "attribute", "expected_value"),
+        [
+            ({"max_atoms": 1234}, "rcsb_entry_info.deposited_atom_count", 1234),
+            ({"max_resolution": 1.5}, "rcsb_entry_info.resolution_combined", 1.5),
+            ({"method": "ELECTRON MICROSCOPY"}, "exptl.method", "ELECTRON MICROSCOPY"),
+        ],
+        ids=["max_atoms", "max_resolution", "method"],
+    )
+    def test_custom_thresholds_are_applied(self, kwargs, attribute, expected_value):
+        as_dict = build_l1_query(**kwargs).to_dict()
         params_by_attr = {
             node["parameters"]["attribute"]: node["parameters"]
             for node in as_dict["nodes"]
         }
-
-        assert (
-            params_by_attr["rcsb_entry_info.deposited_atom_count"]["value"] == 1234
-        )
-        assert (
-            params_by_attr["rcsb_entry_info.resolution_combined"]["value"] == 1.5
-        )
-        assert params_by_attr["exptl.method"]["value"] == "ELECTRON MICROSCOPY"
+        assert params_by_attr[attribute]["value"] == expected_value
 
 
 class TestSearchCandidateIds:
-    """search_candidate_ids delegates to Session.exec() -- mock the query object."""
+    """search_candidate_ids delegates to Session.exec() -- mock_l1_query patches the query."""
 
-    def test_returns_ids_from_session(self):
-        fake_session = ["4HHB", "1STP", "2JEF"]
-        fake_query = MagicMock()
-        fake_query.exec.return_value = fake_session
-
-        with patch(
-            "protein_selector.candidates.build_l1_query", return_value=fake_query
-        ):
-            ids = search_candidate_ids(max_atoms=10_000, rows=50)
-
-        fake_query.exec.assert_called_once_with(return_type="entry", rows=50)
-        assert ids == ["4HHB", "1STP", "2JEF"]
-
-    def test_empty_session_returns_empty_list(self):
-        fake_query = MagicMock()
-        fake_query.exec.return_value = []
-
-        with patch(
-            "protein_selector.candidates.build_l1_query", return_value=fake_query
-        ):
-            assert search_candidate_ids() == []
+    @pytest.mark.parametrize(
+        "fake_ids",
+        [["4HHB", "1STP", "2JEF"], []],
+        ids=["non_empty", "empty"],
+    )
+    def test_returns_ids_from_session(self, mock_l1_query, fake_ids):
+        mock_l1_query.exec.return_value = fake_ids
+        assert search_candidate_ids(max_atoms=10_000, rows=50) == fake_ids
+        mock_l1_query.exec.assert_called_once_with(return_type="entry", rows=50)
 
 
 class TestFetchEntryMetadata:
-    """fetch_entry_metadata delegates to DataQuery -- mock the class."""
+    """fetch_entry_metadata delegates to DataQuery -- mock_data_query patches the class."""
 
-    def test_empty_input_short_circuits_without_querying(self):
-        with patch("protein_selector.candidates.DataQuery") as mock_data_query:
-            result = fetch_entry_metadata([])
-
-        assert result == []
+    def test_empty_input_short_circuits_without_querying(self, mock_data_query):
+        assert fetch_entry_metadata([]) == []
         mock_data_query.assert_not_called()
 
-    def test_parses_response_into_candidate_entries(self):
-        fake_response = {
-            "data": {
-                "entries": [
-                    {
-                        "rcsb_id": "4HHB",
-                        "struct": {"title": "Hemoglobin"},
-                        "exptl": [{"method": "X-RAY DIFFRACTION"}],
-                        "rcsb_entry_info": {
-                            "resolution_combined": [1.74],
-                            "deposited_atom_count": 4779,
-                            "deposited_polymer_monomer_count": 574,
-                            "polymer_entity_count_protein": 4,
-                        },
-                        "rcsb_entry_container_identifiers": {
-                            "uniprot_ids": ["P69905", "P68871"],
-                            "non_polymer_entity_ids": ["1", "2"],
-                        },
-                        "rcsb_entity_source_organism": [
-                            {"ncbi_scientific_name": "Homo sapiens"}
-                        ],
-                    }
-                ]
-            }
+    def test_parses_response_into_candidate_entries(
+        self, mock_data_query, fake_graphql_entry, sample_candidate_entry
+    ):
+        mock_data_query.return_value.get_response.return_value = {
+            "data": {"entries": [fake_graphql_entry]}
         }
-        fake_query_instance = MagicMock()
-        fake_query_instance.get_response.return_value = fake_response
 
-        with patch(
-            "protein_selector.candidates.DataQuery",
-            return_value=fake_query_instance,
-        ):
-            entries = fetch_entry_metadata(["4HHB"])
+        entries = fetch_entry_metadata(["4HHB"])
 
-        assert len(entries) == 1
-        entry = entries[0]
-        assert entry.pdb_id == "4HHB"
-        assert entry.title == "Hemoglobin"
-        assert entry.method == "X-RAY DIFFRACTION"
-        assert entry.resolution == 1.74
-        assert entry.n_atoms == 4779
-        assert entry.n_residues == 574
-        assert entry.n_protein_entities == 4
-        assert entry.uniprot_ids == ["P69905", "P68871"]
-        assert entry.non_polymer_entity_ids == ["1", "2"]
-        assert entry.organism == "Homo sapiens"
+        assert entries == [sample_candidate_entry]
 
-    def test_none_response_returns_empty_list(self):
-        fake_query_instance = MagicMock()
-        fake_query_instance.get_response.return_value = None
-
-        with patch(
-            "protein_selector.candidates.DataQuery",
-            return_value=fake_query_instance,
-        ):
-            assert fetch_entry_metadata(["4HHB"]) == []
-
-    def test_missing_entries_key_returns_empty_list(self):
-        fake_query_instance = MagicMock()
-        fake_query_instance.get_response.return_value = {"data": {}}
-
-        with patch(
-            "protein_selector.candidates.DataQuery",
-            return_value=fake_query_instance,
-        ):
-            assert fetch_entry_metadata(["4HHB"]) == []
+    @pytest.mark.parametrize(
+        "fake_response",
+        [None, {"data": {}}, {"data": {"entries": None}}],
+        ids=["none_response", "missing_entries_key", "null_entries"],
+    )
+    def test_empty_or_missing_response_returns_empty_list(
+        self, mock_data_query, fake_response
+    ):
+        mock_data_query.return_value.get_response.return_value = fake_response
+        assert fetch_entry_metadata(["4HHB"]) == []
 
 
 class TestParseEntry:
@@ -172,52 +110,44 @@ class TestParseEntry:
 
     def test_handles_completely_empty_entry(self):
         result = _parse_entry({})
-        assert result.pdb_id == ""
-        assert result.title is None
-        assert result.method is None
-        assert result.resolution is None
-        assert result.uniprot_ids == []
-        assert result.non_polymer_entity_ids == []
-        assert result.organism is None
+        assert result == CandidateEntry(pdb_id="")
 
-    def test_handles_missing_exptl_and_organism_lists(self):
-        result = _parse_entry({"rcsb_id": "1ABC", "exptl": [], "rcsb_entity_source_organism": []})
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            {"rcsb_id": "1ABC", "exptl": [], "rcsb_entity_source_organism": []},
+            {"rcsb_id": "1ABC"},
+        ],
+        ids=["empty_lists", "keys_absent"],
+    )
+    def test_handles_missing_exptl_and_organism(self, entry):
+        result = _parse_entry(entry)
         assert result.pdb_id == "1ABC"
         assert result.method is None
         assert result.organism is None
 
+    def test_round_trips_a_fully_populated_entry(
+        self, fake_graphql_entry, sample_candidate_entry
+    ):
+        assert _parse_entry(fake_graphql_entry) == sample_candidate_entry
+
 
 class TestFirstOrNone:
-    def test_none_input(self):
-        assert _first_or_none(None) is None
-
-    def test_empty_list(self):
-        assert _first_or_none([]) is None
-
-    def test_returns_first_element(self):
-        assert _first_or_none([1.74, 1.80]) == 1.74
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(None, None), ([], None), ([1.74, 1.80], 1.74)],
+        ids=["none", "empty_list", "non_empty_list"],
+    )
+    def test_first_or_none(self, value, expected):
+        assert _first_or_none(value) == expected
 
 
 class TestCacheRoundTrip:
     """load_cache/save_cache touch the filesystem only -- no network, no mocks needed."""
 
-    def test_round_trip_preserves_data(self, tmp_path):
+    def test_round_trip_preserves_data(self, tmp_path, sample_candidate_entry):
         cache_path = tmp_path / "l1_candidates.json"
-        entries = [
-            CandidateEntry(
-                pdb_id="4HHB",
-                title="Hemoglobin",
-                method="X-RAY DIFFRACTION",
-                resolution=1.74,
-                n_atoms=4779,
-                n_residues=574,
-                n_protein_entities=4,
-                uniprot_ids=["P69905"],
-                non_polymer_entity_ids=["1"],
-                organism="Homo sapiens",
-            ),
-            CandidateEntry(pdb_id="1STP"),
-        ]
+        entries = [sample_candidate_entry, CandidateEntry(pdb_id="1STP")]
 
         save_cache(entries, path=cache_path)
         loaded = load_cache(path=cache_path)
