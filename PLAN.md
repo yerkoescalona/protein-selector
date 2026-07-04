@@ -299,9 +299,19 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
    verified (keep UniProt only for cofactor enrichment); upgrade the JSON cache
    to the SQLite/DuckDB/Parquet table described in §4b once the entry-count
    scale (whole-PDB Holdings list) makes JSON impractical.
-2. [ ] **L2–L3 cheap checks** with JSON caching: PDBe completeness/gaps, non-standard
-   residues, oligomeric state, p2rank pocket existence, RDKit/Meeko parameterization
-   attempt → pass/flag. Cut to a ~20–50 shortlist.
+2. **L2–L3 cheap checks** with JSON caching → pass/flag. Cut to a ~20–50 shortlist.
+   - [x] **L2 size/resolution gate** — `simulability.py`: residue-count window
+     (~50–300 aa) + tightened resolution ceiling, operating purely on fields
+     L1 already fetches (no new network calls). Tested (`test_simulability.py`).
+   - [ ] **L2 completeness/gaps, non-standard residues, oligomeric state** —
+     deferred: each needs an RCSB field not yet fetched by L1, and the exact
+     field names are unverified against the live GraphQL schema (no network
+     access in the sessions so far — same situation as the §4b Holdings-API
+     caveat). Verify field names first, then extend `candidates.py`'s fetch and
+     add a corresponding check in `simulability.py`. Do not guess field names
+     into a shipped fetch call.
+   - [ ] **L3 ligand parameterizability + pocket detection** — not started;
+     needs the `validate` extra (rdkit/meeko) plus p2rank (external Java tool).
 3. [ ] **Literature count** via Europe PMC → integer.
 4. [ ] **L5 validation harness (the core):** run at least the **ex04 docking validator**
    first (fastest, highest in-class failure rate — the manual grid-box pain), then the

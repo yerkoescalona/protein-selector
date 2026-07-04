@@ -87,15 +87,21 @@ Run via `uv run pytest`.
 
 ## Status
 
-v0 seed only (`src/protein_selector/find_small_proteins_with_ligands.py`): a two-stage
-UniProt→RCSB search implementing a partial L1, now using the raw `requests` library —
-**slated for replacement** with the official `rcsb-api` package (already a dependency) per
-`PLAN.md` §4/§4b/§10: batched GraphQL queries (up to 1000 IDs/request) instead of one HTTP
-call per PDB ID, and a local metadata table instead of re-querying every run. Everything
-else in `PLAN.md` is planned, not yet built. Read `PLAN.md` before extending — it
-documents known issues in the v0 seed (no caching, lossy UniProt-first loop, fragile
-residue-count math) that should be fixed as part of the L1 refactor, not carried forward
-silently.
+- **L1 (`candidates.py`):** implemented via the official `rcsb-api` package — a single
+  structured search query (`build_l1_query`/`search_candidate_ids`) plus batched GraphQL
+  metadata fetch (`fetch_entry_metadata`, up to 1000 IDs/request), with a local JSON cache
+  (`load_cache`/`save_cache`). **Not yet verified against the live API** — this sandbox has
+  no outbound network access; tests mock the `DataQuery`/`Session` boundary against the
+  documented response shape. Verify end-to-end once network access is available.
+- **L2 (`simulability.py`):** partial. The size/resolution gate (`check_size_and_resolution`
+  / `filter_simulable`) is implemented and tested, using only fields L1 already fetches.
+  Completeness/gaps, non-standard residues, and oligomeric state are **deliberately
+  deferred** — each needs an RCSB field not yet fetched, and the exact field names are
+  unverified against the live GraphQL schema. See `PLAN.md` §10 step 2 before extending.
+- **L3–L5, difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
+  (the original v0 seed) still exists unchanged and is superseded by `candidates.py`; it can
+  be removed once `candidates.py` is verified end-to-end (keep its UniProt cofactor-lookup
+  logic if that path is still wanted — see `PLAN.md` §4/§10 step 1).
 
 ## Anti-hallucination rules
 
