@@ -269,11 +269,36 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
 
 ## 10. Minimal path to v0 (single instructor-tool path)
 
-1. [ ] **L1:** switch to `rcsb-api` (`rcsbapi.search`) for the candidate-ID search and
-   `rcsbapi.data` for batched (≤1000 IDs/request) metadata fetch (§4, §4b) — drop the
-   lossy UniProt-first loop and the per-entry `requests` calls; keep UniProt only for
-   cofactor enrichment. Persist results as a local metadata table (§4b) so repeat runs
-   hit the network only for new/changed entries.
+1. [~] **L1:** switch to `rcsb-api` for the candidate-ID search and batched metadata
+   fetch (§4, §4b) — **`src/protein_selector/candidates.py` implements this**:
+   `search_candidate_ids()` builds the same five hard filters the v0 script used
+   (protein-entity present, non-polymer present, atom-count ceiling, method,
+   resolution ceiling) via `rcsbapi.search`'s typed `Attr`/`AttributeQuery`
+   (confirmed identical filter structure to the v0 dict via local `to_dict()`
+   inspection — no network needed for that check); `fetch_entry_metadata()` batches
+   the metadata fetch via `rcsbapi.data.DataQuery` in one call (the package chunks
+   internally per `config.DATA_API_INPUT_ID_LIMIT`, no manual pagination loop).
+   `load_cache()`/`save_cache()` give a first-cut local JSON cache keyed by PDB ID.
+   **Note on `Attr` vs. the `search_attributes` proxy:** used `Attr(name, "text")`
+   directly rather than the dotted `search_attributes.rcsb_entry_info.foo` proxy —
+   the proxy resolves fields via runtime metaprogramming that `ty` cannot see
+   through; `Attr` is the equivalent, statically-checkable constructor for the
+   same fields (confirmed via the pre-built attrs' own `repr()`, which shows
+   `type='text'` for all fields used here).
+   **⚠ Not yet verified against a live network call** — this sandbox's outbound
+   network access to `search.rcsb.org`/`data.rcsb.org` appears blocked (a test
+   query hung indefinitely and was killed); the module was built from verified
+   local introspection of the installed `rcsb-api` package (constructor
+   signatures, config values, source of `_process_input_ids`) but the actual
+   HTTP round trip, response shape, and rate-limit behavior are unconfirmed.
+   **Run `search_candidate_ids()` and `fetch_entry_metadata()` end-to-end in an
+   environment with real network access before trusting this as the sole L1
+   path** — treat it as implemented-but-unverified, not done.
+   Still open: drop the lossy UniProt-first loop and old per-entry `requests`
+   calls from `find_small_proteins_with_ligands.py` once the new module is
+   verified (keep UniProt only for cofactor enrichment); upgrade the JSON cache
+   to the SQLite/DuckDB/Parquet table described in §4b once the entry-count
+   scale (whole-PDB Holdings list) makes JSON impractical.
 2. [ ] **L2–L3 cheap checks** with JSON caching: PDBe completeness/gaps, non-standard
    residues, oligomeric state, p2rank pocket existence, RDKit/Meeko parameterization
    attempt → pass/flag. Cut to a ~20–50 shortlist.
