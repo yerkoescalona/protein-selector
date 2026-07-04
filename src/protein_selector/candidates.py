@@ -8,20 +8,18 @@ and manual pagination with:
 - one batched metadata fetch (`rcsbapi.data.DataQuery`), which chunks/rate-limits
   internally rather than one HTTP round trip per PDB ID.
 
+Persistence lives in ``store.py`` (SQLite), not here -- see its module docstring.
+
 See ``PLAN.md`` §4 and §4b for the design rationale.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from rcsbapi.data import DataQuery
 from rcsbapi.search import Attr
-
-DEFAULT_CACHE_PATH = Path("cache/l1_candidates.json")
 
 # Fields fetched per entry -- superset of what the v0 script's get_structure_details/
 # get_ligands issued one HTTP request per PDB ID for.
@@ -159,24 +157,3 @@ def _first_or_none(value: list[Any] | None) -> Any | None:
     if not value:
         return None
     return value[0]
-
-
-def load_cache(path: Path = DEFAULT_CACHE_PATH) -> dict[str, CandidateEntry]:
-    """Load a previously persisted metadata cache, keyed by PDB ID.
-
-    Per PLAN.md §4b: repeat runs should hit the network only for new/changed
-    entries, not re-fetch everything each time.
-    """
-    if not path.exists():
-        return {}
-    raw = json.loads(path.read_text())
-    return {pdb_id: CandidateEntry(**fields) for pdb_id, fields in raw.items()}
-
-
-def save_cache(
-    entries: list[CandidateEntry], path: Path = DEFAULT_CACHE_PATH
-) -> None:
-    """Persist fetched metadata to a local JSON cache keyed by PDB ID."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {entry.pdb_id: entry.__dict__ for entry in entries}
-    path.write_text(json.dumps(payload, indent=2))

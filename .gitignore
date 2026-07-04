@@ -9,4 +9,5 @@ venv/
 # generated candidate/validation output (per-run artifacts, not source)
 *.csv
 *.parquet
+*.db
 cache/

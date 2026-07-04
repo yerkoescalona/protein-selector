@@ -41,9 +41,10 @@ PLAN.md                        The full design doc — read before making archit
 pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/rcsb-api);
                                 optional `validate` extra for the heavier L3 stack
                                 (rdkit/meeko — openff-toolkit deliberately excluded, see below)
-src/protein_selector/          Pipeline code (currently: find_small_proteins_with_ligands.py,
-                                v0 seed; candidates.py, the L1 rcsb-api implementation) —
-                                a proper src-layout package, not loose scripts
+src/protein_selector/          Pipeline code: find_small_proteins_with_ligands.py (v0 seed,
+                                superseded), candidates.py (L1), simulability.py (L2,
+                                partial), store.py (SQLite persistence, all layers) — a
+                                proper src-layout package, not loose scripts
 tests/protein_selector/        Tests, mirroring src/protein_selector/'s structure 1:1 —
                                 see "Testing" below
 uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
@@ -89,15 +90,22 @@ Run via `uv run pytest`.
 
 - **L1 (`candidates.py`):** implemented via the official `rcsb-api` package — a single
   structured search query (`build_l1_query`/`search_candidate_ids`) plus batched GraphQL
-  metadata fetch (`fetch_entry_metadata`, up to 1000 IDs/request), with a local JSON cache
-  (`load_cache`/`save_cache`). **Not yet verified against the live API** — this sandbox has
-  no outbound network access; tests mock the `DataQuery`/`Session` boundary against the
-  documented response shape. Verify end-to-end once network access is available.
+  metadata fetch (`fetch_entry_metadata`, up to 1000 IDs/request). **Not yet verified
+  against the live API** — this sandbox has no outbound network access; tests mock the
+  `DataQuery`/`Session` boundary against the documented response shape. Verify end-to-end
+  once network access is available.
 - **L2 (`simulability.py`):** partial. The size/resolution gate (`check_size_and_resolution`
   / `filter_simulable`) is implemented and tested, using only fields L1 already fetches.
   Completeness/gaps, non-standard residues, and oligomeric state are **deliberately
   deferred** — each needs an RCSB field not yet fetched, and the exact field names are
   unverified against the live GraphQL schema. See `PLAN.md` §10 step 2 before extending.
+- **Persistence (`store.py`):** SQLite, one table per layer (`l1_candidates`,
+  `l2_simulability`), keyed by `pdb_id`, upsert-based. Replaced `candidates.py`'s original
+  JSON-file cache (see `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet).
+  **Each layer keeps its own small dataclass** (`CandidateEntry`, `SimulabilityResult`) —
+  `store.py` only persists/reloads them, it does not merge them into one growing object.
+  Joining across layers into the final §8 output row is a separate, not-yet-built step;
+  don't conflate "persist this layer's result" with "build the final report."
 - **L3–L5, difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
   (the original v0 seed) still exists unchanged and is superseded by `candidates.py`; it can
   be removed once `candidates.py` is verified end-to-end (keep its UniProt cofactor-lookup

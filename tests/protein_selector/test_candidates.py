@@ -17,8 +17,6 @@ from protein_selector.candidates import (
     _parse_entry,
     build_l1_query,
     fetch_entry_metadata,
-    load_cache,
-    save_cache,
     search_candidate_ids,
 )
 
@@ -140,26 +138,3 @@ class TestFirstOrNone:
     )
     def test_first_or_none(self, value, expected):
         assert _first_or_none(value) == expected
-
-
-class TestCacheRoundTrip:
-    """load_cache/save_cache touch the filesystem only -- no network, no mocks needed."""
-
-    def test_round_trip_preserves_data(self, tmp_path, sample_candidate_entry):
-        cache_path = tmp_path / "l1_candidates.json"
-        entries = [sample_candidate_entry, CandidateEntry(pdb_id="1STP")]
-
-        save_cache(entries, path=cache_path)
-        loaded = load_cache(path=cache_path)
-
-        assert set(loaded.keys()) == {"4HHB", "1STP"}
-        assert loaded["4HHB"] == entries[0]
-        assert loaded["1STP"] == entries[1]
-
-    def test_load_cache_missing_file_returns_empty_dict(self, tmp_path):
-        assert load_cache(path=tmp_path / "does_not_exist.json") == {}
-
-    def test_save_cache_creates_parent_directories(self, tmp_path):
-        nested_path = tmp_path / "a" / "b" / "cache.json"
-        save_cache([CandidateEntry(pdb_id="4HHB")], path=nested_path)
-        assert nested_path.exists()

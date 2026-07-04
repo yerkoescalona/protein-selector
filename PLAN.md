@@ -110,10 +110,20 @@ data.rcsb.org's own docs) to build a local metadata table with no full-structure
    (`rcsbapi.data`) for exactly the fields L1/L2 need (`exptl.method`,
    `rcsb_entry_info.resolution_combined`, `rcsb_entry_info.deposited_atom_count`,
    non-polymer entity IDs → ligand CCD codes, organism, etc.).
-3. [ ] Persist the result as one local SQLite/DuckDB/Parquet table. All L1/L2 filtering
-   thereafter runs against this table with **zero network calls**; only re-fetch entries
-   that changed since the last snapshot (RCSB does weekly updates — cache accordingly,
-   per their own "Cache Data For Repeat Calls" guidance).
+3. [x] **Persist the result as one local SQLite table — DECIDED, implemented
+   (`store.py`).** One table per pipeline layer (`l1_candidates`, `l2_simulability`,
+   ...), each keyed by `pdb_id`, upserted so a re-run only touches changed rows.
+   Chose SQLite over DuckDB/Parquet: zero new dependency (stdlib `sqlite3`, matching
+   this repo's "add a dep only when needed" discipline), natural keyed-upsert
+   semantics (a JSON/Parquet blob needs a full read-merge-rewrite per update), and
+   the right scale for "~hundreds of candidates, annual cadence" (§13) — DuckDB/Parquet
+   are built for large-scale analytics this tool doesn't need. **Deliberate design
+   choice: each layer keeps its own small dataclass (`CandidateEntry`, `SimulabilityResult`,
+   ...) rather than one growing shared object — `store.py` only persists/reloads them;
+   joining across layers into the final §8 output row is a separate, not-yet-built step.**
+   All L1/L2 filtering thereafter runs against this table with **zero network calls**;
+   only re-fetch entries that changed since the last snapshot (RCSB does weekly
+   updates — cache accordingly, per their own "Cache Data For Repeat Calls" guidance).
 4. [ ] Fetch full structure files only for the L3/L5 shortlist, individually, on demand.
 
 - [ ] Verify the exact Holdings API "current entries" endpoint path and response format
@@ -278,7 +288,8 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
    inspection — no network needed for that check); `fetch_entry_metadata()` batches
    the metadata fetch via `rcsbapi.data.DataQuery` in one call (the package chunks
    internally per `config.DATA_API_INPUT_ID_LIMIT`, no manual pagination loop).
-   `load_cache()`/`save_cache()` give a first-cut local JSON cache keyed by PDB ID.
+   Persistence lives in `store.py` (SQLite, see §4b) — `upsert_candidates()`/
+   `load_candidates()`, keyed by PDB ID.
    **Note on `Attr` vs. the `search_attributes` proxy:** used `Attr(name, "text")`
    directly rather than the dotted `search_attributes.rcsb_entry_info.foo` proxy —
    the proxy resolves fields via runtime metaprogramming that `ty` cannot see
