@@ -11,7 +11,7 @@ Requirements:
 
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 import requests
@@ -23,12 +23,12 @@ class ProteinLigandComplex:
 
     pdb_id: str
     title: str
-    resolution: Optional[float]
+    resolution: float | None
     method: str
     num_residues: int
     num_atoms: int
-    uniprot_ids: List[str]
-    ligands: List[str]
+    uniprot_ids: list[str]
+    ligands: list[str]
     organism: str
 
     def is_laptop_suitable(self, max_atoms: int = 50000) -> bool:
@@ -117,7 +117,7 @@ class UniProtLigandFinder:
 
         return True
 
-    def search_proteins_with_ligands(self, limit: int = 100) -> List[Dict]:
+    def search_proteins_with_ligands(self, limit: int = 100) -> list[dict]:
         """Search UniProt for small proteins with known ligands.
 
         Args:
@@ -223,7 +223,7 @@ class RCSBLigandFinder:
         self.max_residues = max_residues
         self.max_atoms = max_atoms
 
-    def search_small_proteins_with_ligands(self, limit: int = 100) -> List[str]:
+    def search_small_proteins_with_ligands(self, limit: int = 100) -> list[str]:
         """Search for small protein structures with bound ligands.
 
         Args:
@@ -232,7 +232,7 @@ class RCSBLigandFinder:
         Returns:
             List of PDB IDs
         """
-        query = {
+        query: dict[str, Any] = {
             "query": {
                 "type": "group",
                 "logical_operator": "and",
@@ -315,11 +315,9 @@ class RCSBLigandFinder:
 
                 # Modify pagination in request_options for this request
                 current_query = query.copy()
-                current_query["request_options"] = query["request_options"].copy()
-                current_query["request_options"]["paginate"] = {
-                    "start": start,
-                    "rows": rows,
-                }
+                request_options: dict[str, Any] = query["request_options"].copy()
+                request_options["paginate"] = {"start": start, "rows": rows}
+                current_query["request_options"] = request_options
 
                 response = requests.post(
                     self.BASE_URL,
@@ -356,7 +354,7 @@ class RCSBLigandFinder:
             print(f"Error searching RCSB: {e}")
             return []
 
-    def get_ligands(self, pdb_id: str) -> List[str]:
+    def get_ligands(self, pdb_id: str) -> list[str]:
         """Get list of non-polymer ligands for a PDB structure.
 
         Args:
@@ -448,7 +446,7 @@ class RCSBLigandFinder:
 
         return ligands
 
-    def get_structure_details(self, pdb_id: str) -> Optional[ProteinLigandComplex]:
+    def get_structure_details(self, pdb_id: str) -> ProteinLigandComplex | None:
         """Get detailed information about a PDB structure.
 
         Args:

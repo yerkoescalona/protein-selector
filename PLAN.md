@@ -83,9 +83,42 @@ The current script is L1-ish but has issues to fix as it's refactored:
       exclusion + a real parameterizability check (L3), not string length.
 - [ ] **`num_residues` computation is fragile** (multiplies molecules × a possibly-zero
       count) — verify against `rcsb_entry_info.deposited_polymer_monomer_count`.
-- [ ] **Sequential `time.sleep`** — fine for v0; the fan-out belongs in the workflow
-      engine (§7) once steps stabilize.
+- [x] **Sequential per-entry REST + `time.sleep` — VERIFIED FIX AVAILABLE (RCSB Data API
+      docs, data.rcsb.org, official source, 2024–25).** Replace `get_structure_details` /
+      `get_ligands`'s one-call-per-PDB-ID loop with **batched GraphQL** via the
+      `entries(entry_ids: [...])` root query — RCSB's own "Usage Guidelines" state the
+      batch endpoints accept **up to 1000 IDs per request**. Use the official, maintained
+      **`rcsb-api` Python package** (`rcsbapi.search` for the L1 candidate-ID search,
+      `rcsbapi.data` for the batched metadata fetch) instead of hand-rolled `requests`
+      calls — cites Rose et al., *J. Mol. Biol.* 2020, DOI 10.1016/j.jmb.2020.11.003.
+      This alone is likely a >10x wall-clock win with **zero local storage**.
 - [ ] **No difficulty score, no rationale** — the actual novel contribution (§5).
+
+### 4b. Local metadata table (do NOT mirror full PDB structure files)
+
+Considered downloading a full local PDB mirror to speed up queries — **rejected**. Almost
+everything L1/L2 needs is metadata (resolution, method, ligand composition, residue
+counts), not atomic coordinates; downloading full structure files to filter on metadata is
+the exact anti-pattern the layered design (§3) argues against. Full atomic files are only
+needed for the L3/L5 shortlist (~20–50 proteins), fetched on demand.
+
+Instead, use RCSB's own documented **"Archive-wide Queries" recipe** (verified, from
+data.rcsb.org's own docs) to build a local metadata table with no full-structure download:
+1. [ ] Fetch the full list of current PDB IDs from the **Repository Holdings Service REST
+   API** ("current entries" endpoint).
+2. [ ] Batch those IDs (chunks ≤ 1000) and query the GraphQL endpoint via `rcsb-api`
+   (`rcsbapi.data`) for exactly the fields L1/L2 need (`exptl.method`,
+   `rcsb_entry_info.resolution_combined`, `rcsb_entry_info.deposited_atom_count`,
+   non-polymer entity IDs → ligand CCD codes, organism, etc.).
+3. [ ] Persist the result as one local SQLite/DuckDB/Parquet table. All L1/L2 filtering
+   thereafter runs against this table with **zero network calls**; only re-fetch entries
+   that changed since the last snapshot (RCSB does weekly updates — cache accordingly,
+   per their own "Cache Data For Repeat Calls" guidance).
+4. [ ] Fetch full structure files only for the L3/L5 shortlist, individually, on demand.
+
+- [ ] Verify the exact Holdings API "current entries" endpoint path and response format
+      before building against it (documented on data.rcsb.org; not yet opened at source
+      in this session — treat the endpoint name as ⚠ until confirmed).
 
 ---
 
@@ -236,9 +269,11 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
 
 ## 10. Minimal path to v0 (single instructor-tool path)
 
-1. [ ] **L1:** one fixed RCSB structured query using published cutoffs → candidate PDB
-   list (refactor the existing `RCSBLigandFinder` query; drop the lossy UniProt-first
-   loop, keep UniProt only for cofactor enrichment).
+1. [ ] **L1:** switch to `rcsb-api` (`rcsbapi.search`) for the candidate-ID search and
+   `rcsbapi.data` for batched (≤1000 IDs/request) metadata fetch (§4, §4b) — drop the
+   lossy UniProt-first loop and the per-entry `requests` calls; keep UniProt only for
+   cofactor enrichment. Persist results as a local metadata table (§4b) so repeat runs
+   hit the network only for new/changed entries.
 2. [ ] **L2–L3 cheap checks** with JSON caching: PDBe completeness/gaps, non-standard
    residues, oligomeric state, p2rank pocket existence, RDKit/Meeko parameterization
    attempt → pass/flag. Cut to a ~20–50 shortlist.
