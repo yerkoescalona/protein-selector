@@ -42,7 +42,10 @@ pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/
                                 optional `validate` extra for the heavier L3 stack
                                 (rdkit/meeko — openff-toolkit deliberately excluded, see below)
 src/protein_selector/          Pipeline code (currently: find_small_proteins_with_ligands.py,
-                                v0 seed) — a proper src-layout package, not loose scripts
+                                v0 seed; candidates.py, the L1 rcsb-api implementation) —
+                                a proper src-layout package, not loose scripts
+tests/protein_selector/        Tests, mirroring src/protein_selector/'s structure 1:1 —
+                                see "Testing" below
 uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
 ```
 
@@ -50,7 +53,9 @@ uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
 
 This repo is managed with `uv`. Environment: `uv sync`. Run/lint via `uv run <cmd>`.
 
-**Before every commit, run and ensure both pass clean:**
+**Priority order: working code first, lint/type-check as a gate at the end.** Don't
+interrupt implementation to run `ruff`/`ty` after every small edit — write the code, get
+the logic right, *then* run both once before committing:
 ```bash
 uv run ruff check .
 uv run ty check
@@ -63,6 +68,22 @@ as a narrower literal-inferred type in the RCSB query pagination logic).
 If a dependency doesn't resolve (e.g. a PyPI release is yanked), don't quietly work around
 it — verify via `uv add <pkg>` and document why in `pyproject.toml` as a comment (see the
 `openff-toolkit` exclusion note there) rather than silently omitting it.
+
+## Testing
+
+Tests live in `tests/`, mirroring `src/protein_selector/`'s structure file-for-file:
+`src/protein_selector/candidates.py` → `tests/protein_selector/test_candidates.py`, etc.
+Add tests alongside new modules as they're written, not as a separate later pass.
+
+Network-touching code (anything that calls the live RCSB/Europe PMC/AlphaFold APIs) should
+be tested with the network boundary mocked — this sandbox has no outbound access to
+`search.rcsb.org`/`data.rcsb.org` (confirmed: a live test query hung and had to be killed),
+and the real course environment shouldn't need network access just to run the test suite.
+Test the pure logic (query construction, response parsing, cache round-trips) against
+fixed/fake inputs; reserve actual live-API calls for manual verification before trusting a
+module as done (see `PLAN.md`'s per-module "not yet verified end-to-end" notes).
+
+Run via `uv run pytest`.
 
 ## Status
 

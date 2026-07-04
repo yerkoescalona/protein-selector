@@ -66,5 +66,13 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.per-file-ignores]
+# Individual test_* methods don't need Google-style docstrings; the class
+# docstring documents intent for the group.
+"tests/**" = ["D101", "D102", "D103"]
+
 [tool.ty.environment]
-root = ["src"]
+root = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
