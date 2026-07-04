@@ -11,7 +11,7 @@ per-exercise difficulty scoring, and the reasoning behind every decision).
 
 ## Status
 
-v0 seed: `src/find_small_proteins_with_ligands.py` — a two-stage UniProt→RCSB search with
+v0 seed: `src/protein_selector/find_small_proteins_with_ligands.py` — a two-stage UniProt→RCSB search with
 size/resolution/method filters and a per-entry ligand check. This is being extended per
 `PLAN.md` into the full layered pipeline (L1 hard filters → L2 simulability →
 L3 parameterizability → L5 a-priori validation → per-exercise difficulty score).
@@ -26,10 +26,21 @@ requirement leaks into the student environment).
 
 ## Setup
 
+Managed with [`uv`](https://docs.astral.sh/uv/):
+
 ```bash
-pip install -e .
-# or, for the validation layer (L3+):
-pip install -e ".[validate]"
+uv sync                      # base deps
+uv sync --extra validate     # + the L3 validation stack (rdkit, meeko)
+uv run python3 -m protein_selector.find_small_proteins_with_ligands
+```
+
+## Development
+
+Lint and type-check before every commit:
+
+```bash
+uv run ruff check .
+uv run ty check
 ```
 
 ## License

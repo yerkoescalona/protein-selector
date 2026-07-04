@@ -37,19 +37,44 @@ cheap proxies + measured from L5) and a rationale per row. Never a single scalar
 ## Repository layout
 
 ```
-PLAN.md            The full design doc — read before making architectural changes
-pyproject.toml      Base deps (requests/pandas/biopython); optional `validate` extra
-                    for the heavier L3 stack (rdkit/openff-toolkit/meeko)
-src/                Pipeline code (currently: find_small_proteins_with_ligands.py, v0 seed)
+PLAN.md                        The full design doc — read before making architectural changes
+pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/rcsb-api);
+                                optional `validate` extra for the heavier L3 stack
+                                (rdkit/meeko — openff-toolkit deliberately excluded, see below)
+src/protein_selector/          Pipeline code (currently: find_small_proteins_with_ligands.py,
+                                v0 seed) — a proper src-layout package, not loose scripts
+uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
 ```
+
+## Tooling: uv + ruff + ty
+
+This repo is managed with `uv`. Environment: `uv sync`. Run/lint via `uv run <cmd>`.
+
+**Before every commit, run and ensure both pass clean:**
+```bash
+uv run ruff check .
+uv run ty check
+```
+Fix real findings from both (don't just silence them) before committing. `ruff` catches
+style/modernization issues; `ty` catches real type errors — treat a `ty` finding as a bug
+report, not noise (see the `git history` for a real example: a `dict[str, Any]` mistyped
+as a narrower literal-inferred type in the RCSB query pagination logic).
+
+If a dependency doesn't resolve (e.g. a PyPI release is yanked), don't quietly work around
+it — verify via `uv add <pkg>` and document why in `pyproject.toml` as a comment (see the
+`openff-toolkit` exclusion note there) rather than silently omitting it.
 
 ## Status
 
-v0 seed only (`src/find_small_proteins_with_ligands.py`): a two-stage UniProt→RCSB search
-implementing a partial L1. Everything else in `PLAN.md` is planned, not yet built. Read
-`PLAN.md` before extending — it documents known issues in the v0 seed (no caching, lossy
-UniProt-first loop, fragile residue-count math) that should be fixed as part of the L1
-refactor, not carried forward silently.
+v0 seed only (`src/protein_selector/find_small_proteins_with_ligands.py`): a two-stage
+UniProt→RCSB search implementing a partial L1, now using the raw `requests` library —
+**slated for replacement** with the official `rcsb-api` package (already a dependency) per
+`PLAN.md` §4/§4b/§10: batched GraphQL queries (up to 1000 IDs/request) instead of one HTTP
+call per PDB ID, and a local metadata table instead of re-querying every run. Everything
+else in `PLAN.md` is planned, not yet built. Read `PLAN.md` before extending — it
+documents known issues in the v0 seed (no caching, lossy UniProt-first loop, fragile
+residue-count math) that should be fixed as part of the L1 refactor, not carried forward
+silently.
 
 ## Anti-hallucination rules
 
