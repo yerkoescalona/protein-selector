@@ -43,8 +43,9 @@ pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/
                                 (rdkit/meeko — openff-toolkit deliberately excluded, see below)
 src/protein_selector/          Pipeline code: find_small_proteins_with_ligands.py (v0 seed,
                                 superseded), candidates.py (L1), simulability.py (L2,
-                                partial), store.py (SQLite persistence, all layers) — a
-                                proper src-layout package, not loose scripts
+                                partial), parameterizability.py (L3, partial — needs the
+                                `validate` extra), store.py (SQLite persistence, all
+                                layers) — a proper src-layout package, not loose scripts
 tests/protein_selector/        Tests, mirroring src/protein_selector/'s structure 1:1 —
                                 see "Testing" below
 uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
@@ -69,6 +70,18 @@ as a narrower literal-inferred type in the RCSB query pagination logic).
 If a dependency doesn't resolve (e.g. a PyPI release is yanked), don't quietly work around
 it — verify via `uv add <pkg>` and document why in `pyproject.toml` as a comment (see the
 `openff-toolkit` exclusion note there) rather than silently omitting it.
+
+**Heavy optional deps (the `validate` extra: rdkit, meeko) must stay lazily imported.**
+`store.py` is imported by every layer, including L1/L2-only users who never installed
+`validate` — it transitively imports `parameterizability.py`, so if that module imports
+`rdkit` at module top-level, `import protein_selector.store` breaks for a base-only
+install. This actually happened once (caught by manually testing `uv sync` without
+`--extra validate` then trying to import `store`, since neither `ruff` nor `ty` catch a
+missing-optional-dependency-at-import-time bug). The fix: import `rdkit` lazily inside
+`check_ligand_parameterizable`, not at module level — the dataclass itself has no rdkit
+dependency. When adding the next `validate`-gated check (Meeko, p2rank), keep the same
+lazy-import pattern and manually verify `uv sync` (no extras) + `import protein_selector.store`
+still works before committing.
 
 ## Testing
 
@@ -99,14 +112,24 @@ Run via `uv run pytest`.
   Completeness/gaps, non-standard residues, and oligomeric state are **deliberately
   deferred** — each needs an RCSB field not yet fetched, and the exact field names are
   unverified against the live GraphQL schema. See `PLAN.md` §10 step 2 before extending.
+- **L3 (`parameterizability.py`):** partial. RDKit sanitization
+  (`check_ligand_parameterizable`/`filter_parameterizable`) is implemented and tested with
+  **real RDKit calls** (pure local logic, no network) — requires the `validate` extra.
+  **Not yet wired to real data:** L1 only fetches ligand CCD codes, not SMILES; fetching
+  SMILES per CCD code is the remaining wiring step. Full Meeko/OpenFF parameterization and
+  p2rank pocket detection are **not started** — p2rank is deferred pending verification of
+  its actual CLI/output format (no network access so far); do not guess its interface into
+  a shipped wrapper. See `PLAN.md` §10 step 2.
 - **Persistence (`store.py`):** SQLite, one table per layer (`l1_candidates`,
-  `l2_simulability`), keyed by `pdb_id`, upsert-based. Replaced `candidates.py`'s original
-  JSON-file cache (see `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet).
-  **Each layer keeps its own small dataclass** (`CandidateEntry`, `SimulabilityResult`) —
-  `store.py` only persists/reloads them, it does not merge them into one growing object.
-  Joining across layers into the final §8 output row is a separate, not-yet-built step;
-  don't conflate "persist this layer's result" with "build the final report."
-- **L3–L5, difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
+  `l2_simulability`, `l3_parameterizability`), keyed by `pdb_id` (L1/L2) or `ligand_id`
+  (L3 — a ligand's parameterizability doesn't depend on which entry it appears in), all
+  upsert-based. Replaced `candidates.py`'s original JSON-file cache (see `PLAN.md` §4b for
+  why SQLite was chosen over DuckDB/Parquet). **Each layer keeps its own small dataclass**
+  (`CandidateEntry`, `SimulabilityResult`, `ParameterizabilityResult`) — `store.py` only
+  persists/reloads them, it does not merge them into one growing object. Joining across
+  layers into the final §8 output row is a separate, not-yet-built step; don't conflate
+  "persist this layer's result" with "build the final report."
+- **L4–L5, difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
   (the original v0 seed) still exists unchanged and is superseded by `candidates.py`; it can
   be removed once `candidates.py` is verified end-to-end (keep its UniProt cofactor-lookup
   logic if that path is still wanted — see `PLAN.md` §4/§10 step 1).

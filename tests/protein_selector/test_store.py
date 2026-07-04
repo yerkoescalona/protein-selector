@@ -9,11 +9,14 @@ from __future__ import annotations
 import pytest
 
 from protein_selector.candidates import CandidateEntry
+from protein_selector.parameterizability import ParameterizabilityResult
 from protein_selector.simulability import SimulabilityResult
 from protein_selector.store import (
     load_candidates,
+    load_parameterizability,
     load_simulability,
     upsert_candidates,
+    upsert_parameterizability,
     upsert_simulability,
 )
 
@@ -93,15 +96,57 @@ class TestSimulabilityRoundTrip:
         assert loaded["4HHB"].reasons == []
 
 
-class TestBothTablesShareOneFile:
-    """L1 and L2 tables live in the same SQLite file, independently keyed."""
+class TestParameterizabilityRoundTrip:
+    """Keyed by ligand_id, not pdb_id -- see store.py's schema comment."""
 
-    def test_candidates_and_simulability_coexist(self, db_path, sample_candidate_entry):
+    def test_round_trip_preserves_data(self, db_path):
+        results = [
+            ParameterizabilityResult(ligand_id="GLC", passed=True, reasons=[]),
+            ParameterizabilityResult(
+                ligand_id="BAD", passed=False, reasons=["RDKit could not parse/sanitize SMILES"]
+            ),
+        ]
+
+        upsert_parameterizability(results, db_path=db_path)
+        loaded = load_parameterizability(db_path=db_path)
+
+        assert set(loaded.keys()) == {"GLC", "BAD"}
+        assert loaded["GLC"] == results[0]
+        assert loaded["BAD"] == results[1]
+
+    def test_load_missing_file_returns_empty_dict(self, tmp_path):
+        assert load_parameterizability(db_path=tmp_path / "does_not_exist.db") == {}
+
+    def test_upsert_updates_existing_row_by_ligand_id(self, db_path):
+        upsert_parameterizability(
+            [ParameterizabilityResult(ligand_id="GLC", passed=False, reasons=["bad"])],
+            db_path=db_path,
+        )
+        upsert_parameterizability(
+            [ParameterizabilityResult(ligand_id="GLC", passed=True, reasons=[])],
+            db_path=db_path,
+        )
+
+        loaded = load_parameterizability(db_path=db_path)
+
+        assert len(loaded) == 1
+        assert loaded["GLC"].passed is True
+
+
+class TestAllTablesShareOneFile:
+    """L1/L2/L3 tables live in the same SQLite file, independently keyed."""
+
+    def test_all_layers_coexist(self, db_path, sample_candidate_entry):
         upsert_candidates([sample_candidate_entry], db_path=db_path)
         upsert_simulability(
             [SimulabilityResult(pdb_id="4HHB", passed=True, reasons=[])],
             db_path=db_path,
         )
+        upsert_parameterizability(
+            [ParameterizabilityResult(ligand_id="GLC", passed=True, reasons=[])],
+            db_path=db_path,
+        )
 
         assert set(load_candidates(db_path=db_path)) == {"4HHB"}
         assert set(load_simulability(db_path=db_path)) == {"4HHB"}
+        assert set(load_parameterizability(db_path=db_path)) == {"GLC"}

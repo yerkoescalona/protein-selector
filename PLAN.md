@@ -321,8 +321,26 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      caveat). Verify field names first, then extend `candidates.py`'s fetch and
      add a corresponding check in `simulability.py`. Do not guess field names
      into a shipped fetch call.
-   - [ ] **L3 ligand parameterizability + pocket detection** — not started;
-     needs the `validate` extra (rdkit/meeko) plus p2rank (external Java tool).
+   - [x] **L3 ligand parameterizability (RDKit sanitization)** —
+     `parameterizability.py`: `check_ligand_parameterizable`/`filter_parameterizable`,
+     a fast necessary-but-not-sufficient pre-filter (can RDKit even parse/sanitize
+     the ligand's SMILES?). Tested with **real RDKit calls, not mocked** — pure
+     local library logic, no network. Requires the `validate` extra
+     (`uv sync --extra validate`); `rdkit` is imported lazily inside the check
+     function specifically so `store.py` (which every layer needs) stays
+     importable without the `validate` extra installed — see `.claude/CLAUDE.md`
+     for the real bug this caught. **Not yet wired to real data:** L1 fetches
+     ligand CCD codes (non-polymer entity IDs), not SMILES; fetching SMILES per
+     CCD code via RCSB's `chem_comps` query is the remaining wiring step.
+   - [ ] **L3 full Meeko/OpenFF parameterization** — not started. RDKit
+     sanitization is necessary but not sufficient; a ligand that passes it can
+     still fail real force-field parameterization. Heavier, slower check for
+     the shortlist only.
+   - [ ] **L3 p2rank pocket detection** — not started. Deferred pending
+     verification of p2rank's actual CLI/output format against its real
+     documentation (no network access in the sessions so far) — do not guess
+     column names/flags into a shipped subprocess wrapper, per §11. Also
+     requires a Java runtime (external tool, not a pip dependency).
 3. [ ] **Literature count** via Europe PMC → integer.
 4. [ ] **L5 validation harness (the core):** run at least the **ex04 docking validator**
    first (fastest, highest in-class failure rate — the manual grid-box pain), then the

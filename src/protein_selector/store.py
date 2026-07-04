@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from protein_selector.candidates import CandidateEntry
+from protein_selector.parameterizability import ParameterizabilityResult
 from protein_selector.simulability import SimulabilityResult
 
 DEFAULT_DB_PATH = Path("cache/protein_selector.db")
@@ -52,6 +53,19 @@ CREATE TABLE IF NOT EXISTS l2_simulability (
 )
 """
 
+# Keyed by ligand_id (a CCD code, e.g. "ATP"), NOT pdb_id -- unlike L1/L2,
+# parameterizability is a property of the ligand itself, and the same ligand
+# CCD code can recur across many PDB entries. Joining this back to a
+# particular pdb_id happens via l1_candidates.non_polymer_entity_ids at
+# report-build time (§8), not by duplicating rows per entry here.
+_L3_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS l3_parameterizability (
+    ligand_id TEXT PRIMARY KEY,
+    passed INTEGER NOT NULL,
+    reasons TEXT NOT NULL DEFAULT '[]'
+)
+"""
+
 
 @contextmanager
 def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
@@ -64,6 +78,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(db_path)
     conn.execute(_L1_TABLE_SCHEMA)
     conn.execute(_L2_TABLE_SCHEMA)
+    conn.execute(_L3_TABLE_SCHEMA)
     try:
         yield conn
         conn.commit()
@@ -175,6 +190,43 @@ def load_simulability(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Simulability
     return {
         row[0]: SimulabilityResult(
             pdb_id=row[0], passed=bool(row[1]), reasons=json.loads(row[2])
+        )
+        for row in rows
+    }
+
+
+def upsert_parameterizability(
+    results: list[ParameterizabilityResult], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Insert or update L3 parameterizability rows, keyed by ``ligand_id``."""
+    if not results:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO l3_parameterizability (ligand_id, passed, reasons)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ligand_id) DO UPDATE SET
+                passed=excluded.passed,
+                reasons=excluded.reasons
+            """,
+            [(r.ligand_id, int(r.passed), json.dumps(r.reasons)) for r in results],
+        )
+
+
+def load_parameterizability(
+    db_path: Path = DEFAULT_DB_PATH,
+) -> dict[str, ParameterizabilityResult]:
+    """Load all L3 parameterizability rows, keyed by ``ligand_id``."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT ligand_id, passed, reasons FROM l3_parameterizability"
+        ).fetchall()
+    return {
+        row[0]: ParameterizabilityResult(
+            ligand_id=row[0], passed=bool(row[1]), reasons=json.loads(row[2])
         )
         for row in rows
     }
