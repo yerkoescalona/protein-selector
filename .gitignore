@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# generated candidate/validation output (per-run artifacts, not source)
+*.csv
+*.parquet
+cache/

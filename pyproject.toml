@@ -1,0 +1,26 @@
+[project]
+name = "protein-selector"
+version = "0.1.0"
+description = "Instructor tool: find and a-priori validate candidate proteins for structural bioinformatics exercises"
+authors = [{ name = "Yerko Escalona" }]
+requires-python = ">=3.11"
+license = { text = "MIT" }
+readme = "README.md"
+dependencies = [
+    "requests>=2.32",
+    "pandas>=2.2",
+    "biopython>=1.84",
+]
+
+[project.optional-dependencies]
+# L3 ligand parameterizability + pocket detection (heavier deps kept optional
+# so L1/L2 candidate search works with just the base deps)
+validate = [
+    "rdkit>=2024.3",
+    "openff-toolkit",
+    "meeko",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
