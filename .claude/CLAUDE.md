@@ -1,7 +1,23 @@
 # protein-selector — Architecture Overview
 
 Context file for Claude when working in this repository. Read this first, then
-`PLAN.md` for full design detail.
+`CONTEXT.md` (task routing) before starting work, then `PLAN.md` for full design detail.
+
+## Working protocol: Interpretable Context Methodology (ICM)
+
+This repo follows ICM: filesystem structure orchestrates the work, not a framework.
+
+- **Layer 0 (identity)** — this file.
+- **Layer 1 (task routing)** — `CONTEXT.md` at repo root: given a task, which domain
+  folder (`structural_biology/`, `bioinformatics/`, `docking/`, `molecular_dynamics/`,
+  `core/`) handles it.
+- **Layer 2 (stage contracts)** — implicit in "Status" below and in `PLAN.md`'s per-layer
+  (L1–L5) sections; no per-folder `CONTEXT.md` yet (see `CONTEXT.md` for why this is a
+  deliberate, not-yet-taken step).
+- **Layer 3 (reference material, stable)** — `PLAN.md`'s design decisions, the verified
+  field paths and API behaviors recorded under "Bugs found via live verification" below.
+- **Layer 4 (working artifacts, changes per run)** — the SQLite cache
+  (`cache/protein_selector.db`), and eventually the ranked output CSV (not yet built).
 
 ## What this repo is
 
@@ -13,11 +29,21 @@ class."
 
 This repo was extracted from the course repo's `exercises/scripts/` (a git submodule of
 the lecture repo). It is independent: no import of, or dependency on, the course repo or
-`exercises/`. See `PLAN.md` §12 for the boundary contract.
+`exercises/`.
+
+**Repository boundary — do not mix content.** This is a fully standalone git repository
+(own `.git`), not a submodule of the parent lecture repo — the parent repo's `git status`
+shows this directory as untracked, by design. Never read `../PLAN.md` or
+`../.claude/CLAUDE.md` (the parent lecture repo's) while working here, and never bring
+context gathered in the parent repo into decisions made in this one, or vice versa. The
+only sanctioned exchange between the two repos is one-way: this repo's vendored output CSV,
+consumed by the course repo, never the other way. See `PLAN.md` §12 for the full contract.
 
 ## The core design (do not lose this)
 
-**Layered filtering, cheap → expensive**, ending in **real validation, not proxies**:
+**Layered filtering, cheap → expensive**, ending in **real validation, not proxies**. Note:
+"L1"–"L5" below are pipeline filtering stages, unrelated to the ICM "Layer 0–4" context
+hierarchy above — see `PLAN.md`'s ICM-framing note for the disambiguation.
 
 ```
 L1 hard filters      (RCSB Search API — free, instant)      → whole PDB
@@ -36,27 +62,49 @@ cheap proxies + measured from L5) and a rationale per row. Never a single scalar
 
 ## Repository layout
 
+The package is organized by **biological/methodological discipline**, not by pipeline-
+stage number (`L1`..`L5`) — discipline names don't need to be renamed when a stage is
+inserted later, and this repo's real cross-cutting concerns turned out to be
+*infrastructure* (persistence, the validation contract), not biology, so those live in
+`core/` instead of being forced into one discipline's folder. See the conversation history
+around 2026-07-05 for the reasoning if this ever needs revisiting.
+
 ```
 PLAN.md                        The full design doc — read before making architectural changes
 pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/rcsb-api);
-                                optional `validate` extra for the L3 stack (rdkit, meeko,
+                                optional `validate` extra for the docking stack (rdkit, meeko,
                                 scipy/numpy/gemmi — meeko's undeclared transitive deps,
                                 openmm, openmmforcefields)
-environment-l5.yml              A SECOND, conda-only environment for L5 (openmm,
-                                openff-toolkit, openmmforcefields, pdbfixer, rdkit) —
-                                openff-toolkit and pdbfixer have no usable pip release,
-                                see its header comment. Not managed by uv/pyproject.toml.
-src/protein_selector/          Pipeline code: find_small_proteins_with_ligands.py (v0 seed,
-                                superseded), candidates.py (L1), simulability.py (L2,
-                                complete), composition.py (L2's assembly/entity-level
-                                fetches: oligomeric state, non-standard residues),
-                                parameterizability.py + meeko_parameterization.py +
-                                ligands.py + pocket.py (L3, nearly complete — needs the
-                                `validate` extra), literature.py (L4, complete),
-                                l5_common.py + md_validation.py (L5 ex03 MD validator,
-                                needs `environment-l5.yml`, NOT the `validate` extra),
-                                store.py (SQLite persistence, all layers) — a proper
-                                src-layout package, not loose scripts
+environment-l5.yml              A SECOND, conda-only environment for the a-priori
+                                validators (openmm, openff-toolkit, openmmforcefields,
+                                pdbfixer, rdkit) — openff-toolkit and pdbfixer have no
+                                usable pip release, see its header comment. Not managed
+                                by uv/pyproject.toml.
+src/protein_selector/
+  core/                         Cross-domain infrastructure, not biology:
+                                 db.py (SQLite connection + full schema, all tables),
+                                 validation_result.py (was l5_common.py — the shared
+                                 {ValidationStatus, FailureMode, ValidationResult}
+                                 contract, PLAN.md §4a), validation_store.py (upsert/load
+                                 for the shared validation-results table)
+  structural_biology/            candidates.py (L1 search/fetch), composition.py
+                                 (assembly/entity-level fetches: oligomeric state,
+                                 non-standard residues), simulability.py (L2 checks,
+                                 complete), store.py (persistence for this domain's tables)
+  bioinformatics/                literature.py (L4 Europe PMC evidence count, complete),
+                                 store.py
+  docking/                       parameterizability.py + meeko_parameterization.py +
+                                 ligands.py + pocket.py (L3 ligand chemistry, nearly
+                                 complete — needs the `validate` extra), store.py.
+                                 **Deferred decision:** if/when MD-side OpenFF
+                                 parameterization is written (not started), decide then
+                                 whether it reuses parameterizability.py's RDKit-sanitize
+                                 check or gets its own module — don't move anything here
+                                 preemptively; today every consumer of these four files is
+                                 docking-only (verified via the import graph 2026-07-05).
+  molecular_dynamics/            md_validation.py (ex03 MD validator, needs
+                                 `environment-l5.yml`, NOT the `validate` extra)
+  legacy/                        find_small_proteins_with_ligands.py (v0 seed, superseded)
 scripts/                       benchmark_pipeline.py — manual live-API diagnostic, not a
                                 pytest test (see its docstring)
 tests/protein_selector/        Tests, mirroring src/protein_selector/'s structure 1:1 —
@@ -86,26 +134,27 @@ it — verify via `uv add <pkg>` and document why in `pyproject.toml` as a comme
 `openff-toolkit` exclusion note there) rather than silently omitting it.
 
 **Heavy optional deps (the `validate` extra: rdkit, meeko) must stay lazily imported.**
-`store.py` is imported by every layer, including L1/L2-only users who never installed
-`validate` — it transitively imports `parameterizability.py`, so if that module imports
-`rdkit` at module top-level, `import protein_selector.store` breaks for a base-only
-install. This actually happened once (caught by manually testing `uv sync` without
-`--extra validate` then trying to import `store`, since neither `ruff` nor `ty` catch a
-missing-optional-dependency-at-import-time bug). The fix: import `rdkit` lazily inside
-`check_ligand_parameterizable`, not at module level — the dataclass itself has no rdkit
-dependency. When adding the next `validate`-gated Python check (Meeko), keep the same
-lazy-import pattern and manually verify `uv sync` (no extras) + `import protein_selector.store`
-still works before committing. The same principle applies to `fpocket` (pocket detection,
-conda-only, invoked via subprocess, no JVM — p2rank was rejected specifically for its Java
-dependency, see `PLAN.md` §9): don't assume the binary exists at import time either — check
-it lazily inside the function that actually shells out to it, so importing the module never
-requires the external tool to be installed.
+`docking/store.py` transitively imports `docking/parameterizability.py`, so if that module
+imported `rdkit` at module top-level, `import protein_selector.docking.store` would break
+for a base-only install that never ran `uv sync --extra validate`. This actually happened
+once (caught by manually testing `uv sync` without `--extra validate` then trying to import
+the store module, since neither `ruff` nor `ty` catch a missing-optional-dependency-at-
+import-time bug). The fix: import `rdkit` lazily inside `check_ligand_parameterizable`, not
+at module level — the dataclass itself has no rdkit dependency. When adding the next
+`validate`-gated Python check (Meeko), keep the same lazy-import pattern and manually
+verify `uv sync` (no extras) + `import protein_selector.docking.store` still works before
+committing. The same principle applies to `fpocket` (pocket detection, conda-only, invoked
+via subprocess, no JVM — p2rank was rejected specifically for its Java dependency, see
+`PLAN.md` §9): don't assume the binary exists at import time either — check it lazily
+inside the function that actually shells out to it, so importing the module never requires
+the external tool to be installed.
 
 ## Testing
 
 Tests live in `tests/`, mirroring `src/protein_selector/`'s structure file-for-file:
-`src/protein_selector/candidates.py` → `tests/protein_selector/test_candidates.py`, etc.
-Add tests alongside new modules as they're written, not as a separate later pass.
+`src/protein_selector/structural_biology/candidates.py` →
+`tests/protein_selector/structural_biology/test_candidates.py`, etc. Add tests alongside
+new modules as they're written, not as a separate later pass.
 
 Network-touching code (anything that calls the live RCSB/Europe PMC/AlphaFold APIs) should
 be tested with the network boundary mocked in the committed test suite -- the real course
@@ -124,7 +173,7 @@ response shape, not a plausible-looking guess.
 
 Run via `uv run pytest`.
 
-## Bugs found via live verification (read before touching candidates.py/composition.py)
+## Bugs found via live verification (read before touching structural_biology/candidates.py or structural_biology/composition.py)
 
 Both caught 2026-07-04 by actually calling the real RCSB API, after weeks of mocked tests
 passing cleanly. Concrete lesson: a mock that encodes the same wrong assumption as the code
@@ -160,31 +209,31 @@ re-verify live against a real PDB ID before trusting the change.
 
 ## Status
 
-- **L1 (`candidates.py`):** implemented via the official `rcsb-api` package — a single
+- **L1 (`structural_biology/candidates.py`):** implemented via the official `rcsb-api` package — a single
   structured search query (`build_l1_query`/`search_candidate_ids`) plus batched GraphQL
   metadata fetch (`fetch_entry_metadata`, up to 1000 IDs/request). **Live-verified
   end-to-end against 4HHB (2026-07-04)** — see "Bugs found via live verification" above for
   two real bugs this caught and fixed (wrong field paths; a pagination footgun).
-- **L2 (`simulability.py` + `composition.py`): fully implemented, all four checks,
+- **L2 (`structural_biology/simulability.py` + `structural_biology/composition.py`): fully implemented, all four checks,
   live-verified.** `check_size_and_resolution` (residue-count window + resolution ceiling)
   and `check_completeness` (unmodeled-residue fraction) are pure logic on `CandidateEntry`
   fields L1 already fetches. `check_oligomeric_state` and `check_non_standard_residues`
-  need `composition.py`'s separate assembly-level and polymer-entity-level fetches
+  need `structural_biology/composition.py`'s separate assembly-level and polymer-entity-level fetches
   (`fetch_oligomeric_state`/`fetch_non_standard_residues`). `check_full_simulability`
   composes all four into one `SimulabilityResult` — oligomeric-state/non-standard-residue
   gating is informational by default (no ceiling / allowed), since PLAN.md never mandated
   a hard rule for either; set `max_oligomeric_count`/`allow_non_standard_residues` to
   actually gate. Full pipeline verified live end-to-end for 4HHB.
-- **L3 (`parameterizability.py` + `meeko_parameterization.py` + `ligands.py` +
-  `pocket.py`):** nearly done, one piece remains. RDKit sanitization
+- **L3 (`docking/parameterizability.py` + `docking/meeko_parameterization.py` +
+  `docking/ligands.py` + `docking/pocket.py`):** nearly done, one piece remains. RDKit sanitization
   (`check_ligand_parameterizable`/`filter_parameterizable`) and real Meeko
   parameterization (`check_meeko_parameterizable`/`filter_meeko_parameterizable`, SMILES →
   3D embed → `MoleculePreparation` → PDBQT) are both implemented and tested with **real
   rdkit/meeko calls** (pure local logic, no network) — requires the `validate` extra.
-  **SMILES wiring is done and live-verified (2026-07-05):** `ligands.py`'s
+  **SMILES wiring is done and live-verified (2026-07-05):** `docking/ligands.py`'s
   `fetch_ligand_ccd_codes` (non-polymer entity ID → CCD code) then
   `fetch_smiles_for_ccd_codes` (CCD code → SMILES) connect real L1 survivors to both
-  checks end-to-end. **fpocket pocket detection is done** (`pocket.py`: `run_fpocket`/
+  checks end-to-end. **fpocket pocket detection is done** (`docking/pocket.py`: `run_fpocket`/
   `check_pocket_detected`/`parse_fpocket_info`) — decided over p2rank (no JVM, see
   `PLAN.md` §9); CLI/output format transcribed verbatim from fpocket's own
   `GETTINGSTARTED.md`, not guessed, but **not yet cross-checked against a real fpocket
@@ -196,7 +245,7 @@ re-verify live against a real PDB ID before trusting the change.
   **OpenFF (MD-side) parameterization is still not started** — `openmm` (verified real
   PyPI package) is in the `validate` extra for this, but no wrapper exists yet;
   `openff-toolkit` itself remains excluded (its only PyPI release is yanked).
-- **L4 (`literature.py`): fully implemented, live-verified.** `fetch_literature_count`/
+- **L4 (`bioinformatics/literature.py`): fully implemented, live-verified.** `fetch_literature_count`/
   `fetch_literature_counts` query Europe PMC's REST search API using the officially
   documented `ACCESSION_ID`/`ACCESSION_TYPE:pdb` fields (verified against the real Web
   Service Reference Guide PDF, not guessed — an earlier guess at `xref_source`/`xref_id`
@@ -205,28 +254,29 @@ re-verify live against a real PDB ID before trusting the change.
   No batch endpoint exists (unlike RCSB's Data API): one HTTP request per PDB ID, sharing
   one `requests.Session`. Verified live end-to-end: L1 candidates → literature counts →
   SQLite round-trip.
-- **Persistence (`store.py`):** SQLite, one table per layer (`l1_candidates`,
+- **Persistence (`core/db.py` + each domain's `store.py`):** SQLite, one table per layer (`l1_candidates`,
   `l2_simulability`, `l2_oligomeric_state`, `l2_entity_composition`,
   `l3_parameterizability`, `l3_meeko_parameterization`, `l3_pocket_detection`,
   `l4_literature`, `l5_validation`), keyed by `pdb_id`
   (most), `(pdb_id, entity_id)` (`l2_entity_composition` — an entry can have multiple
   polymer entities), `ligand_id` (`l3_parameterizability` — a ligand's
   parameterizability doesn't depend on which entry it appears in), or `(pdb_id, exercise)`
-  (`l5_validation` — shared across all L5 validators, keyed by which exercise validated
-  it), all upsert-based. Replaced `candidates.py`'s original
+  (`l5_validation` — shared across all validators, keyed by which exercise validated
+  it, persisted via `core/validation_store.py`), all upsert-based. Replaced the original
   JSON-file cache (see `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet).
   **Each layer keeps its own small dataclass** (`CandidateEntry`, `SimulabilityResult`,
   `ParameterizabilityResult`, `AssemblyInfo`, `EntityCompositionInfo`, `ValidationResult`)
   — `l4_literature` is the one exception, a plain `dict[pdb_id, int|None]` with no
-  dataclass, since a single scalar doesn't need one. `store.py` only persists/reloads
-  each layer's result, it does not merge them into one growing object. Joining across
-  layers into the final §8 output row is a separate, not-yet-built step; don't conflate
-  "persist this layer's result" with "build the final report."
-- **L5 (`l5_common.py` + `md_validation.py`): ex03 MD validator done, ex02/ex04 not
-  started.** `l5_common.py` holds the shared `{ValidationStatus, FailureMode,
-  ValidationResult}` interface PLAN.md §4a calls for across all L5 validators — add new
-  `FailureMode` members here, don't invent a parallel enum per validator.
-  `md_validation.py`'s `run_test_md`: real PDBFixer repair then a real short OpenMM MD
+  dataclass, since a single scalar doesn't need one. Each domain's `store.py` only
+  persists/reloads its own layer's result, it does not merge them into one growing
+  object. Joining across layers into the final §8 output row is a separate,
+  not-yet-built step; don't conflate "persist this layer's result" with "build the
+  final report."
+- **L5 (`core/validation_result.py` + `molecular_dynamics/md_validation.py`): ex03 MD
+  validator done, ex02/ex04 not started.** `core/validation_result.py` holds the shared
+  `{ValidationStatus, FailureMode, ValidationResult}` interface PLAN.md §4a calls for
+  across all validators — add new `FailureMode` members here, don't invent a parallel
+  enum per validator. `molecular_dynamics/md_validation.py`'s `run_test_md`: real PDBFixer repair then a real short OpenMM MD
   run, **live-verified end-to-end (2026-07-05)** including a real failure case (4HHB
   with HEM left in → `ValueError: No template found for residue 574 (HEM)...`, the
   actual live message, not guessed). **Requires a second, conda-only environment**
@@ -243,11 +293,12 @@ re-verify live against a real PDB ID before trusting the change.
   Runs in vacuum (`NoCutoff`), not explicit solvent — see `md_validation.py`'s
   docstring for the real measured wall-clock tradeoff this was chosen on (~2370s/ns for
   a 1231-atom apo protein on CPU). **ex02 (AlphaFold) and ex04 (docking/Vina+PLIP)
-  validators are not started.**
-- **Difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
-  (the original v0 seed) still exists unchanged and is superseded by `candidates.py`; it can
-  be removed once `candidates.py`'s UniProt cofactor-lookup path is confirmed no longer
-  wanted (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10
+  validators are not started** (they will live in a future `structure_prediction/` and in
+  `docking/`, respectively).
+- **Difficulty scoring, output table:** not started. `legacy/find_small_proteins_with_ligands.py`
+  (the original v0 seed) still exists unchanged and is superseded by
+  `structural_biology/candidates.py`; it can be removed once `candidates.py`'s UniProt
+  cofactor-lookup path is confirmed no longer wanted (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10
   step 1.
 
 ## Anti-hallucination rules

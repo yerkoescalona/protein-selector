@@ -10,6 +10,14 @@ instructor-vs-student fork is **resolved in §2**: this is an instructor validat
 > (rename freely). The course depends on this tool's **output** (a vendored CSV), never on
 > its toolchain — see §12.
 
+> **ICM framing, and a naming collision to be aware of:** this repo follows the
+> Interpretable Context Methodology (see `CONTEXT.md`), whose context hierarchy is also
+> called "Layers" (0 identity, 1 routing, 2 stage contracts, 3 reference, 4 working
+> artifacts). That vocabulary is unrelated to this document's "L1"–"L5" *pipeline filtering
+> stages* (hard filters → simulability → parameterizability → judgment → a-priori
+> validation) used everywhere below. When either term appears elsewhere in this repo's
+> docs, "Layer 0–4" means ICM context; "L1–L5" means pipeline filtering.
+
 ---
 
 ## 1. Goal (one sentence)
