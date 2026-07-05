@@ -93,6 +93,18 @@ CREATE TABLE IF NOT EXISTS l2_entity_composition (
 )
 """
 
+# Keyed by pdb_id. NULL literature_count means "unknown" (fetch failed), NOT
+# "zero papers" -- see literature.fetch_literature_count's docstring. No
+# dedicated dataclass for this layer: a literature count is a single scalar
+# per pdb_id, not a multi-field record, so a plain dict is the right shape
+# (unlike SimulabilityResult/AssemblyInfo/etc., which bundle multiple fields).
+_L4_LITERATURE_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS l4_literature (
+    pdb_id TEXT PRIMARY KEY,
+    literature_count INTEGER
+)
+"""
+
 
 @contextmanager
 def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
@@ -108,6 +120,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_L3_TABLE_SCHEMA)
     conn.execute(_L2_OLIGOMERIC_STATE_TABLE_SCHEMA)
     conn.execute(_L2_ENTITY_COMPOSITION_TABLE_SCHEMA)
+    conn.execute(_L4_LITERATURE_TABLE_SCHEMA)
     try:
         yield conn
         conn.commit()
@@ -359,3 +372,32 @@ def load_parameterizability(
         )
         for row in rows
     }
+
+
+def upsert_literature_counts(
+    counts: dict[str, int | None], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Insert or update L4 literature-count rows, keyed by ``pdb_id``."""
+    if not counts:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO l4_literature (pdb_id, literature_count)
+            VALUES (?, ?)
+            ON CONFLICT(pdb_id) DO UPDATE SET
+                literature_count=excluded.literature_count
+            """,
+            list(counts.items()),
+        )
+
+
+def load_literature_counts(db_path: Path = DEFAULT_DB_PATH) -> dict[str, int | None]:
+    """Load all L4 literature-count rows, keyed by ``pdb_id``."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT pdb_id, literature_count FROM l4_literature"
+        ).fetchall()
+    return {row[0]: row[1] for row in rows}

@@ -15,11 +15,13 @@ from protein_selector.simulability import SimulabilityResult
 from protein_selector.store import (
     load_candidates,
     load_entity_composition,
+    load_literature_counts,
     load_oligomeric_state,
     load_parameterizability,
     load_simulability,
     upsert_candidates,
     upsert_entity_composition,
+    upsert_literature_counts,
     upsert_oligomeric_state,
     upsert_parameterizability,
     upsert_simulability,
@@ -213,8 +215,36 @@ class TestEntityCompositionRoundTrip:
         assert loaded["4HHB"][0].nstd_monomer is True
 
 
+class TestLiteratureCountsRoundTrip:
+    """No dedicated dataclass -- a plain dict[pdb_id, int | None]."""
+
+    def test_round_trip_preserves_data_including_none(self, db_path):
+        counts = {"4HHB": 39, "1STP": 67, "UNKNOWN1": None}
+
+        upsert_literature_counts(counts, db_path=db_path)
+        loaded = load_literature_counts(db_path=db_path)
+
+        assert loaded == counts
+
+    def test_load_missing_file_returns_empty_dict(self, tmp_path):
+        assert load_literature_counts(db_path=tmp_path / "does_not_exist.db") == {}
+
+    def test_upsert_empty_dict_is_a_no_op(self, tmp_path):
+        missing_path = tmp_path / "never_created.db"
+        upsert_literature_counts({}, db_path=missing_path)
+        assert not missing_path.exists()
+
+    def test_upsert_updates_existing_row_by_pdb_id(self, db_path):
+        upsert_literature_counts({"4HHB": None}, db_path=db_path)
+        upsert_literature_counts({"4HHB": 39}, db_path=db_path)
+
+        loaded = load_literature_counts(db_path=db_path)
+
+        assert loaded == {"4HHB": 39}
+
+
 class TestAllTablesShareOneFile:
-    """All L1/L2/L3 tables live in the same SQLite file, independently keyed."""
+    """All L1/L2/L3/L4 tables live in the same SQLite file, independently keyed."""
 
     def test_all_layers_coexist(self, db_path, sample_candidate_entry):
         upsert_candidates([sample_candidate_entry], db_path=db_path)
@@ -234,9 +264,11 @@ class TestAllTablesShareOneFile:
             [EntityCompositionInfo(pdb_id="4HHB", entity_id="1", nstd_monomer=False)],
             db_path=db_path,
         )
+        upsert_literature_counts({"4HHB": 39}, db_path=db_path)
 
         assert set(load_candidates(db_path=db_path)) == {"4HHB"}
         assert set(load_simulability(db_path=db_path)) == {"4HHB"}
         assert set(load_parameterizability(db_path=db_path)) == {"GLC"}
         assert set(load_oligomeric_state(db_path=db_path)) == {"4HHB"}
         assert set(load_entity_composition(db_path=db_path)) == {"4HHB"}
+        assert set(load_literature_counts(db_path=db_path)) == {"4HHB"}

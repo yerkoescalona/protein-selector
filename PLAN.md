@@ -397,7 +397,17 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      conda-forge). Still deferred pending verification of fpocket's actual
      CLI/output format against its real documentation — do not guess column
      names/flags into a shipped subprocess wrapper, per §11.
-3. [ ] **Literature count** via Europe PMC → integer.
+3. [x] **Literature count** via Europe PMC → integer. **Implemented, live-verified
+   (2026-07-05).** `literature.py`: `fetch_literature_count`/`fetch_literature_counts`,
+   using the officially documented `ACCESSION_ID`/`ACCESSION_TYPE:pdb` search fields
+   (Europe PMC Web Service Reference Guide — verified against the real docs, not
+   guessed). Returns `int | None` (`None` = fetch failed/unknown, never silently `0`
+   — 0 is a real, meaningful answer here: "no papers found" is different from
+   "couldn't ask the question"). No batch endpoint exists (unlike RCSB's Data API) —
+   one HTTP request per PDB ID, sharing one `requests.Session` for connection pooling.
+   Persisted via `store.py`'s new `l4_literature` table (plain `pdb_id → int|None`,
+   no dataclass — a single scalar doesn't need one). Verified live end-to-end:
+   candidates → literature counts → SQLite round-trip, all matching.
 4. [ ] **L5 validation harness (the core):** run at least the **ex04 docking validator**
    first (fastest, highest in-class failure rate — the manual grid-box pain), then the
    **ex03 MD validator**, then the **ex02 AlphaFold validator**. Record

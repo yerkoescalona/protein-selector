@@ -46,8 +46,11 @@ src/protein_selector/          Pipeline code: find_small_proteins_with_ligands.p
                                 complete), composition.py (L2's assembly/entity-level
                                 fetches: oligomeric state, non-standard residues),
                                 parameterizability.py (L3, partial — needs the `validate`
-                                extra), store.py (SQLite persistence, all layers) —
-                                a proper src-layout package, not loose scripts
+                                extra), literature.py (L4, complete), store.py (SQLite
+                                persistence, all layers) — a proper src-layout package,
+                                not loose scripts
+scripts/                       benchmark_pipeline.py — manual live-API diagnostic, not a
+                                pytest test (see its docstring)
 tests/protein_selector/        Tests, mirroring src/protein_selector/'s structure 1:1 —
                                 see "Testing" below
 uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
@@ -171,19 +174,30 @@ re-verify live against a real PDB ID before trusting the change.
   fpocket pocket detection are **not started** — fpocket (decided over p2rank: no JVM, see
   `PLAN.md` §9) is deferred pending verification of its actual CLI/output format; do not
   guess its interface into a shipped wrapper.
+- **L4 (`literature.py`): fully implemented, live-verified.** `fetch_literature_count`/
+  `fetch_literature_counts` query Europe PMC's REST search API using the officially
+  documented `ACCESSION_ID`/`ACCESSION_TYPE:pdb` fields (verified against the real Web
+  Service Reference Guide PDF, not guessed — an earlier guess at `xref_source`/`xref_id`
+  gave 0 hits and was discarded). Returns `int | None`, never silently `0` for a failed
+  request — `0` is a legitimate "no papers" answer here, distinct from "couldn't ask."
+  No batch endpoint exists (unlike RCSB's Data API): one HTTP request per PDB ID, sharing
+  one `requests.Session`. Verified live end-to-end: L1 candidates → literature counts →
+  SQLite round-trip.
 - **Persistence (`store.py`):** SQLite, one table per layer (`l1_candidates`,
   `l2_simulability`, `l2_oligomeric_state`, `l2_entity_composition`,
-  `l3_parameterizability`), keyed by `pdb_id` (most), `(pdb_id, entity_id)`
-  (`l2_entity_composition` — an entry can have multiple polymer entities), or `ligand_id`
-  (`l3_parameterizability` — a ligand's parameterizability doesn't depend on which entry it
-  appears in), all upsert-based. Replaced `candidates.py`'s original JSON-file cache (see
-  `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet). **Each layer keeps its own
-  small dataclass** (`CandidateEntry`, `SimulabilityResult`, `ParameterizabilityResult`,
-  `AssemblyInfo`, `EntityCompositionInfo`) — `store.py` only persists/reloads them, it does
+  `l3_parameterizability`, `l4_literature`), keyed by `pdb_id` (most), `(pdb_id,
+  entity_id)` (`l2_entity_composition` — an entry can have multiple polymer entities), or
+  `ligand_id` (`l3_parameterizability` — a ligand's parameterizability doesn't depend on
+  which entry it appears in), all upsert-based. Replaced `candidates.py`'s original
+  JSON-file cache (see `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet).
+  **Each layer keeps its own small dataclass** (`CandidateEntry`, `SimulabilityResult`,
+  `ParameterizabilityResult`, `AssemblyInfo`, `EntityCompositionInfo`) — `l4_literature` is
+  the one exception, a plain `dict[pdb_id, int|None]` with no dataclass, since a single
+  scalar doesn't need one. `store.py` only persists/reloads each layer's result, it does
   not merge them into one growing object. Joining across layers into the final §8 output
   row is a separate, not-yet-built step; don't conflate "persist this layer's result" with
   "build the final report."
-- **L4–L5, difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
+- **L5, difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
   (the original v0 seed) still exists unchanged and is superseded by `candidates.py`; it can
   be removed once `candidates.py`'s UniProt cofactor-lookup path is confirmed no longer
   wanted (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10
