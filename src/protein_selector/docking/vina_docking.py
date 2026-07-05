@@ -33,12 +33,15 @@ proper substructure-matched RMSD (e.g. RDKit's
 ``rdMolAlign.CalcRMS``/``GetBestRMS`` with template bond-order assignment)
 instead of this index-order shortcut.
 
-**Not yet cross-checked against a real Vina install** (no conda in this
-sandbox, same caveat as ``docking/pocket.py``'s fpocket wrapper) -- the
-``vina`` Python API calls below (``set_receptor``/``set_ligand_from_file``/
-``compute_vina_maps``/``dock``/``write_poses``) are transcribed from
-AutoDock-Vina's own documented "Basic docking" example, not guessed, but
-run this for real before trusting it on actual candidates.
+**Live-verified (2026-07-06)** in a throwaway `micromamba` env bootstrapped
+from `environment-validation.yml`: `dock_top_pose` run for real -- a real
+receptor PDBQT (1UBQ, prepped with `obabel -xr`), a real ligand PDBQT
+(ethanol, via `meeko_parameterization.py`'s own pipeline), and a real
+`vina` install. `set_receptor`/`set_ligand_from_file`/`compute_vina_maps`/
+`dock`/`write_poses` all worked exactly as transcribed, and
+`_parse_heavy_atom_coords` correctly extracted heavy-atom coordinates from
+the real output PDBQT (3 heavy atoms, hydrogen skipped) -- confirming both
+the Vina API and the RMSD math against a real docking run, not guessed.
 """
 
 from __future__ import annotations

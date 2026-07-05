@@ -505,10 +505,12 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      toolchain — a ligand can pass one and fail the other). `openff.toolkit` is lazily
      imported inside the check function, same pattern as `md_validation.py`'s
      `pdbfixer`/`openmm` imports, so `store.py` stays importable without the conda env.
-     **Not yet cross-checked against a real OpenFF install** (this sandbox has no conda by
-     default, same caveat as `docking/pocket.py`'s fpocket wrapper) — built from the
-     documented `openff.toolkit`/SMIRNOFF API, not guessed; run it for real before trusting
-     it on actual candidates, same discipline as the other conda-only checks in this repo.
+     **Live-verified (2026-07-06)** in a throwaway `micromamba` env bootstrapped from
+     `environment-validation.yml` (same approach as `md_validation.py`'s own live
+     verification): run for real against glucose's SMILES — parses, embeds a conformer,
+     and the SMIRNOFF `openff-2.1.0.offxml` force field builds a real OpenMM `System`
+     with no errors. The `Molecule.from_smiles`/`generate_conformers`/
+     `ForceField.create_openmm_system` API is confirmed correct as written, not guessed.
    - [x] **ex04 docking validator** (`docking/vina_docking.py` + `docking/plip_analysis.py`
      + `docking/docking_validation.py`) — implemented. `vina_docking.dock_top_pose`/
      `run_self_dock` run a real Vina self-dock and compute the top pose's RMSD to the
@@ -524,10 +526,23 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      `pdbfixer`/`openff-toolkit`**: verified live (2026-07-05) that neither has a usable
      pip wheel/build on this platform (`vina` needs Boost at build time; `plip`'s build
      shells out to `pip install openbabel`, which fails the same way) — both added to
-     `environment-validation.yml` (plus `openbabel`, needed by plip). **Not yet
-     cross-checked against real installs** (no conda in this sandbox) — built from each
-     package's own documented API, not guessed, but run for real before trusting on actual
-     candidates, same discipline as this repo's other conda-only checks.
+     `environment-validation.yml` (plus `openbabel`, needed by plip). **Live-verified
+     end-to-end (2026-07-06)** in a throwaway `micromamba` env: a real receptor (1UBQ,
+     prepped via `obabel -xr`), a real ligand (ethanol, via `meeko_parameterization.py`'s
+     own pipeline), a real Vina dock, and real PLIP analysis, run through
+     `run_docking_validation` end to end — returned `ValidationStatus.SUCCESS` with a
+     0.04 Å self-dock RMSD and one real PLIP water-bridge interaction. **Two real,
+     silent bugs were caught and fixed by this verification** (see
+     `docking_validation.py`'s module docstring for full detail): (1) Meeko's PDBQT
+     output leaves the ligand's chain-ID column blank, which made PLIP's ligand finder
+     silently return zero ligands — fixed by forcing a real chain ID in
+     `_pdbqt_pose_to_pdb_hetatm_block`; (2) naively appending the ligand's HETATM lines
+     after a real receptor PDB's own trailing `END`/`MASTER` records produced invalid
+     "atom records after END" PDB, which also silently zeroed out PLIP's ligand
+     detection — fixed by `_assemble_complex_pdb`, which strips those trailing records
+     first. Both are exactly the kind of bug this repo's testing discipline warns about:
+     a monkeypatched unit test encoding the same wrong assumption never would have caught
+     either. Regression tests added for both.
    - [ ] **ex02 modeling validator** (`modeling/`, new domain folder) — not started.
      Fetch-only: pull an existing AlphaFold DB entry for the candidate if one exists,
      record pLDDT/PAE. Deliberately does **not** run a new AlphaFold prediction.

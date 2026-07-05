@@ -20,12 +20,15 @@ reason as ``md_validation.py``: keeps this module (and anything that
 transitively imports it, e.g. ``store.py``) loadable without the conda env
 installed.
 
-**Not yet cross-checked against a real OpenFF install** (this sandbox has no
-conda by default, same caveat as ``docking/pocket.py``'s fpocket wrapper and
-``md_validation.py`` itself) -- built from the documented
-``openff.toolkit.Molecule``/``ForceField`` API, not guessed, but run it for
-real (e.g. against a real bound-ligand SMILES) before trusting it on actual
-candidates.
+**Live-verified (2026-07-06)** in a throwaway `micromamba` env bootstrapped
+from `environment-validation.yml` (this sandbox has no conda by default;
+same bootstrap approach as `md_validation.py`'s own live verification):
+`check_ligand_openff_parameterizable` run for real against glucose's SMILES
+(the same molecule `docking/parameterizability.py`'s tests use) -- parses,
+embeds a conformer, and the SMIRNOFF `openff-2.1.0.offxml` force field
+builds a real OpenMM `System` from it, no errors. The documented
+`Molecule.from_smiles`/`generate_conformers`/`ForceField.create_openmm_system`
+API used below is confirmed correct as written, not guessed.
 """
 
 from __future__ import annotations

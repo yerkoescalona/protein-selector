@@ -236,6 +236,32 @@ it's mocking will never catch that assumption being wrong.
 If you touch `_ENTRY_RETURN_FIELDS`, `_parse_entry`, or `search_candidate_ids` again,
 re-verify live against a real PDB ID before trusting the change.
 
+**Two more, caught 2026-07-06 in `docking/docking_validation.py`** by bootstrapping a
+throwaway `micromamba` env from `environment-validation.yml` and running the ex04
+docking validator against a real receptor (1UBQ) + real docked ligand pose. Same lesson:
+both were silent (no exception, just PLIP quietly reporting zero ligands), so a
+monkeypatched unit test that assumed the complex-PDB assembly was already correct never
+would have caught either.
+
+3. **Blank ligand chain-ID column made PLIP detect zero ligands.** Meeko's PDBQT output
+   leaves the chain-ID column blank; PLIP's ligand finder requires a real, non-blank
+   chain ID to recognize a HETATM block as a ligand at all -- with a blank chain,
+   `PDBComplex.ligands` silently comes back `[]`, which downstream would have looked
+   exactly like "no interpretable interactions" (a false `FailureMode.DOCKING_QUALITY`)
+   rather than the real cause. Fixed: `_pdbqt_pose_to_pdb_hetatm_block` now always forces
+   a real chain ID (`_LIGAND_CHAIN_ID = "X"`) into that column.
+
+4. **Ligand HETATM lines appended after the receptor's own `END`/`MASTER` records.** A
+   real RCSB-fetched receptor PDB already ends with its own trailing `END`/`MASTER`
+   lines; naively appending the docked ligand's `HETATM` lines after those produced a
+   file with atom records after `END` -- invalid PDB that also made PLIP silently detect
+   zero ligands. Fixed: `_assemble_complex_pdb` strips the receptor's own trailing
+   `END`/`MASTER` lines before appending the ligand and writes exactly one final `END`.
+
+Regression tests lock both in (`TestPdbqtPoseToPdbHetatmBlock`/`TestAssembleComplexPdb` in
+`test_docking_validation.py`). If you touch either function again, re-verify live against
+a real docked complex before trusting the change.
+
 ## Status
 
 - **Hard filters (`structural_biology/candidates.py`):** implemented via the official `rcsb-api` package — a single
@@ -328,20 +354,27 @@ re-verify live against a real PDB ID before trusting the change.
   persisted via the new `molecular_dynamics/store.py`'s `openff_parameterization` table
   (keyed by `ligand_id`, separate from `parameterizability`/`meeko_parameterization` — a
   different toolchain, a ligand can pass one and fail the other). `openff.toolkit` is
-  lazily imported, same pattern as `md_validation.py`. **Not yet cross-checked against a
-  real OpenFF install** (no conda in this sandbox) — built from the documented API, not
-  guessed; run it for real before trusting it. **ex04 (docking/Vina+PLIP) is now
-  implemented** — `docking/vina_docking.py` (`dock_top_pose`/`run_self_dock`: real Vina
-  self-dock + self-dock RMSD to the crystal pose), `docking/plip_analysis.py`
-  (`run_plip_analysis`: real PLIP interaction counts), `docking/docking_validation.py`
-  (`run_docking_validation`: composes both into one `ValidationResult` for
-  `exercise="ex04"`). New `FailureMode.DOCKING_QUALITY` for "dock itself is poor" (bad
-  RMSD or no interactions), distinct from `POCKET`/`PARAMETERIZATION`. `vina`/`plip` are
-  conda-only like `pdbfixer`/`openff-toolkit` (verified live: neither builds via pip on
-  this platform — `vina` needs Boost, `plip`'s build pip-installs `openbabel` which fails
-  the same way); both plus `openbabel` added to `environment-validation.yml`. **Not yet
-  cross-checked against real installs** (no conda in this sandbox) — built from each
-  package's documented API, not guessed; run for real before trusting. **ex02 (modeling)
+  lazily imported, same pattern as `md_validation.py`. **Live-verified (2026-07-06)** in a
+  throwaway `micromamba` env bootstrapped from `environment-validation.yml` — glucose's
+  SMILES parses, embeds, and the SMIRNOFF `openff-2.1.0.offxml` force field builds a real
+  OpenMM `System` with no errors. **ex04 (docking/Vina+PLIP) is now implemented and
+  live-verified end-to-end (2026-07-06)** — `docking/vina_docking.py`
+  (`dock_top_pose`/`run_self_dock`: real Vina self-dock + self-dock RMSD to the crystal
+  pose), `docking/plip_analysis.py` (`run_plip_analysis`: real PLIP interaction counts),
+  `docking/docking_validation.py` (`run_docking_validation`: composes both into one
+  `ValidationResult` for `exercise="ex04"`). New `FailureMode.DOCKING_QUALITY` for "dock
+  itself is poor" (bad RMSD or no interactions), distinct from
+  `POCKET`/`PARAMETERIZATION`. `vina`/`plip` are conda-only like `pdbfixer`/`openff-toolkit`
+  (verified live: neither builds via pip on this platform — `vina` needs Boost, `plip`'s
+  build pip-installs `openbabel` which fails the same way); both plus `openbabel` added to
+  `environment-validation.yml`. Full pipeline run for real (1UBQ receptor prepped via
+  `obabel -xr`, ethanol ligand via `meeko_parameterization.py`) → `SUCCESS`, 0.04 Å
+  self-dock RMSD, one real PLIP water-bridge interaction. **Two real, silent bugs caught
+  and fixed by this verification** (see `docking_validation.py`'s docstring): a blank
+  ligand chain-ID column (real Meeko output) and receptor-PDB records-after-`END` both
+  independently made PLIP silently detect zero ligands — neither raised an exception, so
+  neither would have been caught by the monkeypatched unit tests alone. Regression tests
+  added for both. **ex02 (modeling)
   is not started** (`modeling/`, fetch-only AlphaFold DB lookup). `protein_design/`
   (mutation-focused) is deferred past v0 entirely.
 - **Difficulty scoring, output table:** not started. `legacy/find_small_proteins_with_ligands.py`

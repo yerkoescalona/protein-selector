@@ -19,11 +19,18 @@ prebuilt ``plip``/``openbabel`` packages instead -- see
 ``environment-validation.yml``. Lazily imported inside the one function
 that needs it, same reason as this domain's other conda-only modules.
 
-**Not yet cross-checked against a real PLIP install** (no conda in this
-sandbox) -- the ``PDBComplex``/``characterize_complex``/``interaction_sets``
-API and the binding-site ID format (``f"{hetid}:{chain}:{position}"``) below
-are transcribed from PLIP's own documented "Basic Usage" API example, not
-guessed, but run this for real before trusting it on actual candidates.
+**Live-verified (2026-07-06)** in a throwaway `micromamba` env bootstrapped
+from `environment-validation.yml`, against a real docked complex (1UBQ +
+a real Vina-docked ethanol pose): `PDBComplex.ligands`, `characterize_complex`,
+`interaction_sets` (keyed by exactly `f"{hetid}:{chain}:{position}"`, e.g.
+`"UNL:X:1"`), and every attribute name in `_INTERACTION_ATTRIBUTES` below
+(`hbonds_pdon`/`hbonds_ldon`/`hydrophobic_contacts`/`pistacking`/etc.) all
+confirmed real, not guessed. **One real bug caught and fixed by this
+verification, in the caller** (`docking_validation.py`, not this module):
+a blank ligand chain-ID column made `PDBComplex.ligands` silently return
+`[]` -- PLIP requires a real, non-blank chain ID to detect the ligand at
+all. See `docking_validation.py`'s `_pdbqt_pose_to_pdb_hetatm_block`
+docstring for the fix.
 """
 
 from __future__ import annotations

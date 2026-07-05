@@ -13,6 +13,7 @@ from __future__ import annotations
 from protein_selector.core.validation_result import FailureMode, ValidationStatus
 from protein_selector.docking import docking_validation
 from protein_selector.docking.docking_validation import (
+    _assemble_complex_pdb,
     _pdbqt_pose_to_pdb_hetatm_block,
     run_docking_validation,
 )
@@ -27,6 +28,16 @@ _MATCHING_POSE_PDBQT = (
     "ATOM      2  O1  LIG A   1       4.000   5.000   6.000  0.00  0.00     0.000 OA\n"
 )
 
+# Real Meeko output leaves the chain-ID column (index 21) blank -- unlike
+# the fixture above, which happens to carry "A" there. This is what
+# actually comes out of meeko_parameterization.py's real PDBQT writer
+# (verified live, 2026-07-06), and the case that caught the blank-chain
+# bug (see docking_validation.py's module docstring).
+_REAL_MEEKO_STYLE_POSE_PDBQT = (
+    "ATOM      1  C   UNL     1      17.646  30.674   7.179  0.00  0.00     0.034 C \n"
+    "ATOM      2  O   UNL     1      18.341  28.657   8.172  0.00  0.00    -0.397 OA\n"
+)
+
 
 class TestPdbqtPoseToPdbHetatmBlock:
     def test_converts_atom_lines_to_hetatm_and_truncates_autodock_columns(self):
@@ -39,6 +50,44 @@ class TestPdbqtPoseToPdbHetatmBlock:
     def test_ignores_non_atom_lines(self):
         text = "REMARK VINA RESULT\n" + _MATCHING_POSE_PDBQT
         assert len(_pdbqt_pose_to_pdb_hetatm_block(text).splitlines()) == 2
+
+    def test_forces_a_real_chain_id_even_when_source_is_blank(self):
+        # Regression test for the live-verified bug: a blank chain-ID column
+        # (real Meeko output) made PLIP silently detect zero ligands.
+        block = _pdbqt_pose_to_pdb_hetatm_block(_REAL_MEEKO_STYLE_POSE_PDBQT)
+        for line in block.splitlines():
+            assert line[21] != " "
+
+    def test_custom_chain_id_is_used(self):
+        block = _pdbqt_pose_to_pdb_hetatm_block(_REAL_MEEKO_STYLE_POSE_PDBQT, chain_id="Z")
+        assert all(line[21] == "Z" for line in block.splitlines())
+
+
+class TestAssembleComplexPdb:
+    def test_strips_receptors_own_end_and_master_records(self):
+        # Regression test for the live-verified bug: naively appending ligand
+        # HETATM lines after a real PDB's own trailing END/MASTER records
+        # produced atom records after END, which made PLIP silently see zero
+        # ligands.
+        receptor_text = (
+            "ATOM      1  CA  ALA A   1       0.000   0.000   0.000\n"
+            "MASTER      1    0    0    0    0    0    0    0    1    0    0    1\n"
+            "END\n"
+        )
+        complex_text = _assemble_complex_pdb(receptor_text, _MATCHING_POSE_PDBQT)
+
+        lines = complex_text.splitlines()
+        assert lines.count("END") == 1
+        assert lines[-1] == "END"
+        assert not any(line.startswith("MASTER") for line in lines)
+        # The ligand HETATM lines must come before the single trailing END.
+        end_index = lines.index("END")
+        assert any(line.startswith("HETATM") for line in lines[:end_index])
+
+    def test_receptor_without_end_still_gets_exactly_one(self):
+        receptor_text = "ATOM      1  CA  ALA A   1       0.000   0.000   0.000\n"
+        complex_text = _assemble_complex_pdb(receptor_text, _MATCHING_POSE_PDBQT)
+        assert complex_text.splitlines().count("END") == 1
 
 
 class TestRunDockingValidation:

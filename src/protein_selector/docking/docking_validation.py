@@ -10,11 +10,34 @@ real Vina test-dock (``vina_docking.py``), then PLIP interaction analysis
 ex03 validator, keyed by exercise="ex04" in the shared ``validation`` table
 (``core.validation_store``).
 
-**Not yet cross-checked against a real vina/plip install** (no conda in
-this sandbox) -- see ``vina_docking.py``/``plip_analysis.py``'s own
-docstrings for the specific caveats (atom-order RMSD assumption; PLIP API
-transcribed from docs, not verified live). Run this for real before
-trusting it on actual candidates.
+**Live-verified end-to-end (2026-07-06)** in a throwaway `micromamba` env
+bootstrapped from `environment-validation.yml`: a real receptor (1UBQ,
+prepped via `obabel -xr`), a real ligand (ethanol, via
+`meeko_parameterization.py`'s pipeline), a real Vina dock, and real PLIP
+analysis, composed through `run_docking_validation` end to end, returning
+`ValidationStatus.SUCCESS` with a 0.04 Å self-dock RMSD and one real PLIP
+water-bridge interaction. **Two real bugs were caught and fixed by this
+verification, both silent (no exception, just a wrong/empty answer):**
+
+1. **Blank ligand chain ID.** Meeko's PDBQT output leaves the chain-ID
+   column blank; PLIP's ligand finder silently returns zero ligands for a
+   blank chain, which would have looked exactly like "no interpretable
+   interactions" (a false ``DOCKING_QUALITY``) rather than the real cause.
+   Fixed in ``_pdbqt_pose_to_pdb_hetatm_block``, which now always forces a
+   real chain ID (``_LIGAND_CHAIN_ID``) into that column.
+2. **Records after ``END``.** A real RCSB-fetched receptor PDB already
+   ends with its own ``END``/``MASTER`` records; naively appending the
+   ligand's ``HETATM`` lines after those produced a file with atom records
+   after ``END`` -- invalid PDB that also made PLIP silently see zero
+   ligands. Fixed in ``_assemble_complex_pdb``, which strips the
+   receptor's own trailing ``END``/``MASTER`` lines before appending the
+   ligand and adding exactly one final ``END``.
+
+Both are the kind of bug this repo's testing discipline explicitly warns
+about (see ``.claude/CLAUDE.md``'s "Bugs found via live verification"): a
+mocked/monkeypatched unit test that encodes the same wrong assumption the
+code makes will never catch it -- these two were only found by running the
+real external packages.
 """
 
 from __future__ import annotations
@@ -43,7 +66,13 @@ from protein_selector.docking.vina_docking import (
 EXERCISE_NAME = "ex04"
 
 
-def _pdbqt_pose_to_pdb_hetatm_block(pose_pdbqt_text: str) -> str:
+_LIGAND_CHAIN_ID = "X"  # a chain ID distinct from any real receptor chain, so PLIP/
+# OpenBabel's residue grouping doesn't collide with the receptor's own chains.
+
+
+def _pdbqt_pose_to_pdb_hetatm_block(
+    pose_pdbqt_text: str, chain_id: str = _LIGAND_CHAIN_ID
+) -> str:
     """Convert a Vina-output pose's ATOM/HETATM lines into minimal PDB HETATM lines.
 
     PDBQT shares PDB's fixed-column layout through column 66 (occupancy/
@@ -51,13 +80,44 @@ def _pdbqt_pose_to_pdb_hetatm_block(pose_pdbqt_text: str) -> str:
     columns after that -- truncating there and forcing the record name to
     ``HETATM`` is sufficient for PLIP/OpenBabel's PDB parser, which reads
     coordinates/resName/chain/resSeq from that same fixed-column region.
+
+    **Live-verified bug, fixed here (2026-07-06):** Meeko's PDBQT output
+    leaves the chain-ID column (PDB column 22, 0-indexed offset 21) blank.
+    A blank chain ID makes PLIP's ligand finder silently return **zero**
+    ligands for the whole complex (confirmed live: `PDBComplex.ligands == []`
+    with a blank chain, populated correctly once a real chain ID is forced
+    in) -- not a crash, just silent non-detection, so it would have looked
+    like "no interpretable interactions" (a false ``DOCKING_QUALITY``
+    failure) rather than the real cause. This function must always force a
+    real chain ID into that column.
     """
     lines = []
     for line in pose_pdbqt_text.splitlines():
         if not (line.startswith("ATOM") or line.startswith("HETATM")):
             continue
-        lines.append("HETATM" + line[6:66])
+        lines.append("HETATM" + line[6:21] + chain_id + line[22:66])
     return "\n".join(lines)
+
+
+def _assemble_complex_pdb(receptor_pdb_text: str, pose_pdbqt_text: str) -> str:
+    """Build a single-file complex PDB: receptor structure + docked ligand pose.
+
+    **Live-verified bug, fixed here (2026-07-06):** a real RCSB-fetched PDB
+    file already ends with its own ``END``/``MASTER`` records -- naively
+    appending the ligand's ``HETATM`` lines *after* those records produces a
+    PDB file with atom records after ``END``, which is invalid PDB and made
+    PLIP's parser silently see **zero ligands** (confirmed live against a
+    real 1UBQ.pdb + a real Vina-docked pose). Strip the receptor's own
+    trailing ``END``/``MASTER`` lines before appending the ligand, then add
+    exactly one final ``END``.
+    """
+    receptor_lines = [
+        line
+        for line in receptor_pdb_text.splitlines()
+        if not (line.startswith("END") or line.startswith("MASTER"))
+    ]
+    ligand_block = _pdbqt_pose_to_pdb_hetatm_block(pose_pdbqt_text)
+    return "\n".join([*receptor_lines, ligand_block, "END"]) + "\n"
 
 
 @contextmanager
@@ -142,12 +202,7 @@ def run_docking_validation(
             ],
         )
 
-    complex_pdb_text = (
-        receptor_pdb_path.read_text()
-        + "\n"
-        + _pdbqt_pose_to_pdb_hetatm_block(pose_text)
-        + "\nEND\n"
-    )
+    complex_pdb_text = _assemble_complex_pdb(receptor_pdb_path.read_text(), pose_text)
 
     with _temp_complex_pdb(complex_pdb_text) as complex_path:
         plip_result = run_plip_analysis(pdb_id, complex_path)
