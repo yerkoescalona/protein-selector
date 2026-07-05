@@ -96,20 +96,35 @@ The current script is L1-ish but has issues to fix as it's refactored:
 
 ### 4b. Local metadata table (do NOT mirror full PDB structure files)
 
-Considered downloading a full local PDB mirror to speed up queries — **rejected**. Almost
-everything L1/L2 needs is metadata (resolution, method, ligand composition, residue
-counts), not atomic coordinates; downloading full structure files to filter on metadata is
-the exact anti-pattern the layered design (§3) argues against. Full atomic files are only
-needed for the L3/L5 shortlist (~20–50 proteins), fetched on demand.
+Considered downloading a full local PDB mirror to speed up queries — **rejected, and now
+empirically confirmed unnecessary, not just theoretically rejected.** Almost everything
+L1/L2 needs is metadata (resolution, method, ligand composition, residue counts), not
+atomic coordinates; downloading full structure files to filter on metadata is the exact
+anti-pattern the layered design (§3) argues against. Full atomic files are only needed for
+the L3/L5 shortlist (~20–50 proteins), fetched on demand.
 
-Instead, use RCSB's own documented **"Archive-wide Queries" recipe** (verified, from
-data.rcsb.org's own docs) to build a local metadata table with no full-structure download:
-1. [ ] Fetch the full list of current PDB IDs from the **Repository Holdings Service REST
-   API** ("current entries" endpoint).
-2. [ ] Batch those IDs (chunks ≤ 1000) and query the GraphQL endpoint via `rcsb-api`
-   (`rcsbapi.data`) for exactly the fields L1/L2 need (`exptl.method`,
-   `rcsb_entry_info.resolution_combined`, `rcsb_entry_info.deposited_atom_count`,
-   non-polymer entity IDs → ligand CCD codes, organism, etc.).
+**Empirical confirmation (2026-07-04, `scripts/benchmark_pipeline.py`, live RCSB API):**
+the full L1+L2 pipeline (search + entry-metadata fetch + oligomeric-state fetch +
+non-standard-residue fetch) processes **~500 real candidates in under 3 seconds**, and
+barely slows down at 2000 candidates — round-trip latency dominates, not data volume,
+because the RCSB Data API batches up to 1000 IDs/request
+(`rcsbapi.const.const.DATA_API_MAX_BATCH_ID_SIZE`) and the L1 search itself runs
+server-side (never scans the whole archive locally). At this tool's actual scale
+(~hundreds of candidates, annual cadence — §13), **an archive-wide local metadata table
+is not needed.** Re-run `scripts/benchmark_pipeline.py` if this conclusion ever needs
+re-checking (e.g. after an RCSB API change, or if scale assumptions change).
+
+Given that, the originally-planned **archive-wide** local table (fetching the full
+Holdings list of ~250k+ current PDB IDs and their metadata, ahead of any specific L1
+filter) is **not being built** — it would solve a performance problem that measurement
+shows doesn't exist at this tool's scale:
+1. [~] Fetching the full **Repository Holdings Service REST API** "current entries" list
+   — **superseded by the benchmark result; not needed.** L1's server-side search already
+   returns candidate IDs fast for any realistic filter; there's no need to also hold a
+   local copy of the entire archive's ID list.
+2. [~] Batch-querying metadata for that full archive-wide ID list — **also superseded**;
+   `candidates.fetch_entry_metadata` already does this per-search-result, which is what's
+   actually needed.
 3. [x] **Persist the result as one local SQLite table — DECIDED, implemented
    (`store.py`).** One table per pipeline layer (`l1_candidates`, `l2_simulability`,
    ...), each keyed by `pdb_id`, upserted so a re-run only touches changed rows.
@@ -121,14 +136,13 @@ data.rcsb.org's own docs) to build a local metadata table with no full-structure
    choice: each layer keeps its own small dataclass (`CandidateEntry`, `SimulabilityResult`,
    ...) rather than one growing shared object — `store.py` only persists/reloads them;
    joining across layers into the final §8 output row is a separate, not-yet-built step.**
-   All L1/L2 filtering thereafter runs against this table with **zero network calls**;
-   only re-fetch entries that changed since the last snapshot (RCSB does weekly
-   updates — cache accordingly, per their own "Cache Data For Repeat Calls" guidance).
+   This local cache is **per-search-result** (built from whatever L1 candidates a run
+   actually fetched), not an archive-wide mirror — that distinction is exactly what the
+   benchmark confirmed is the right scope.
 4. [ ] Fetch full structure files only for the L3/L5 shortlist, individually, on demand.
 
-- [ ] Verify the exact Holdings API "current entries" endpoint path and response format
-      before building against it (documented on data.rcsb.org; not yet opened at source
-      in this session — treat the endpoint name as ⚠ until confirmed).
+- [x] ~~Verify the exact Holdings API "current entries" endpoint~~ — moot, per above;
+      not being built.
 
 ---
 
