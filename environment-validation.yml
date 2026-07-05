@@ -9,13 +9,24 @@
 # a real `openff.toolkit.Molecule` object (confirmed by reading its actual
 # source, not its docstring -- see md_validation.py's module docstring).
 #
+# vina and plip (ex04 docking validator, docking/vina_docking.py +
+# docking/plip_analysis.py) are here for the same reason, verified live
+# (2026-07-05): `pip download vina` has no wheel for this platform/Python,
+# only an sdist, and building it fails with `ValueError: Boost library
+# location was not found!` (a real Boost build dependency, not a stub gap).
+# `pip wheel plip` fails similarly -- its build step shells out to
+# `pip install openbabel`, which itself needs system Boost/openbabel C++
+# libs and fails the same way. openbabel is listed explicitly here too
+# since plip's conda-forge package does not always pull it in reliably as
+# a transitive dependency for the Python bindings it needs.
+#
 # Create with: micromamba env create -f environment-validation.yml
 # Run validation modules with: micromamba run -n protein-selector-validation <command>
 #
 # Per .claude/CLAUDE.md's "Boundary with the course repo": this environment
 # is instructor-tool-only. Never let it leak into the student course repo's
-# own environment.yml -- students don't need openff-toolkit/pdbfixer to run
-# the pre-selected exercises this tool produces.
+# own environment.yml -- students don't need openff-toolkit/pdbfixer/vina/plip
+# to run the pre-selected exercises this tool produces.
 name: protein-selector-validation
 channels:
   - conda-forge
@@ -26,3 +37,6 @@ dependencies:
   - openmmforcefields
   - pdbfixer
   - rdkit
+  - vina
+  - plip
+  - openbabel

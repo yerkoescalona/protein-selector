@@ -509,9 +509,25 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      default, same caveat as `docking/pocket.py`'s fpocket wrapper) — built from the
      documented `openff.toolkit`/SMIRNOFF API, not guessed; run it for real before trusting
      it on actual candidates, same discipline as the other conda-only checks in this repo.
-   - [ ] **ex04 docking validator** (`docking/`) — not started (fpocket + Meeko already
-     built in the parameterizability stage; the remaining piece is a real Vina test-dock +
-     PLIP interaction analysis).
+   - [x] **ex04 docking validator** (`docking/vina_docking.py` + `docking/plip_analysis.py`
+     + `docking/docking_validation.py`) — implemented. `vina_docking.dock_top_pose`/
+     `run_self_dock` run a real Vina self-dock and compute the top pose's RMSD to the
+     crystal ligand pose (heavy atoms, index-order comparison — see the module's
+     documented atom-order-correspondence caveat); `plip_analysis.run_plip_analysis`
+     counts real PLIP-detected interaction types (H-bonds, hydrophobic contacts,
+     pi-stacking, salt bridges, halogen bonds, water bridges) on the docked complex;
+     `docking_validation.run_docking_validation` composes both into one `ValidationResult`
+     for `exercise="ex04"`. New `FailureMode.DOCKING_QUALITY` added to
+     `core/validation_result.py` for "ligand parameterized and a pocket exists, but the
+     dock itself is poor" (bad self-dock RMSD or no interpretable interactions) — distinct
+     from `POCKET`/`PARAMETERIZATION`. **`vina` and `plip` are both conda-only, same as
+     `pdbfixer`/`openff-toolkit`**: verified live (2026-07-05) that neither has a usable
+     pip wheel/build on this platform (`vina` needs Boost at build time; `plip`'s build
+     shells out to `pip install openbabel`, which fails the same way) — both added to
+     `environment-validation.yml` (plus `openbabel`, needed by plip). **Not yet
+     cross-checked against real installs** (no conda in this sandbox) — built from each
+     package's own documented API, not guessed, but run for real before trusting on actual
+     candidates, same discipline as this repo's other conda-only checks.
    - [ ] **ex02 modeling validator** (`modeling/`, new domain folder) — not started.
      Fetch-only: pull an existing AlphaFold DB entry for the candidate if one exists,
      record pLDDT/PAE. Deliberately does **not** run a new AlphaFold prediction.

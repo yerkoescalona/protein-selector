@@ -34,6 +34,13 @@ class FailureMode(StrEnum):
     STABILITY = "stability"
     CONFIDENCE = "confidence"
     SPECIAL_CHEMISTRY = "special_chemistry"
+    # Added for the ex04 docking validator (PLAN.md §4a/§10 step 4): the
+    # ligand parameterized and a pocket was found, but the *quality* of the
+    # docking result itself is the problem -- self-dock RMSD too far from
+    # the crystal pose, or PLIP finding no interpretable protein-ligand
+    # interactions. Distinct from POCKET (no pocket at all) and
+    # PARAMETERIZATION (ligand couldn't be prepped in the first place).
+    DOCKING_QUALITY = "docking_quality"
 
 
 @dataclass

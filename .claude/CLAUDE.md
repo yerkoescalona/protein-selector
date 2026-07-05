@@ -99,11 +99,19 @@ src/protein_selector/
                                  store.py
   docking/                       parameterizability.py + meeko_parameterization.py +
                                  ligands.py + pocket.py (parameterizability ligand chemistry, nearly
-                                 complete — needs the `validate` extra), store.py.
+                                 complete — needs the `validate` extra), store.py, plus
+                                 the ex04 docking validator: vina_docking.py (real Vina
+                                 self-dock), plip_analysis.py (real PLIP interaction
+                                 counts), docking_validation.py (composes both into one
+                                 ValidationResult). The validator trio needs the
+                                 `environment-validation.yml` conda env (vina/plip/
+                                 openbabel), NOT the `validate` extra — same split as
+                                 `molecular_dynamics/`'s conda-only vs. pip-only modules.
                                  **Resolved (2026-07-05):** MD-side OpenFF parameterization
                                  got its own module in `molecular_dynamics/`, not this
-                                 folder — see below. Every consumer of these four files
-                                 remains docking-only (Vina/Meeko/PDBQT toolchain).
+                                 folder — see below. Every consumer of the four
+                                 parameterizability-stage files remains docking-only
+                                 (Vina/Meeko/PDBQT toolchain).
   molecular_dynamics/            md_validation.py (ex03 MD validator, needs
                                  `environment-validation.yml`, NOT the `validate` extra) +
                                  openff_parameterization.py (OpenFF ligand parameterization
@@ -322,10 +330,20 @@ re-verify live against a real PDB ID before trusting the change.
   different toolchain, a ligand can pass one and fail the other). `openff.toolkit` is
   lazily imported, same pattern as `md_validation.py`. **Not yet cross-checked against a
   real OpenFF install** (no conda in this sandbox) — built from the documented API, not
-  guessed; run it for real before trusting it. **ex04 (docking/Vina+PLIP) and ex02
-  (modeling) are not started.** Priority order per PLAN.md §10: ex04 docking validator
-  (`docking/`) next, then ex02 modeling validator (`modeling/`, fetch-only AlphaFold DB
-  lookup). `protein_design/` (mutation-focused) is deferred past v0 entirely.
+  guessed; run it for real before trusting it. **ex04 (docking/Vina+PLIP) is now
+  implemented** — `docking/vina_docking.py` (`dock_top_pose`/`run_self_dock`: real Vina
+  self-dock + self-dock RMSD to the crystal pose), `docking/plip_analysis.py`
+  (`run_plip_analysis`: real PLIP interaction counts), `docking/docking_validation.py`
+  (`run_docking_validation`: composes both into one `ValidationResult` for
+  `exercise="ex04"`). New `FailureMode.DOCKING_QUALITY` for "dock itself is poor" (bad
+  RMSD or no interactions), distinct from `POCKET`/`PARAMETERIZATION`. `vina`/`plip` are
+  conda-only like `pdbfixer`/`openff-toolkit` (verified live: neither builds via pip on
+  this platform — `vina` needs Boost, `plip`'s build pip-installs `openbabel` which fails
+  the same way); both plus `openbabel` added to `environment-validation.yml`. **Not yet
+  cross-checked against real installs** (no conda in this sandbox) — built from each
+  package's documented API, not guessed; run for real before trusting. **ex02 (modeling)
+  is not started** (`modeling/`, fetch-only AlphaFold DB lookup). `protein_design/`
+  (mutation-focused) is deferred past v0 entirely.
 - **Difficulty scoring, output table:** not started. `legacy/find_small_proteins_with_ligands.py`
   (the original v0 seed) still exists unchanged and is superseded by
   `structural_biology/candidates.py`; it can be removed once `candidates.py`'s UniProt
