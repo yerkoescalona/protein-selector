@@ -39,20 +39,29 @@ cheap proxies + measured from L5) and a rationale per row. Never a single scalar
 ```
 PLAN.md                        The full design doc — read before making architectural changes
 pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/rcsb-api);
-                                optional `validate` extra for the heavier L3 stack
-                                (rdkit/meeko — openff-toolkit deliberately excluded, see below)
+                                optional `validate` extra for the L3 stack (rdkit, meeko,
+                                scipy/numpy/gemmi — meeko's undeclared transitive deps,
+                                openmm, openmmforcefields)
+environment-l5.yml              A SECOND, conda-only environment for L5 (openmm,
+                                openff-toolkit, openmmforcefields, pdbfixer, rdkit) —
+                                openff-toolkit and pdbfixer have no usable pip release,
+                                see its header comment. Not managed by uv/pyproject.toml.
 src/protein_selector/          Pipeline code: find_small_proteins_with_ligands.py (v0 seed,
                                 superseded), candidates.py (L1), simulability.py (L2,
                                 complete), composition.py (L2's assembly/entity-level
                                 fetches: oligomeric state, non-standard residues),
-                                parameterizability.py (L3, partial — needs the `validate`
-                                extra), literature.py (L4, complete), store.py (SQLite
-                                persistence, all layers) — a proper src-layout package,
-                                not loose scripts
+                                parameterizability.py + meeko_parameterization.py +
+                                ligands.py + pocket.py (L3, nearly complete — needs the
+                                `validate` extra), literature.py (L4, complete),
+                                l5_common.py + md_validation.py (L5 ex03 MD validator,
+                                needs `environment-l5.yml`, NOT the `validate` extra),
+                                store.py (SQLite persistence, all layers) — a proper
+                                src-layout package, not loose scripts
 scripts/                       benchmark_pipeline.py — manual live-API diagnostic, not a
                                 pytest test (see its docstring)
 tests/protein_selector/        Tests, mirroring src/protein_selector/'s structure 1:1 —
-                                see "Testing" below
+                                see "Testing" below. test_md_validation.py needs
+                                environment-l5.yml and is skipped (not failed) otherwise.
 uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
 ```
 
@@ -199,19 +208,43 @@ re-verify live against a real PDB ID before trusting the change.
 - **Persistence (`store.py`):** SQLite, one table per layer (`l1_candidates`,
   `l2_simulability`, `l2_oligomeric_state`, `l2_entity_composition`,
   `l3_parameterizability`, `l3_meeko_parameterization`, `l3_pocket_detection`,
-  `l4_literature`), keyed by `pdb_id`
+  `l4_literature`, `l5_validation`), keyed by `pdb_id`
   (most), `(pdb_id, entity_id)` (`l2_entity_composition` — an entry can have multiple
-  polymer entities), or `ligand_id` (`l3_parameterizability` — a ligand's
-  parameterizability doesn't depend on which entry it appears in), all upsert-based. Replaced `candidates.py`'s original
+  polymer entities), `ligand_id` (`l3_parameterizability` — a ligand's
+  parameterizability doesn't depend on which entry it appears in), or `(pdb_id, exercise)`
+  (`l5_validation` — shared across all L5 validators, keyed by which exercise validated
+  it), all upsert-based. Replaced `candidates.py`'s original
   JSON-file cache (see `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet).
   **Each layer keeps its own small dataclass** (`CandidateEntry`, `SimulabilityResult`,
-  `ParameterizabilityResult`, `AssemblyInfo`, `EntityCompositionInfo`) — `l4_literature` is
-  the one exception, a plain `dict[pdb_id, int|None]` with no dataclass, since a single
-  scalar doesn't need one. `store.py` only persists/reloads each layer's result, it does
-  not merge them into one growing object. Joining across layers into the final §8 output
-  row is a separate, not-yet-built step; don't conflate "persist this layer's result" with
-  "build the final report."
-- **L5, difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
+  `ParameterizabilityResult`, `AssemblyInfo`, `EntityCompositionInfo`, `ValidationResult`)
+  — `l4_literature` is the one exception, a plain `dict[pdb_id, int|None]` with no
+  dataclass, since a single scalar doesn't need one. `store.py` only persists/reloads
+  each layer's result, it does not merge them into one growing object. Joining across
+  layers into the final §8 output row is a separate, not-yet-built step; don't conflate
+  "persist this layer's result" with "build the final report."
+- **L5 (`l5_common.py` + `md_validation.py`): ex03 MD validator done, ex02/ex04 not
+  started.** `l5_common.py` holds the shared `{ValidationStatus, FailureMode,
+  ValidationResult}` interface PLAN.md §4a calls for across all L5 validators — add new
+  `FailureMode` members here, don't invent a parallel enum per validator.
+  `md_validation.py`'s `run_test_md`: real PDBFixer repair then a real short OpenMM MD
+  run, **live-verified end-to-end (2026-07-05)** including a real failure case (4HHB
+  with HEM left in → `ValueError: No template found for residue 574 (HEM)...`, the
+  actual live message, not guessed). **Requires a second, conda-only environment**
+  (`environment-l5.yml`: `openmm`, `openff-toolkit`, `openmmforcefields`, `pdbfixer`,
+  `rdkit`) — `pdbfixer` and `openff-toolkit` both genuinely have no usable pip release
+  (verified: `pip index versions openff-toolkit` returns nothing). Confirmed by reading
+  `openmmforcefields`'s actual source (not its docstring, which misleadingly implies a
+  raw RDKit `Mol` works): `SystemGenerator`/the template generators call
+  `molecule.to_smiles()` unconditionally, which only `openff.toolkit.Molecule` has —
+  there is no lighter subset of "the openforcefield API" that avoids needing the real
+  `openff-toolkit` package. This sandbox has no conda by default; verified by
+  bootstrapping a throwaway `micromamba` env (see the git history around this note for
+  the exact commands) — do the same before trusting this module runs, don't assume.
+  Runs in vacuum (`NoCutoff`), not explicit solvent — see `md_validation.py`'s
+  docstring for the real measured wall-clock tradeoff this was chosen on (~2370s/ns for
+  a 1231-atom apo protein on CPU). **ex02 (AlphaFold) and ex04 (docking/Vina+PLIP)
+  validators are not started.**
+- **Difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
   (the original v0 seed) still exists unchanged and is superseded by `candidates.py`; it can
   be removed once `candidates.py`'s UniProt cofactor-lookup path is confirmed no longer
   wanted (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10

@@ -470,6 +470,12 @@ wheels = [
 ]
 
 [[package]]
+name = "openmmforcefields"
+version = "0.15.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/c6/92730898236872d856066e180283291786e2dc4649491141b5b9efe0fa4c/openmmforcefields-0.15.1.tar.gz", hash = "sha256:c8c5e806ed89c81691e742fb86f768f4c3c06f0173f7343e8420b78ee8645595", size = 5304142, upload-time = "2026-02-26T10:12:26.75Z" }
+
+[[package]]
 name = "packaging"
 version = "26.2"
 source = { registry = "https://pypi.org/simple" }
@@ -651,6 +657,7 @@ validate = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "openmm" },
+    { name = "openmmforcefields" },
     { name = "rdkit" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -670,6 +677,7 @@ requires-dist = [
     { name = "meeko", marker = "extra == 'validate'" },
     { name = "numpy", marker = "extra == 'validate'", specifier = ">=2.4.6" },
     { name = "openmm", marker = "extra == 'validate'", specifier = ">=8.5.2" },
+    { name = "openmmforcefields", marker = "extra == 'validate'", specifier = ">=0.15.1" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "rcsb-api", specifier = ">=1.7.3" },
     { name = "rdkit", marker = "extra == 'validate'", specifier = ">=2024.3" },

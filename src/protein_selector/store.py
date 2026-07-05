@@ -27,6 +27,7 @@ from typing import Any
 
 from protein_selector.candidates import CandidateEntry
 from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
+from protein_selector.l5_common import FailureMode, ValidationResult, ValidationStatus
 from protein_selector.meeko_parameterization import MeekoParameterizationResult
 from protein_selector.parameterizability import ParameterizabilityResult
 from protein_selector.pocket import PocketDetectionResult, PocketInfo
@@ -82,6 +83,23 @@ CREATE TABLE IF NOT EXISTS l3_meeko_parameterization (
     ligand_id TEXT PRIMARY KEY,
     passed INTEGER NOT NULL,
     reasons TEXT NOT NULL DEFAULT '[]'
+)
+"""
+
+# Keyed by (pdb_id, exercise) -- one L5 ValidationResult per exercise's
+# validator (PLAN.md §4a: "ex02"/"ex03"/"ex04", etc.), since the same entry
+# can be validated against multiple exercises independently. Shared table
+# for all L5 validators since they share one dataclass (l5_common), rather
+# than one table per exercise.
+_L5_VALIDATION_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS l5_validation (
+    pdb_id TEXT NOT NULL,
+    exercise TEXT NOT NULL,
+    status TEXT NOT NULL,
+    effort_seconds REAL,
+    failure_mode TEXT,
+    notes TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (pdb_id, exercise)
 )
 """
 
@@ -152,6 +170,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_L4_LITERATURE_TABLE_SCHEMA)
     conn.execute(_L3_POCKET_TABLE_SCHEMA)
     conn.execute(_L3_MEEKO_TABLE_SCHEMA)
+    conn.execute(_L5_VALIDATION_TABLE_SCHEMA)
     try:
         yield conn
         conn.commit()
@@ -538,3 +557,66 @@ def load_literature_counts(db_path: Path = DEFAULT_DB_PATH) -> dict[str, int | N
             "SELECT pdb_id, literature_count FROM l4_literature"
         ).fetchall()
     return {row[0]: row[1] for row in rows}
+
+
+def upsert_validation_results(
+    exercise: str, results: list[ValidationResult], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Insert or update L5 validation rows for one exercise, keyed by ``(pdb_id, exercise)``.
+
+    ``exercise`` is a caller-supplied label (e.g. ``"ex03_md"``) rather than
+    an enum -- new exercises' validators (ex02/AlphaFold, ex04/docking) can
+    start writing to this same table without a schema change.
+    """
+    if not results:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO l5_validation
+                (pdb_id, exercise, status, effort_seconds, failure_mode, notes)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(pdb_id, exercise) DO UPDATE SET
+                status=excluded.status,
+                effort_seconds=excluded.effort_seconds,
+                failure_mode=excluded.failure_mode,
+                notes=excluded.notes
+            """,
+            [
+                (
+                    r.pdb_id,
+                    exercise,
+                    r.status.value,
+                    r.effort_seconds,
+                    r.failure_mode.value if r.failure_mode is not None else None,
+                    json.dumps(r.notes),
+                )
+                for r in results
+            ],
+        )
+
+
+def load_validation_results(
+    exercise: str, db_path: Path = DEFAULT_DB_PATH
+) -> dict[str, ValidationResult]:
+    """Load all L5 validation rows for one exercise, keyed by ``pdb_id``."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT pdb_id, status, effort_seconds, failure_mode, notes
+            FROM l5_validation WHERE exercise = ?
+            """,
+            (exercise,),
+        ).fetchall()
+    return {
+        row[0]: ValidationResult(
+            pdb_id=row[0],
+            status=ValidationStatus(row[1]),
+            effort_seconds=row[2],
+            failure_mode=FailureMode(row[3]) if row[3] is not None else None,
+            notes=json.loads(row[4]),
+        )
+        for row in rows
+    }

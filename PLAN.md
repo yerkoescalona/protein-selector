@@ -290,10 +290,18 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
 - **Env deltas to add** (keep them in a *separate* selector env if this becomes its own
   repo, to not bloat the student env):
   - [x] `requests` — declared dep in `pyproject.toml`.
-  - [ ] `meeko` + `openff-toolkit` (+ `openmmforcefields`) — L3 ligand parameterization.
-        `meeko` already a `validate`-extra dep; `openff-toolkit` deliberately excluded
-        (yanked PyPI release — see `pyproject.toml`'s comment), install via conda when
-        needed.
+  - [x] `meeko` (+ `scipy`/`numpy`/`gemmi` it needs transitively but doesn't declare) —
+        L3 ligand parameterization, done (`meeko_parameterization.py`).
+  - [x] `openff-toolkit` + `openmmforcefields` + `pdbfixer` — L5 ex03 MD validator, done
+        (`md_validation.py`). Confirmed live: these three cannot be pip-installed
+        (`openff-toolkit`'s only PyPI release is yanked; `pdbfixer` has no real pip
+        release either) — they live in the new `environment-l5.yml` conda env, kept
+        separate from this project's pip/uv base env exactly as this line originally
+        called for. `openmmforcefields`'s `SystemGenerator`/template generators
+        genuinely require a real `openff.toolkit.Molecule` internally (confirmed by
+        reading their source, not their docstring, which misleadingly implies raw
+        RDKit `Mol` support) — there's no lighter subset of "the openforcefield API"
+        that avoids this.
   - [ ] `fpocket` — pocket detection (**conda/mamba only, no pip package** — a native C
         binary, no JVM; verify install path when L3 pocket detection is built).
   - [ ] `plip` — interaction analysis (teaching: *which* interactions, not just Vina score).
@@ -438,10 +446,27 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
    Persisted via `store.py`'s new `l4_literature` table (plain `pdb_id → int|None`,
    no dataclass — a single scalar doesn't need one). Verified live end-to-end:
    candidates → literature counts → SQLite round-trip, all matching.
-4. [ ] **L5 validation harness (the core):** run at least the **ex04 docking validator**
-   first (fastest, highest in-class failure rate — the manual grid-box pain), then the
-   **ex03 MD validator**, then the **ex02 AlphaFold validator**. Record
-   `{status, effort, failure_mode}` per exercise; cache per PDB.
+4. **L5 validation harness (the core):**
+   - [x] **ex03 MD validator** — `l5_common.py` (shared `ValidationStatus`/`FailureMode`/
+     `ValidationResult` across all L5 validators, per §4a) + `md_validation.py`'s
+     `run_test_md`: real PDBFixer repair (fill missing atoms/loops, strip heterogens,
+     protonate) then a real short OpenMM MD run (vacuum, `NoCutoff` — see
+     `md_validation.py`'s docstring for why not explicit solvent). **Live-verified
+     end-to-end (2026-07-05)** in a throwaway conda env (this sandbox has no conda by
+     default; bootstrapped via `micromamba`, see `environment-l5.yml`): both the
+     success path (1UBQ, 1231 atoms, ~23s for 5ps→10ps-scale runs on CPU) and the real
+     `FailureMode.PARAMETERIZATION` path (4HHB with HEM left in — `ValueError: No
+     template found for residue 574 (HEM)...`, verified message, not guessed) work.
+     Requires the `environment-l5.yml` conda env (`openmm`, `pdbfixer`) — **not** pip;
+     `pdbfixer` has no meaningful pip release. Persisted via `store.py`'s
+     `l5_validation` table, keyed by `(pdb_id, exercise)` so ex02/ex04 can share it.
+     Real per-ns wall-clock, measured live: ~2370s/ns for a 1231-atom apo protein in
+     vacuum on CPU (no GPU in this sandbox) — a real protein-ligand complex in
+     explicit water will be substantially slower; budget accordingly for "a couple ns."
+   - [ ] **ex04 docking validator** — not started (fpocket + Meeko already built in L3;
+     the remaining piece is a real Vina test-dock + PLIP interaction analysis).
+   - [ ] **ex02 AlphaFold validator** — not started.
+   Record `{status, effort, failure_mode}` per exercise; cache per PDB.
 5. [ ] **Per-exercise difficulty score** (predicted + measured, §5); emit the §8 table
    with `suitable_for` and the predicted-vs-measured gap.
 

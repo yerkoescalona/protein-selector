@@ -1,0 +1,47 @@
+"""Shared result shape for L5 a-priori validators (PLAN.md §4a).
+
+Each exercise's validator (ex02/AlphaFold, ex03/MD, ex04/docking) is meant to
+share one interface: run the real thing, record `{status, effort_seconds,
+failure_mode, notes}` -- not just pass/fail. The record itself is the
+pedagogical value (§5's difficulty score reads it), so ``notes`` should
+explain *why*, not just *whether*.
+
+``FailureMode`` is the "failure taxonomy enum shared across validators" that
+PLAN.md §4a calls for explicitly -- add new members here as new L5
+validators are built, don't invent a parallel enum per validator.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class ValidationStatus(StrEnum):
+    """Outcome of an L5 validator run."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+
+
+class FailureMode(StrEnum):
+    """Shared failure taxonomy across all L5 validators (PLAN.md §4a)."""
+
+    PARAMETERIZATION = "parameterization"
+    COMPLETENESS = "completeness"
+    SIZE_OR_TIME = "size_or_time"
+    POCKET = "pocket"
+    STABILITY = "stability"
+    CONFIDENCE = "confidence"
+    SPECIAL_CHEMISTRY = "special_chemistry"
+
+
+@dataclass
+class ValidationResult:
+    """Common result shape for one exercise's L5 validator run on one PDB entry."""
+
+    pdb_id: str
+    status: ValidationStatus
+    effort_seconds: float | None = None
+    failure_mode: FailureMode | None = None
+    notes: list[str] = field(default_factory=list)

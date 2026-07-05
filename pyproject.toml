@@ -32,6 +32,7 @@ validate = [
     "numpy>=2.4.6",
     "openmm>=8.5.2",
     "gemmi>=0.7.5",
+    "openmmforcefields>=0.15.1",
 ]
 
 [dependency-groups]
