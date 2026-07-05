@@ -54,7 +54,7 @@ the ~20–50 survivors. **Never run an LLM over thousands of entries.**
 |-------|------|------|-------------|
 | **L1 Hard filters** | residue count, resolution, method, polymer-entity count, organism, specific ligand | free, instant (1 RCSB query) | whole PDB |
 | **L2 Simulability** | resolution <~2.5 Å, missing-loop/gap check (PDBe completeness), oligomeric state, non-standard residues, size window ~100–300 aa | cheap API calls | hundreds |
-| **L3 Ligand parameterizability** | RDKit/Meeko/OpenFF can sanitize+parameterize the ligand; p2rank finds a pocket | seconds/protein, local | hundreds |
+| **L3 Ligand parameterizability** | RDKit/Meeko/OpenFF can sanitize+parameterize the ligand; fpocket finds a pocket | seconds/protein, local | hundreds |
 | **L4 Judgment** | literature richness (Europe PMC counts — no LLM), then LLM only for "does this make pedagogical sense" | rate-limited / paid | 20–50 survivors |
 
 Then a fifth layer, which is the reason the tool exists for an instructor:
@@ -63,7 +63,7 @@ Then a fifth layer, which is the reason the tool exists for an instructor:
 |-------|------|------|-------------|
 | **L5 A-priori validation** | actually run each exercise's real pipeline (short test-MD, real test-dock, AlphaFold predict) and record success/failure + effort | minutes–hours/protein | ~20–50 shortlist only |
 
-Design rule: **cheap gates live in L1–L3; empirical difficulty is measured in L5.** p2rank
+Design rule: **cheap gates live in L1–L3; empirical difficulty is measured in L5.** fpocket
 pocket existence and the ligand-parameterization *attempt* are cheap L3 gates. The *full
 test-docking run*, a *short real MD*, and an *AlphaFold prediction* are L5 — they run only
 on the L1–L3 survivors, but they are **not optional**: they are how the tool distinguishes
@@ -168,10 +168,10 @@ core. Each exercise gets a validator that returns `{status, effort, failure_mode
 - Easy-signal: clean fixup, small box, stable short run.
 
 **ex04 / docking validator** (Block D)
-- Parameterize the ligand (Meeko/OpenFF), detect the pocket (p2rank), run a **real
+- Parameterize the ligand (Meeko/OpenFF), detect the pocket (fpocket), run a **real
   test-dock** (Vina), analyze interactions (PLIP).
-- Failure/difficulty modes: ligand won't sanitize/parameterize, no clear pocket (p2rank
-  low score), covalent/metal-coordinated ligand (special handling), self-dock RMSD far
+- Failure/difficulty modes: ligand won't sanitize/parameterize, no clear pocket (fpocket
+  low druggability score), covalent/metal-coordinated ligand (special handling), self-dock RMSD far
   from crystal (poor teachable validation), PLIP shows no interpretable interactions.
 - Easy-signal: parameterizes cleanly, one obvious pocket, self-dock reproduces the
   crystal pose, interactions make biological sense.
@@ -199,7 +199,7 @@ for ex03 MD, so there is no single scalar.
 - **Size** (residues/atoms) → compute-time difficulty for Colab MD.
 - **Functional clarity** (has EC number, clear cofactor, single dominant domain).
 - **Literature richness** (Europe PMC count) → is the case rich enough for discussion.
-- **Docking suitability** (p2rank pocket score, ligand druglikeness/Lipinski).
+- **Docking suitability** (fpocket druggability score, ligand druglikeness/Lipinski).
 - **Structural cleanliness** (resolution, completeness, no weird residues).
 - **Domain definition** (AlphaFold PAE off-diagonal / pLDDT) → well-defined domain = easier.
 
@@ -275,14 +275,27 @@ predicted_vs_measured_gap, tier_per_exercise, rationale_json`
 
 ## 9. Environment complementarity (what the course env already gives you)
 
+**No JVM anywhere in this stack — decided.** p2rank was the one Java dependency ever
+considered here (pocket detection, L3), and it's rejected: a JVM adds a second runtime to
+install/maintain for one narrow check, when a native-binary alternative exists that fits
+the same "external tool invoked via subprocess" pattern already accepted for AutoDock
+Vina. **Replaced with `fpocket`** (verified real, actively maintained, conda-forge:
+`fpocket-4.2.3`, pure C, depends only on `libgcc`/`libnetcdf` — no JVM, no pip package,
+install via conda/mamba). Every reference to p2rank elsewhere in this document is
+superseded by fpocket; if you see "p2rank" anywhere else, it's stale — replace it.
+
 The exercises `environment.yml` already covers much of the pipeline — reuse it:
 - **Have:** `pypdb`, `biopandas`, `biopython` (fetch/parse), `rdkit` (ligand sanitize,
   Lipinski, SMILES), `openmm`+`pdbfixer` (MD prep / test), `mdanalysis`, `py3dmol`/`nglview`.
 - **Env deltas to add** (keep them in a *separate* selector env if this becomes its own
   repo, to not bloat the student env):
-  - [ ] `requests` (script needs it; confirm it's a declared dep, not incidental).
+  - [x] `requests` — declared dep in `pyproject.toml`.
   - [ ] `meeko` + `openff-toolkit` (+ `openmmforcefields`) — L3 ligand parameterization.
-  - [ ] `p2rank` — pocket detection (**Java runtime dependency**, not pip; plan install).
+        `meeko` already a `validate`-extra dep; `openff-toolkit` deliberately excluded
+        (yanked PyPI release — see `pyproject.toml`'s comment), install via conda when
+        needed.
+  - [ ] `fpocket` — pocket detection (**conda/mamba only, no pip package** — a native C
+        binary, no JVM; verify install path when L3 pocket detection is built).
   - [ ] `plip` — interaction analysis (teaching: *which* interactions, not just Vina score).
   - [ ] AutoDock Vina + the CCSB/Forli Colab env (Meeko, Molscrub, ProDy, reduce2) — only
         for the shortlist test-dock, deferred.
@@ -378,11 +391,12 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      sanitization is necessary but not sufficient; a ligand that passes it can
      still fail real force-field parameterization. Heavier, slower check for
      the shortlist only.
-   - [ ] **L3 p2rank pocket detection** — not started. Deferred pending
-     verification of p2rank's actual CLI/output format against its real
-     documentation (no network access in the sessions so far) — do not guess
-     column names/flags into a shipped subprocess wrapper, per §11. Also
-     requires a Java runtime (external tool, not a pip dependency).
+   - [ ] **L3 fpocket pocket detection** — not started; **decided against p2rank**
+     (rejected the Java/JVM dependency — see §9) **in favor of `fpocket`**, a
+     native C binary (verified real and maintained: `fpocket-4.2.3` on
+     conda-forge). Still deferred pending verification of fpocket's actual
+     CLI/output format against its real documentation — do not guess column
+     names/flags into a shipped subprocess wrapper, per §11.
 3. [ ] **Literature count** via Europe PMC → integer.
 4. [ ] **L5 validation harness (the core):** run at least the **ex04 docking validator**
    first (fastest, highest in-class failure rate — the manual grid-box pain), then the
@@ -404,13 +418,14 @@ substitute for L5 — the instructor still needs to know the exercise itself run
       `⚠ candidate` until opened at source. Do not inherit the brief's numbers blindly.
 - [ ] Never emit an invented PDB ID, CCD ligand code, or EC number into the table — all
       must trace to an API response.
-- [ ] Verify tool liveness each term (Vina Colab notebooks, p2rank, DynaMate) — these move.
+- [ ] Verify tool liveness each term (Vina Colab notebooks, fpocket, DynaMate) — these move.
 
 ---
 
 ## 12. If this becomes its own repo
 
-- [ ] Own git repo + own env (don't couple the student `environment.yml` to Java/p2rank).
+- [ ] Own git repo + own env (don't couple the student `environment.yml` to fpocket's
+      conda-only install, or any other selector-only dependency).
 - [ ] Keep a thin published-artifact export (the ranked CSV) that the course submodule can
       vendor, so exercises depend on *output*, not on the selector's toolchain.
 - [ ] Snakemake pipeline + frozen snapshots make it citable for the teaching-resource paper
@@ -424,8 +439,8 @@ substitute for L5 — the instructor still needs to know the exercise itself run
   **not** pedagogically required. **graphode is OUT of scope** — do not integrate.
 - Scale ~hundreds of candidates, not millions. Cadence: annual re-curation.
 - Colab compute budget bounds protein size (~100–300 aa).
-- Docking = Vina in Colab; p2rank removes the manual grid-box failure point; PLIP for
-  interaction reasoning.
+- Docking = Vina in Colab; fpocket (not p2rank — no JVM, decided) removes the manual
+  grid-box failure point; PLIP for interaction reasoning.
 - **Instructor tool, confirmed (§2).** Its core job is *a-priori validation*: attempt the
   real exercises on candidates to grade actual difficulty, because metadata cannot tell
   "easy" from "breaks in class." L5 (§4a) is therefore mandatory, not deferred.

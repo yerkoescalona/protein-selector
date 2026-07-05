@@ -22,7 +22,7 @@ the lecture repo). It is independent: no import of, or dependency on, the course
 ```
 L1 hard filters      (RCSB Search API — free, instant)      → whole PDB
 L2 simulability      (resolution, completeness, size)       → hundreds
-L3 parameterizability (RDKit/Meeko/OpenFF, p2rank pocket)    → hundreds
+L3 parameterizability (RDKit/Meeko/OpenFF, fpocket pocket)   → hundreds
 L4 judgment           (Europe PMC counts; LLM only here)     → ~20–50 shortlist
 L5 a-priori validation (REAL test-MD, test-dock, AlphaFold)  → ~20–50 shortlist
 ```
@@ -81,9 +81,13 @@ install. This actually happened once (caught by manually testing `uv sync` witho
 `--extra validate` then trying to import `store`, since neither `ruff` nor `ty` catch a
 missing-optional-dependency-at-import-time bug). The fix: import `rdkit` lazily inside
 `check_ligand_parameterizable`, not at module level — the dataclass itself has no rdkit
-dependency. When adding the next `validate`-gated check (Meeko, p2rank), keep the same
+dependency. When adding the next `validate`-gated Python check (Meeko), keep the same
 lazy-import pattern and manually verify `uv sync` (no extras) + `import protein_selector.store`
-still works before committing.
+still works before committing. The same principle applies to `fpocket` (pocket detection,
+conda-only, invoked via subprocess, no JVM — p2rank was rejected specifically for its Java
+dependency, see `PLAN.md` §9): don't assume the binary exists at import time either — check
+it lazily inside the function that actually shells out to it, so importing the module never
+requires the external tool to be installed.
 
 ## Testing
 
@@ -164,8 +168,9 @@ re-verify live against a real PDB ID before trusting the change.
   **real RDKit calls** (pure local logic, no network) — requires the `validate` extra.
   **Not yet wired to real data:** L1 only fetches ligand CCD codes, not SMILES; fetching
   SMILES per CCD code is the remaining wiring step. Full Meeko/OpenFF parameterization and
-  p2rank pocket detection are **not started** — p2rank is deferred pending verification of
-  its actual CLI/output format; do not guess its interface into a shipped wrapper.
+  fpocket pocket detection are **not started** — fpocket (decided over p2rank: no JVM, see
+  `PLAN.md` §9) is deferred pending verification of its actual CLI/output format; do not
+  guess its interface into a shipped wrapper.
 - **Persistence (`store.py`):** SQLite, one table per layer (`l1_candidates`,
   `l2_simulability`, `l2_oligomeric_state`, `l2_entity_composition`,
   `l3_parameterizability`), keyed by `pdb_id` (most), `(pdb_id, entity_id)`
@@ -190,7 +195,7 @@ re-verify live against a real PDB ID before trusting the change.
   the output table must trace to an API response.
 - Citations to external tools/datasets/thresholds in `PLAN.md` §6 are marked `⚠
   candidate` until verified at source. Do not treat them as settled facts.
-- Tool liveness (Vina Colab notebooks, p2rank, DynaMate) drifts — re-verify each term
+- Tool liveness (Vina Colab notebooks, fpocket, DynaMate) drifts — re-verify each term
   before depending on it in the L3/L5 harness.
 
 ## Boundary with the course repo
@@ -198,5 +203,5 @@ re-verify live against a real PDB ID before trusting the change.
 - This repo depends on nothing from the course repo.
 - The course repo depends only on this tool's **output** (a vendored ranked CSV in
   `exercises/scripts/`), never on this tool's code or environment.
-- Do not let Java/p2rank or other L3/L5-only dependencies leak into the course's student
-  `environment.yml`.
+- Do not let fpocket's conda-only install or other L3/L5-only dependencies leak into the
+  course's student `environment.yml`.
