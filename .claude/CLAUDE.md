@@ -121,10 +121,16 @@ src/protein_selector/
                                  Meeko/PDBQT; a ligand can pass one and fail the other) +
                                  store.py (persists `openff_parameterization`, keyed by
                                  `ligand_id`).
-  modeling/                      **Planned, not yet created.** ex02 validator: fetch-only
-                                 — pull an existing AlphaFold DB entry for a candidate if
-                                 one exists, record pLDDT/PAE. Deliberately never runs a
-                                 new AlphaFold prediction.
+  modeling/                      ex02 validator: alphafold_lookup.py (fetch-only —
+                                 `fetch_alphafold_entry` calls the real AlphaFold DB REST
+                                 API, live-verified; deliberately never runs a new
+                                 AlphaFold prediction, deliberately doesn't attempt full
+                                 PAE-matrix/domain analysis — see its docstring),
+                                 modeling_validation.py (composes into one
+                                 ValidationResult for exercise="ex02": no entry →
+                                 FailureMode.COMPLETENESS, too-low-confidence →
+                                 FailureMode.CONFIDENCE), store.py (persists
+                                 `alphafold_entries`, keyed by `uniprot_accession`).
   protein_design/                **Planned, not yet created, deferred past v0.**
                                  Mutation-focused work (RFdiffusion/ProteinMPNN-adjacent —
                                  matches the parent course repo's lecture 12 territory).
@@ -374,9 +380,22 @@ a real docked complex before trusting the change.
   ligand chain-ID column (real Meeko output) and receptor-PDB records-after-`END` both
   independently made PLIP silently detect zero ligands — neither raised an exception, so
   neither would have been caught by the monkeypatched unit tests alone. Regression tests
-  added for both. **ex02 (modeling)
-  is not started** (`modeling/`, fetch-only AlphaFold DB lookup). `protein_design/`
-  (mutation-focused) is deferred past v0 entirely.
+  added for both.
+- **Modeling (`modeling/alphafold_lookup.py` + `modeling/modeling_validation.py` +
+  `modeling/store.py`): ex02 validator done, live-verified end-to-end (2026-07-06).**
+  `fetch_alphafold_entry` calls the real AlphaFold DB REST API
+  (`GET /api/prediction/{uniprot_accession}`) — confirmed live for a real entry
+  (P69905/hemoglobin-alpha), a real 404 "no entry" (P0DTD8, syntactically valid but
+  unmodeled), and a real 400 malformed-accession error, all three exactly as documented
+  in the module's docstring, not guessed. Deliberately fetch-only (never runs a new
+  AlphaFold prediction) and deliberately skips full PAE-matrix/domain analysis in favor
+  of the API's own summary confidence fractions (`fractionPlddtVeryLow`/`Low`/etc.) — see
+  the module docstring for why. `run_modeling_validation` composes this into one
+  `ValidationResult` for `exercise="ex02"`: no entry → `FailureMode.COMPLETENESS`,
+  too-low-confidence → `FailureMode.CONFIDENCE`. Persisted via `modeling/store.py`'s
+  `alphafold_entries` table, keyed by `uniprot_accession` (a property of the sequence, not
+  any one PDB entry). `protein_design/` (mutation-focused) remains deferred past v0
+  entirely — not the same domain as this fetch-only lookup.
 - **Difficulty scoring, output table:** not started. `legacy/find_small_proteins_with_ligands.py`
   (the original v0 seed) still exists unchanged and is superseded by
   `structural_biology/candidates.py`; it can be removed once `candidates.py`'s UniProt

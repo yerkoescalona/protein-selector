@@ -161,6 +161,26 @@ CREATE TABLE IF NOT EXISTS pocket_detection (
 )
 """
 
+# Keyed by uniprot_accession, NOT pdb_id -- an AlphaFold DB entry is a
+# property of the UniProt sequence, not any particular PDB entry (the same
+# accession can back multiple PDB entries, e.g. different crystal forms of
+# the same protein), same rationale as parameterizability's ligand_id key.
+_ALPHAFOLD_ENTRY_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS alphafold_entries (
+    uniprot_accession TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    mean_plddt REAL NOT NULL,
+    fraction_plddt_very_low REAL NOT NULL,
+    fraction_plddt_low REAL NOT NULL,
+    fraction_plddt_confident REAL NOT NULL,
+    fraction_plddt_very_high REAL NOT NULL,
+    pdb_url TEXT NOT NULL,
+    cif_url TEXT NOT NULL,
+    pae_doc_url TEXT NOT NULL,
+    model_created_date TEXT NOT NULL
+)
+"""
+
 
 @contextmanager
 def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
@@ -180,6 +200,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_POCKET_TABLE_SCHEMA)
     conn.execute(_MEEKO_TABLE_SCHEMA)
     conn.execute(_OPENFF_PARAMETERIZATION_TABLE_SCHEMA)
+    conn.execute(_ALPHAFOLD_ENTRY_TABLE_SCHEMA)
     conn.execute(_VALIDATION_TABLE_SCHEMA)
     try:
         yield conn

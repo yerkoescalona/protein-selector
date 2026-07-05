@@ -543,9 +543,24 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      first. Both are exactly the kind of bug this repo's testing discipline warns about:
      a monkeypatched unit test encoding the same wrong assumption never would have caught
      either. Regression tests added for both.
-   - [ ] **ex02 modeling validator** (`modeling/`, new domain folder) — not started.
-     Fetch-only: pull an existing AlphaFold DB entry for the candidate if one exists,
-     record pLDDT/PAE. Deliberately does **not** run a new AlphaFold prediction.
+   - [x] **ex02 modeling validator** (`modeling/alphafold_lookup.py` + `modeling/modeling_validation.py`
+     + `modeling/store.py`) — implemented. Fetch-only, as scoped: `alphafold_lookup.fetch_alphafold_entry`
+     calls `GET https://alphafold.ebi.ac.uk/api/prediction/{uniprot_accession}` (real API,
+     **live-verified 2026-07-06** against P69905/hemoglobin-alpha for a real entry, P0DTD8
+     for a real 404 "no entry", and a malformed accession for a real 400) and parses the
+     summary JSON's confidence fields (`globalMetricValue`/`fractionPlddtVeryLow`/`Low`/
+     `Confident`/`VeryHigh`) — deliberately does **not** run a new AlphaFold prediction, and
+     deliberately does **not** attempt full PAE-matrix/domain analysis (see the module's
+     docstring for why the coarser fraction-based confidence signal was used instead).
+     `modeling_validation.run_modeling_validation` composes this into one `ValidationResult`
+     for `exercise="ex02"`: no entry → `FailureMode.COMPLETENESS` (reusing the same semantic
+     as `simulability.py`'s missing-data checks), too much low-confidence structure →
+     `FailureMode.CONFIDENCE`. Persisted via the new `modeling/store.py`'s `alphafold_entries`
+     table, keyed by `uniprot_accession` (not `pdb_id` — same rationale as ligand-keyed
+     tables: the AlphaFold entry is a property of the UniProt sequence, not any one PDB
+     entry). Live end-to-end run confirmed: real entry → `SUCCESS`; real no-entry accession
+     → `FAILURE`/`COMPLETENESS`; real malformed accession → `ValueError`, not silently
+     swallowed as "no entry."
    Record `{status, effort, failure_mode}` per exercise; cache per PDB.
 5. [ ] **Per-exercise difficulty score** (predicted + measured, §5); emit the §8 table
    with `suitable_for` and the predicted-vs-measured gap.
