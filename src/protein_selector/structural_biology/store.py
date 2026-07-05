@@ -27,7 +27,7 @@ def upsert_candidates(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l1_candidates
+            INSERT INTO candidates
                 (pdb_id, title, method, resolution, n_atoms, n_residues,
                  n_modeled_residues, n_unmodeled_residues, n_protein_entities,
                  uniprot_ids, non_polymer_entity_ids, polymer_entity_ids,
@@ -81,7 +81,7 @@ def load_candidates(db_path: Path = DEFAULT_DB_PATH) -> dict[str, CandidateEntry
                    n_modeled_residues, n_unmodeled_residues, n_protein_entities,
                    uniprot_ids, non_polymer_entity_ids, polymer_entity_ids,
                    assembly_ids, organism
-            FROM l1_candidates
+            FROM candidates
             """
         ).fetchall()
     return {
@@ -114,7 +114,7 @@ def upsert_simulability(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l2_simulability (pdb_id, passed, reasons)
+            INSERT INTO simulability (pdb_id, passed, reasons)
             VALUES (?, ?, ?)
             ON CONFLICT(pdb_id) DO UPDATE SET
                 passed=excluded.passed,
@@ -130,7 +130,7 @@ def load_simulability(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Simulability
         return {}
     with connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT pdb_id, passed, reasons FROM l2_simulability"
+            "SELECT pdb_id, passed, reasons FROM simulability"
         ).fetchall()
     return {
         row[0]: SimulabilityResult(
@@ -149,7 +149,7 @@ def upsert_oligomeric_state(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l2_oligomeric_state (pdb_id, oligomeric_details, oligomeric_count)
+            INSERT INTO oligomeric_state (pdb_id, oligomeric_details, oligomeric_count)
             VALUES (?, ?, ?)
             ON CONFLICT(pdb_id) DO UPDATE SET
                 oligomeric_details=excluded.oligomeric_details,
@@ -165,7 +165,7 @@ def load_oligomeric_state(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Assembly
         return {}
     with connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT pdb_id, oligomeric_details, oligomeric_count FROM l2_oligomeric_state"
+            "SELECT pdb_id, oligomeric_details, oligomeric_count FROM oligomeric_state"
         ).fetchall()
     return {
         row[0]: AssemblyInfo(pdb_id=row[0], oligomeric_details=row[1], oligomeric_count=row[2])
@@ -182,7 +182,7 @@ def upsert_entity_composition(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l2_entity_composition
+            INSERT INTO entity_composition
                 (pdb_id, entity_id, nstd_monomer, non_std_monomer_count)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(pdb_id, entity_id) DO UPDATE SET
@@ -209,7 +209,7 @@ def load_entity_composition(
     with connect(db_path) as conn:
         rows = conn.execute(
             "SELECT pdb_id, entity_id, nstd_monomer, non_std_monomer_count "
-            "FROM l2_entity_composition"
+            "FROM entity_composition"
         ).fetchall()
     results: dict[str, list[EntityCompositionInfo]] = {}
     for row in rows:

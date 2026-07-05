@@ -1,4 +1,4 @@
-"""L1 candidate search: RCSB PDB Data/Search APIs via the official `rcsb-api` package.
+"""Hard-filters candidate search: RCSB PDB Data/Search APIs via the official `rcsb-api` package.
 
 Replaces the v0 seed's (`find_small_proteins_with_ligands.py`) per-entry `requests` loop
 and manual pagination with:
@@ -41,7 +41,7 @@ from rcsbapi.search import Attr
 #
 # deposited_modeled_polymer_monomer_count / deposited_unmodeled_polymer_monomer_count
 # and the assembly_ids/polymer_entity_ids container fields were added to support the
-# L2 completeness/oligomeric-state/non-standard-residue checks (PLAN.md §10 step 2) --
+# simulability completeness/oligomeric-state/non-standard-residue checks (PLAN.md §10 step 2) --
 # all field paths verified against a live data.rcsb.org response (2026-07-04). See
 # composition.py for the assembly/entity-level fetches these two ID lists feed.
 _ENTRY_RETURN_FIELDS = [
@@ -64,7 +64,7 @@ _ENTRY_RETURN_FIELDS = [
 
 @dataclass
 class CandidateEntry:
-    """One PDB entry surviving the L1 hard filters, with raw metadata attached."""
+    """One PDB entry surviving the hard filters, with raw metadata attached."""
 
     pdb_id: str
     title: str | None = None
@@ -82,12 +82,12 @@ class CandidateEntry:
     organism: str | None = None
 
 
-def build_l1_query(
+def build_hard_filters_query(
     max_atoms: int = 50_000,
     max_resolution: float = 3.0,
     method: str = "X-RAY DIFFRACTION",
 ):
-    """Build the L1 hard-filter search query.
+    """Build the hard-filters search query.
 
     Mirrors the five filters the v0 script built as a hand-rolled dict
     (protein entity present, non-polymer entity present, atom-count ceiling,
@@ -124,7 +124,7 @@ def search_candidate_ids(
     method: str = "X-RAY DIFFRACTION",
     rows: int = 10_000,
 ) -> list[str]:
-    """Run the L1 search and return at most ``rows`` matching PDB IDs.
+    """Run the hard-filters search and return at most ``rows`` matching PDB IDs.
 
     CRITICAL, live-verified (2026-07-04): ``Session`` (returned by ``.exec()``)
     auto-paginates through ALL matching results when fully materialized via
@@ -136,9 +136,9 @@ def search_candidate_ids(
     hundreds of sequential round trips); the identical query with
     ``itertools.islice(session, 5)`` returned in 0.35s. Do not go back to
     plain ``list(session)`` here -- it silently degrades from "instant" (the
-    L1 promise in PLAN.md §3) to potentially hours, with no error or warning.
+    hard-filters promise in PLAN.md §3) to potentially hours, with no error or warning.
     """
-    query = build_l1_query(
+    query = build_hard_filters_query(
         max_atoms=max_atoms, max_resolution=max_resolution, method=method
     )
     session = query.exec(return_type="entry", rows=rows)

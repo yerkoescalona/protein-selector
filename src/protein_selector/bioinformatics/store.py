@@ -20,7 +20,7 @@ def upsert_literature_counts(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l4_literature (pdb_id, literature_count)
+            INSERT INTO literature (pdb_id, literature_count)
             VALUES (?, ?)
             ON CONFLICT(pdb_id) DO UPDATE SET
                 literature_count=excluded.literature_count
@@ -35,6 +35,6 @@ def load_literature_counts(db_path: Path = DEFAULT_DB_PATH) -> dict[str, int | N
         return {}
     with connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT pdb_id, literature_count FROM l4_literature"
+            "SELECT pdb_id, literature_count FROM literature"
         ).fetchall()
     return {row[0]: row[1] for row in rows}

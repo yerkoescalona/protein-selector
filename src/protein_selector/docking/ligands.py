@@ -1,6 +1,6 @@
-"""L3 wiring: fetch a SMILES string per bound-ligand CCD code.
+"""Parameterizability wiring: fetch a SMILES string per bound-ligand CCD code.
 
-``candidates.py``'s L1 fetch only pulls non-polymer *entity IDs* (e.g.
+``candidates.py``'s hard-filters fetch only pulls non-polymer *entity IDs* (e.g.
 "4HHB_3"), not CCD codes or SMILES. Two RCSB Data API hops are needed to get
 from an entry's ligands to something ``parameterizability.py`` can sanitize:
 
@@ -38,7 +38,7 @@ def fetch_ligand_ccd_codes(entries: list[CandidateEntry]) -> dict[str, list[str]
     """Map each entry's ``pdb_id`` to the CCD codes of its bound ligands.
 
     Entries with no non-polymer entities are omitted from the result (an
-    empty ligand list is not an error -- plenty of apo structures pass L1).
+    empty ligand list is not an error -- plenty of apo structures pass the hard filters).
     """
     compound_id_to_pdb_id: dict[str, str] = {}
     all_compound_ids: list[str] = []

@@ -25,7 +25,7 @@ def upsert_parameterizability(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l3_parameterizability (ligand_id, passed, reasons)
+            INSERT INTO parameterizability (ligand_id, passed, reasons)
             VALUES (?, ?, ?)
             ON CONFLICT(ligand_id) DO UPDATE SET
                 passed=excluded.passed,
@@ -43,7 +43,7 @@ def load_parameterizability(
         return {}
     with connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT ligand_id, passed, reasons FROM l3_parameterizability"
+            "SELECT ligand_id, passed, reasons FROM parameterizability"
         ).fetchall()
     return {
         row[0]: ParameterizabilityResult(
@@ -62,7 +62,7 @@ def upsert_meeko_parameterization(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l3_meeko_parameterization (ligand_id, passed, reasons)
+            INSERT INTO meeko_parameterization (ligand_id, passed, reasons)
             VALUES (?, ?, ?)
             ON CONFLICT(ligand_id) DO UPDATE SET
                 passed=excluded.passed,
@@ -80,7 +80,7 @@ def load_meeko_parameterization(
         return {}
     with connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT ligand_id, passed, reasons FROM l3_meeko_parameterization"
+            "SELECT ligand_id, passed, reasons FROM meeko_parameterization"
         ).fetchall()
     return {
         row[0]: MeekoParameterizationResult(
@@ -119,7 +119,7 @@ def upsert_pocket_detection(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l3_pocket_detection (pdb_id, passed, reasons, pockets)
+            INSERT INTO pocket_detection (pdb_id, passed, reasons, pockets)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(pdb_id) DO UPDATE SET
                 passed=excluded.passed,
@@ -146,7 +146,7 @@ def load_pocket_detection(
         return {}
     with connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT pdb_id, passed, reasons, pockets FROM l3_pocket_detection"
+            "SELECT pdb_id, passed, reasons, pockets FROM pocket_detection"
         ).fetchall()
     return {
         row[0]: PocketDetectionResult(

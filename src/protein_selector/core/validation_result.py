@@ -1,4 +1,4 @@
-"""Shared result shape for L5 a-priori validators (PLAN.md §4a).
+"""Shared result shape for the a-priori validation stage's validators (PLAN.md §4a).
 
 Each exercise's validator (ex02/AlphaFold, ex03/MD, ex04/docking) is meant to
 share one interface: run the real thing, record `{status, effort_seconds,
@@ -7,7 +7,7 @@ pedagogical value (§5's difficulty score reads it), so ``notes`` should
 explain *why*, not just *whether*.
 
 ``FailureMode`` is the "failure taxonomy enum shared across validators" that
-PLAN.md §4a calls for explicitly -- add new members here as new L5
+PLAN.md §4a calls for explicitly -- add new members here as new validation-stage
 validators are built, don't invent a parallel enum per validator.
 """
 
@@ -18,14 +18,14 @@ from enum import StrEnum
 
 
 class ValidationStatus(StrEnum):
-    """Outcome of an L5 validator run."""
+    """Outcome of a validation-stage validator run."""
 
     SUCCESS = "success"
     FAILURE = "failure"
 
 
 class FailureMode(StrEnum):
-    """Shared failure taxonomy across all L5 validators (PLAN.md §4a)."""
+    """Shared failure taxonomy across all validation-stage validators (PLAN.md §4a)."""
 
     PARAMETERIZATION = "parameterization"
     COMPLETENESS = "completeness"
@@ -38,7 +38,7 @@ class FailureMode(StrEnum):
 
 @dataclass
 class ValidationResult:
-    """Common result shape for one exercise's L5 validator run on one PDB entry."""
+    """Common result shape for one exercise's validation-stage validator run on one PDB entry."""
 
     pdb_id: str
     status: ValidationStatus

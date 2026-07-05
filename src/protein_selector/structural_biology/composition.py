@@ -1,9 +1,9 @@
-"""L2 composition checks: oligomeric state + non-standard residues.
+"""Simulability composition checks: oligomeric state + non-standard residues.
 
 Unlike simulability.py's size/resolution/completeness gate (pure logic on
-data L1 already fetches at the entry level), these two checks need RCSB data
-at the ASSEMBLY and POLYMER_ENTITY levels, which requires its own batched
-fetch -- L1's entry-level query doesn't reach these fields.
+data the hard filters already fetch at the entry level), these two checks need RCSB
+data at the ASSEMBLY and POLYMER_ENTITY levels, which requires its own batched
+fetch -- the hard filters' entry-level query doesn't reach these fields.
 
 Field paths below are verified against LIVE data.rcsb.org / rcsb-api GraphQL
 responses (2026-07-04), not inferred from mmCIF documentation -- see
@@ -65,7 +65,7 @@ def _primary_assembly_compound_id(entry: CandidateEntry) -> str | None:
 def fetch_oligomeric_state(entries: list[CandidateEntry]) -> dict[str, AssemblyInfo]:
     """Batch-fetch primary-assembly oligomeric state, keyed back by ``pdb_id``.
 
-    Entries without an ``assembly_id`` (shouldn't normally happen once L1 is
+    Entries without an ``assembly_id`` (shouldn't normally happen once hard filters are
     fully wired, but the field is optional in ``CandidateEntry``) are skipped,
     not failed -- there's simply nothing to query for them.
     """

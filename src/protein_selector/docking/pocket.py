@@ -1,4 +1,4 @@
-"""L3 pocket detection via fpocket -- the Java-free replacement for p2rank.
+"""Parameterizability pocket detection via fpocket -- the Java-free replacement for p2rank.
 
 p2rank was rejected outright (JVM dependency -- see PLAN.md §9). fpocket is
 a native C binary (`fpocket-4.2.3` on conda-forge, depends only on
@@ -63,7 +63,7 @@ class PocketInfo:
 
 @dataclass
 class PocketDetectionResult:
-    """Outcome of the L3 pocket-detection gate for one PDB structure."""
+    """Outcome of the parameterizability pocket-detection gate for one PDB structure."""
 
     pdb_id: str
     passed: bool
@@ -141,7 +141,7 @@ def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
 def check_pocket_detected(
     pdb_id: str, pdb_path: Path, min_druggability_score: float = 0.5
 ) -> PocketDetectionResult:
-    """L3 gate: does fpocket find at least one sufficiently druggable pocket?
+    """Parameterizability gate: does fpocket find at least one sufficiently druggable pocket?
 
     A structure with zero pockets, or only pockets below
     ``min_druggability_score``, fails -- it's unlikely to support a

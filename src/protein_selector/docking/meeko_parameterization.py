@@ -1,4 +1,4 @@
-"""L3 ligand parameterizability check, stage 2: real Meeko/AutoDock parameterization.
+"""Parameterizability ligand check, stage 2: real Meeko/AutoDock parameterization.
 
 ``parameterizability.py``'s RDKit sanitization is necessary but not
 sufficient: a ligand can parse and sanitize fine and still fail real
@@ -43,7 +43,7 @@ _EMBED_RANDOM_SEED = 42
 
 @dataclass
 class MeekoParameterizationResult:
-    """Outcome of the L3 real-parameterization check for one ligand."""
+    """Outcome of the parameterizability real-parameterization check for one ligand."""
 
     ligand_id: str
     passed: bool
@@ -53,12 +53,12 @@ class MeekoParameterizationResult:
 def check_meeko_parameterizable(
     ligand_id: str, smiles: str | None
 ) -> MeekoParameterizationResult:
-    """L3 stage-2 gate: can Meeko actually parameterize this ligand for docking?
+    """Parameterizability stage-2 gate: can Meeko actually parameterize this ligand for docking?
 
     Three independent failure modes, each surfaced explicitly:
     - RDKit can't parse/sanitize the SMILES at all (same check as
       ``parameterizability.py``, repeated here since this function is meant
-      to be usable standalone on the L3 shortlist).
+      to be usable standalone on the parameterizability shortlist).
     - RDKit can't generate a 3D conformer (``EmbedMolecule`` returns ``-1``).
     - Meeko's ``MoleculePreparation`` produces no usable setup, or its PDBQT
       writer reports a failure.
@@ -127,7 +127,7 @@ def check_meeko_parameterizable(
 def filter_meeko_parameterizable(
     ligands: dict[str, str],
 ) -> tuple[list[str], list[MeekoParameterizationResult]]:
-    """Apply the L3 stage-2 check to a batch of ``{ligand_id: smiles}`` pairs.
+    """Apply the parameterizability stage-2 check to a batch of ``{ligand_id: smiles}`` pairs.
 
     Returns (ligand IDs that passed, results for every ligand) -- mirrors
     ``parameterizability.filter_parameterizable``'s shape.

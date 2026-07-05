@@ -1,4 +1,4 @@
-"""L3 ligand parameterizability check: can RDKit sanitize the ligand's SMILES?
+"""Parameterizability ligand check: can RDKit sanitize the ligand's SMILES?
 
 Per PLAN.md §3/§5, "docking suitability" partly depends on whether the bound
 ligand can even be parameterized for docking/MD -- a ligand RDKit can't
@@ -12,12 +12,12 @@ Deliberately NOT implemented here:
   RDKit sanitization is a fast, necessary-but-not-sufficient pre-filter: a
   ligand that fails here will definitely break docking/MD; one that passes
   still needs real parameterization (Meeko for Vina; OpenFF for MD) to be
-  fully confirmed, which is a separate, heavier L3/L5 step -- not started.
+  fully confirmed, which is a separate, heavier parameterizability/validation step -- not started.
 - Pocket detection lives in `pocket.py` (fpocket, a native C binary -- p2rank
   was rejected outright for its JVM dependency, see PLAN.md §9).
 
 Where does the SMILES come from? `ligands.py` wires this up: entry ->
-non-polymer entity IDs (from `candidates.py`'s L1 fetch) -> CCD codes (e.g.
+non-polymer entity IDs (from `candidates.py`'s hard-filters fetch) -> CCD codes (e.g.
 "ATP", "HEM") -> SMILES, via two batched RCSB Data API calls
 (`fetch_ligand_ccd_codes` then `fetch_smiles_for_ccd_codes`). This module
 still takes a SMILES directly so it can be tested independently of that
@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 # `rdkit` is NOT imported at module level: this module is imported by
-# store.py (which everyone needs, including L1/L2-only users), and rdkit
+# store.py (which everyone needs, including hard-filters/simulability-only users), and rdkit
 # lives behind the optional `validate` extra. Importing rdkit lazily, inside
 # the one function that actually calls it, keeps `ParameterizabilityResult`
 # and the rest of this module importable without the `validate` extra
@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ParameterizabilityResult:
-    """Outcome of the L3 RDKit sanitization check for one ligand."""
+    """Outcome of the parameterizability RDKit sanitization check for one ligand."""
 
     ligand_id: str
     passed: bool
@@ -48,7 +48,7 @@ class ParameterizabilityResult:
 def check_ligand_parameterizable(
     ligand_id: str, smiles: str | None
 ) -> ParameterizabilityResult:
-    """L3 gate: can RDKit parse and sanitize this ligand's SMILES?
+    """Parameterizability gate: can RDKit parse and sanitize this ligand's SMILES?
 
     Two independent failure modes, both surfaced explicitly:
     - RDKit fails to parse/sanitize the string at all (``MolFromSmiles``
@@ -102,7 +102,7 @@ def check_ligand_parameterizable(
 def filter_parameterizable(
     ligands: dict[str, str],
 ) -> tuple[list[str], list[ParameterizabilityResult]]:
-    """Apply the L3 check to a batch of ``{ligand_id: smiles}`` pairs.
+    """Apply the parameterizability check to a batch of ``{ligand_id: smiles}`` pairs.
 
     Returns (ligand IDs that passed, results for every ligand) -- mirrors
     ``simulability.filter_simulable``'s shape.

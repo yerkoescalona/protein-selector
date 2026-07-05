@@ -5,18 +5,17 @@ instructor-vs-student fork is **resolved in §2**: this is an instructor validat
 
 > **Status:** now its **own standalone git repo** (promoted out of the course
 > `exercises/scripts/`). `find_small_proteins_with_ligands.py` is the v0 seed — a partial
-> Layer 1 (UniProt enzyme search → RCSB size/resolution/method filter → per-entry ligand
-> check → CSV). Everything below extends *from* it. Working repo name: `protein-selector`
-> (rename freely). The course depends on this tool's **output** (a vendored CSV), never on
-> its toolchain — see §12.
+> hard-filters stage (UniProt enzyme search → RCSB size/resolution/method filter →
+> per-entry ligand check → CSV). Everything below extends *from* it. Working repo name:
+> `protein-selector` (rename freely). The course depends on this tool's **output** (a
+> vendored CSV), never on its toolchain — see §12.
 
-> **ICM framing, and a naming collision to be aware of:** this repo follows the
-> Interpretable Context Methodology (see `CONTEXT.md`), whose context hierarchy is also
-> called "Layers" (0 identity, 1 routing, 2 stage contracts, 3 reference, 4 working
-> artifacts). That vocabulary is unrelated to this document's "L1"–"L5" *pipeline filtering
-> stages* (hard filters → simulability → parameterizability → judgment → a-priori
-> validation) used everywhere below. When either term appears elsewhere in this repo's
-> docs, "Layer 0–4" means ICM context; "L1–L5" means pipeline filtering.
+> **ICM framing:** this repo follows the Interpretable Context Methodology (see
+> `CONTEXT.md`), whose context hierarchy is called "Layers" (0 identity, 1 routing,
+> 2 stage contracts, 3 reference, 4 working artifacts) — unrelated to the pipeline
+> filtering stages (hard filters → simulability → parameterizability → literature →
+> validation) used everywhere below, which are named descriptively rather than numbered
+> so a new stage can be inserted without renumbering anything downstream.
 
 ---
 
@@ -43,7 +42,8 @@ through the whole plan:
   have to **actually attempt the exercise pipeline** on the shortlist and observe.
 - Therefore the "test-MD / test-dock / test-AlphaFold" runs that a student-facing design
   would defer are here **promoted to the heart of the tool** (§4a, §5). They run only on
-  the L1–L3 survivors (still cheap→expensive), but they are the point.
+  the hard-filters/simulability/parameterizability survivors (still cheap→expensive), but
+  they are the point.
 - The difficulty score is **two-part**: *predicted* difficulty (cheap proxies) plus
   *measured* difficulty (did the actual test run succeed, and how painful was it). The
   gap between the two is itself informative — a protein that looks easy but fails the
@@ -58,37 +58,39 @@ There is no longer a fork; §10 is a single instructor-tool path.
 Run cheap deterministic filters over the whole PDB first; apply expensive/AI steps only to
 the ~20–50 survivors. **Never run an LLM over thousands of entries.**
 
-| Layer | What | Cost | On how many |
+| Stage | What | Cost | On how many |
 |-------|------|------|-------------|
-| **L1 Hard filters** | residue count, resolution, method, polymer-entity count, organism, specific ligand | free, instant (1 RCSB query) | whole PDB |
-| **L2 Simulability** | resolution <~2.5 Å, missing-loop/gap check (PDBe completeness), oligomeric state, non-standard residues, size window ~100–300 aa | cheap API calls | hundreds |
-| **L3 Ligand parameterizability** | RDKit/Meeko/OpenFF can sanitize+parameterize the ligand; fpocket finds a pocket | seconds/protein, local | hundreds |
-| **L4 Judgment** | literature richness (Europe PMC counts — no LLM), then LLM only for "does this make pedagogical sense" | rate-limited / paid | 20–50 survivors |
+| **Hard filters** | residue count, resolution, method, polymer-entity count, organism, specific ligand | free, instant (1 RCSB query) | whole PDB |
+| **Simulability** | resolution <~2.5 Å, missing-loop/gap check (PDBe completeness), oligomeric state, non-standard residues, size window ~100–300 aa | cheap API calls | hundreds |
+| **Parameterizability** | RDKit/Meeko/OpenFF can sanitize+parameterize the ligand; fpocket finds a pocket | seconds/protein, local | hundreds |
+| **Literature** | literature richness (Europe PMC counts — no LLM), then LLM only for "does this make pedagogical sense" | rate-limited / paid | 20–50 survivors |
 
-Then a fifth layer, which is the reason the tool exists for an instructor:
+Then a fifth stage, which is the reason the tool exists for an instructor:
 
-| Layer | What | Cost | On how many |
+| Stage | What | Cost | On how many |
 |-------|------|------|-------------|
-| **L5 A-priori validation** | actually run each exercise's real pipeline (short test-MD, real test-dock, AlphaFold predict) and record success/failure + effort | minutes–hours/protein | ~20–50 shortlist only |
+| **Validation (a-priori)** | actually run each exercise's real pipeline (short test-MD, real test-dock, AlphaFold predict) and record success/failure + effort | minutes–hours/protein | ~20–50 shortlist only |
 
-Design rule: **cheap gates live in L1–L3; empirical difficulty is measured in L5.** fpocket
-pocket existence and the ligand-parameterization *attempt* are cheap L3 gates. The *full
-test-docking run*, a *short real MD*, and an *AlphaFold prediction* are L5 — they run only
-on the L1–L3 survivors, but they are **not optional**: they are how the tool distinguishes
-"looks fine" from "actually teachable." See §4a.
+Design rule: **cheap gates live in hard filters through parameterizability; empirical
+difficulty is measured in validation.** fpocket pocket existence and the
+ligand-parameterization *attempt* are cheap parameterizability gates. The *full
+test-docking run*, a *short real MD*, and an *AlphaFold prediction* are the validation
+stage — they run only on the hard-filters/simulability/parameterizability survivors, but
+they are **not optional**: they are how the tool distinguishes "looks fine" from
+"actually teachable." See §4a.
 
 ---
 
 ## 4. Gap from v0 script → target (concrete deltas)
 
-The current script is L1-ish but has issues to fix as it's refactored:
+The current script is hard-filters-ish but has issues to fix as it's refactored:
 - [ ] **No caching / resume** — every run re-hits the API. Add per-PDB JSON cache keyed by
       PDB ID (this is what makes "+20 proteins next year" cheap; see §7).
 - [ ] **UniProt-first path is lossy** — it truncates to 5 PDBs/protein and stops at 50.
-      Prefer a single RCSB structured query as the L1 spine (the `RCSBLigandFinder` query
+      Prefer a single RCSB structured query as the hard-filters spine (the `RCSBLigandFinder` query
       is closer to right); keep UniProt only for cofactor annotation enrichment.
 - [ ] **Ligand filter is a hardcoded set + name heuristics** — replace with the CCD-based
-      exclusion + a real parameterizability check (L3), not string length.
+      exclusion + a real parameterizability check, not string length.
 - [ ] **`num_residues` computation is fragile** (multiplies molecules × a possibly-zero
       count) — verify against `rcsb_entry_info.deposited_polymer_monomer_count`.
 - [x] **Sequential per-entry REST + `time.sleep` — VERIFIED FIX AVAILABLE (RCSB Data API
@@ -96,7 +98,7 @@ The current script is L1-ish but has issues to fix as it's refactored:
       `get_ligands`'s one-call-per-PDB-ID loop with **batched GraphQL** via the
       `entries(entry_ids: [...])` root query — RCSB's own "Usage Guidelines" state the
       batch endpoints accept **up to 1000 IDs per request**. Use the official, maintained
-      **`rcsb-api` Python package** (`rcsbapi.search` for the L1 candidate-ID search,
+      **`rcsb-api` Python package** (`rcsbapi.search` for the hard-filters candidate-ID search,
       `rcsbapi.data` for the batched metadata fetch) instead of hand-rolled `requests`
       calls — cites Rose et al., *J. Mol. Biol.* 2020, DOI 10.1016/j.jmb.2020.11.003.
       This alone is likely a >10x wall-clock win with **zero local storage**.
@@ -106,55 +108,57 @@ The current script is L1-ish but has issues to fix as it's refactored:
 
 Considered downloading a full local PDB mirror to speed up queries — **rejected, and now
 empirically confirmed unnecessary, not just theoretically rejected.** Almost everything
-L1/L2 needs is metadata (resolution, method, ligand composition, residue counts), not
-atomic coordinates; downloading full structure files to filter on metadata is the exact
-anti-pattern the layered design (§3) argues against. Full atomic files are only needed for
-the L3/L5 shortlist (~20–50 proteins), fetched on demand.
+hard filters/simulability need is metadata (resolution, method, ligand composition,
+residue counts), not atomic coordinates; downloading full structure files to filter on
+metadata is the exact anti-pattern the layered design (§3) argues against. Full atomic
+files are only needed for the parameterizability/validation shortlist (~20–50 proteins),
+fetched on demand.
 
 **Empirical confirmation (2026-07-04, `scripts/benchmark_pipeline.py`, live RCSB API):**
-the full L1+L2 pipeline (search + entry-metadata fetch + oligomeric-state fetch +
-non-standard-residue fetch) processes **~500 real candidates in under 3 seconds**, and
-barely slows down at 2000 candidates — round-trip latency dominates, not data volume,
-because the RCSB Data API batches up to 1000 IDs/request
-(`rcsbapi.const.const.DATA_API_MAX_BATCH_ID_SIZE`) and the L1 search itself runs
+the full hard-filters + simulability pipeline (search + entry-metadata fetch +
+oligomeric-state fetch + non-standard-residue fetch) processes **~500 real candidates
+in under 3 seconds**, and barely slows down at 2000 candidates — round-trip latency
+dominates, not data volume, because the RCSB Data API batches up to 1000 IDs/request
+(`rcsbapi.const.const.DATA_API_MAX_BATCH_ID_SIZE`) and the hard-filters search itself runs
 server-side (never scans the whole archive locally). At this tool's actual scale
 (~hundreds of candidates, annual cadence — §13), **an archive-wide local metadata table
 is not needed.** Re-run `scripts/benchmark_pipeline.py` if this conclusion ever needs
 re-checking (e.g. after an RCSB API change, or if scale assumptions change).
 
 Given that, the originally-planned **archive-wide** local table (fetching the full
-Holdings list of ~250k+ current PDB IDs and their metadata, ahead of any specific L1
-filter) is **not being built** — it would solve a performance problem that measurement
+Holdings list of ~250k+ current PDB IDs and their metadata, ahead of any specific
+hard-filters filter) is **not being built** — it would solve a performance problem that measurement
 shows doesn't exist at this tool's scale:
 1. [~] Fetching the full **Repository Holdings Service REST API** "current entries" list
-   — **superseded by the benchmark result; not needed.** L1's server-side search already
+   — **superseded by the benchmark result; not needed.** The hard filters' server-side search already
    returns candidate IDs fast for any realistic filter; there's no need to also hold a
    local copy of the entire archive's ID list.
 2. [~] Batch-querying metadata for that full archive-wide ID list — **also superseded**;
    `candidates.fetch_entry_metadata` already does this per-search-result, which is what's
    actually needed.
 3. [x] **Persist the result as one local SQLite table — DECIDED, implemented
-   (`store.py`).** One table per pipeline layer (`l1_candidates`, `l2_simulability`,
+   (`store.py`).** One table per pipeline stage (`candidates`, `simulability`,
    ...), each keyed by `pdb_id`, upserted so a re-run only touches changed rows.
    Chose SQLite over DuckDB/Parquet: zero new dependency (stdlib `sqlite3`, matching
    this repo's "add a dep only when needed" discipline), natural keyed-upsert
    semantics (a JSON/Parquet blob needs a full read-merge-rewrite per update), and
    the right scale for "~hundreds of candidates, annual cadence" (§13) — DuckDB/Parquet
    are built for large-scale analytics this tool doesn't need. **Deliberate design
-   choice: each layer keeps its own small dataclass (`CandidateEntry`, `SimulabilityResult`,
+   choice: each stage keeps its own small dataclass (`CandidateEntry`, `SimulabilityResult`,
    ...) rather than one growing shared object — `store.py` only persists/reloads them;
-   joining across layers into the final §8 output row is a separate, not-yet-built step.**
-   This local cache is **per-search-result** (built from whatever L1 candidates a run
+   joining across stages into the final §8 output row is a separate, not-yet-built step.**
+   This local cache is **per-search-result** (built from whatever hard-filters candidates a run
    actually fetched), not an archive-wide mirror — that distinction is exactly what the
    benchmark confirmed is the right scope.
-4. [ ] Fetch full structure files only for the L3/L5 shortlist, individually, on demand.
+4. [ ] Fetch full structure files only for the parameterizability/validation shortlist,
+   individually, on demand.
 
 - [x] ~~Verify the exact Holdings API "current entries" endpoint~~ — moot, per above;
       not being built.
 
 ---
 
-## 4a. L5 validation harness — the a-priori "does this actually work" test
+## 4a. Validation harness — the a-priori "does this actually work" test
 
 For each shortlist protein, run the **real exercise pipelines** the students will run, in
 the **same Colab-equivalent environment**, and record what happens. This is the empirical
@@ -186,12 +190,12 @@ core. Each exercise gets a validator that returns `{status, effort, failure_mode
 
 **Record, don't just pass/fail.** Persist for every protein: which exercise it's suitable
 for, *why* it's easy or hard, the wall-clock it took, and the exact failure mode if any.
-That record IS the pedagogical value and the input to §5. Cache L5 results per PDB — they
+That record IS the pedagogical value and the input to §5. Cache validation results per PDB — they
 are the expensive part; never recompute an unchanged protein.
 
 - [ ] Build one validator per exercise behind a common `{status, effort, failure_mode,
       notes}` interface.
-- [ ] Run L5 in the student-equivalent env (§9) so measured effort reflects *their*
+- [ ] Run validation in the student-equivalent env (§9) so measured effort reflects *their*
       constraints, not a beefy workstation.
 - [ ] Define a **failure taxonomy** enum shared across validators (parameterization,
       completeness, size/time, pocket, stability, confidence, special-chemistry).
@@ -203,7 +207,7 @@ This is the original contribution; everything else is reused (§6). For an instr
 the score is **two-part and per-exercise** — a protein easy for ex04 docking can be brutal
 for ex03 MD, so there is no single scalar.
 
-**(a) Predicted difficulty (cheap, L1–L3 proxies):**
+**(a) Predicted difficulty (cheap, hard-filters/simulability/parameterizability proxies):**
 - **Size** (residues/atoms) → compute-time difficulty for Colab MD.
 - **Functional clarity** (has EC number, clear cofactor, single dominant domain).
 - **Literature richness** (Europe PMC count) → is the case rich enough for discussion.
@@ -211,14 +215,14 @@ for ex03 MD, so there is no single scalar.
 - **Structural cleanliness** (resolution, completeness, no weird residues).
 - **Domain definition** (AlphaFold PAE off-diagonal / pLDDT) → well-defined domain = easier.
 
-**(b) Measured difficulty (from the L5 validators, §4a):** did the real test run succeed,
+**(b) Measured difficulty (from the validation-stage validators, §4a):** did the real test run succeed,
 its wall-clock effort, and the failure mode if any — **per exercise (ex02/ex03/ex04)**.
 
 - [ ] Score is a documented, inspectable function; weights in a config file, not buried.
 - [ ] Emit **per-exercise** difficulty, not one number: `difficulty_ex02/03/04` +
       `suitable_for` (which exercises this protein is actually good for).
 - [ ] Track the **predicted-vs-measured gap** as its own column — a protein that scores
-      easy but fails L5 is the highest-value catch (exactly the "looks fine, breaks in
+      easy but fails validation is the highest-value catch (exactly the "looks fine, breaks in
       class" case the tool exists to prevent).
 - [ ] Emit a **spiral-curriculum tier** (`intro` / `core` / `challenge`) per exercise so
       the same shortlist feeds ex01→ex04 at increasing difficulty.
@@ -234,7 +238,7 @@ open the source** (anti-hallucination — see §11):
 - ⚠ Curated MD datasets to *source* dynamics/examples instead of simulating: ATLAS
   (~1390 proteins, 3×100 ns) and mdCATH (multi-temperature). Verify counts/licences.
 - ⚠ DynaMate — existing LLM agent for protein-ligand MD prep (fetch→clean→cap→ligand
-  extract/protonate→parameterize→box). Heavy overlap with L3 prep; evaluate before
+  extract/protonate→parameterize→box). Heavy overlap with parameterizability prep; evaluate before
   rebuilding that flow.
 
 ---
@@ -244,18 +248,20 @@ open the source** (anti-hallucination — see §11):
 - **Justified because:** per-protein fan-out (scatter), and **caching/resume** so adding
   20 proteins next year doesn't re-run the previous 300 — real given expensive docking/MD.
   The reproducible pipeline doubles as course content.
-- **Against:** the L4 judgment layer (API/LLM calls) is not file-based-natural; it's
+- **Against:** the literature/judgment stage (API/LLM calls) is not file-based-natural; it's
   wrappable (each call writes JSON) but the DAG's judgment half will have uglier wrappers
   than its clean half.
 - **Now stronger:** confirming this as an instructor validation tool means the expensive,
-  per-protein, **cacheable L5 runs** (test-dock / test-MD / AlphaFold) are central — which
+  per-protein, **cacheable validation runs** (test-dock / test-MD / AlphaFold) are central — which
   is precisely Snakemake's sweet spot (scatter + resume). Re-running next year's +20
-  proteins without redoing last year's 300 L5 validations is a real, recurring win.
-- **Honest caveat:** L1–L3 over a few hundred proteins is still fine as a plain script
-  with parquet checkpoints. The workflow engine earns its keep specifically at L5.
+  proteins without redoing last year's 300 validation runs is a real, recurring win.
+- **Honest caveat:** hard filters through parameterizability over a few hundred proteins is
+  still fine as a plain script with parquet checkpoints. The workflow engine earns its keep
+  specifically at the validation stage.
   **Nextflow is overkill** unless HPC/cloud or nf-core conventions become goals.
 
-- [ ] **Decision:** script-first for L1–L3; introduce Snakemake when L5 lands, so each
+- [ ] **Decision:** script-first for hard filters through parameterizability; introduce
+      Snakemake when validation lands, so each
       protein×exercise validation is a cached DAG node.
 
 ---
@@ -274,9 +280,9 @@ ex04_status, ex04_difficulty, ex04_failure_mode,
 predicted_vs_measured_gap, tier_per_exercise, rationale_json`
 
 - `*_status` ∈ {pass, fail, flag}; `*_failure_mode` from the shared taxonomy (§4a).
-- `rationale_json` holds the per-metric reasons + the L5 notes — the instructor's evidence
+- `rationale_json` holds the per-metric reasons + the validation notes — the instructor's evidence
   for "this one is a clean intro / this one will break in class."
-- Keep an audit trail: dated snapshot + exact L1 query + tool/env versions, so a shortlist
+- Keep an audit trail: dated snapshot + exact hard-filters query + tool/env versions, so a shortlist
   is reproducible and you can diff year-over-year.
 
 ---
@@ -284,7 +290,7 @@ predicted_vs_measured_gap, tier_per_exercise, rationale_json`
 ## 9. Environment complementarity (what the course env already gives you)
 
 **No JVM anywhere in this stack — decided.** p2rank was the one Java dependency ever
-considered here (pocket detection, L3), and it's rejected: a JVM adds a second runtime to
+considered here (pocket detection, parameterizability stage), and it's rejected: a JVM adds a second runtime to
 install/maintain for one narrow check, when a native-binary alternative exists that fits
 the same "external tool invoked via subprocess" pattern already accepted for AutoDock
 Vina. **Replaced with `fpocket`** (verified real, actively maintained, conda-forge:
@@ -299,11 +305,11 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
   repo, to not bloat the student env):
   - [x] `requests` — declared dep in `pyproject.toml`.
   - [x] `meeko` (+ `scipy`/`numpy`/`gemmi` it needs transitively but doesn't declare) —
-        L3 ligand parameterization, done (`meeko_parameterization.py`).
-  - [x] `openff-toolkit` + `openmmforcefields` + `pdbfixer` — L5 ex03 MD validator, done
+        parameterizability ligand parameterization, done (`meeko_parameterization.py`).
+  - [x] `openff-toolkit` + `openmmforcefields` + `pdbfixer` — validation-stage ex03 MD validator, done
         (`md_validation.py`). Confirmed live: these three cannot be pip-installed
         (`openff-toolkit`'s only PyPI release is yanked; `pdbfixer` has no real pip
-        release either) — they live in the new `environment-l5.yml` conda env, kept
+        release either) — they live in the new `environment-validation.yml` conda env, kept
         separate from this project's pip/uv base env exactly as this line originally
         called for. `openmmforcefields`'s `SystemGenerator`/template generators
         genuinely require a real `openff.toolkit.Molecule` internally (confirmed by
@@ -311,7 +317,7 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
         RDKit `Mol` support) — there's no lighter subset of "the openforcefield API"
         that avoids this.
   - [ ] `fpocket` — pocket detection (**conda/mamba only, no pip package** — a native C
-        binary, no JVM; verify install path when L3 pocket detection is built).
+        binary, no JVM; verify install path when parameterizability pocket detection is built).
   - [ ] `plip` — interaction analysis (teaching: *which* interactions, not just Vina score).
   - [ ] AutoDock Vina + the CCSB/Forli Colab env (Meeko, Molscrub, ProDy, reduce2) — only
         for the shortlist test-dock, deferred.
@@ -322,7 +328,7 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
 
 ## 10. Minimal path to v0 (single instructor-tool path)
 
-1. [~] **L1:** switch to `rcsb-api` for the candidate-ID search and batched metadata
+1. [~] **Hard filters:** switch to `rcsb-api` for the candidate-ID search and batched metadata
    fetch (§4, §4b) — **`src/protein_selector/candidates.py` implements this**:
    `search_candidate_ids()` builds the same five hard filters the v0 script used
    (protein-entity present, non-polymer present, atom-count ceiling, method,
@@ -346,22 +352,23 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
    signatures, config values, source of `_process_input_ids`) but the actual
    HTTP round trip, response shape, and rate-limit behavior are unconfirmed.
    **Run `search_candidate_ids()` and `fetch_entry_metadata()` end-to-end in an
-   environment with real network access before trusting this as the sole L1
+   environment with real network access before trusting this as the sole hard-filters
    path** — treat it as implemented-but-unverified, not done.
    Still open: drop the lossy UniProt-first loop and old per-entry `requests`
    calls from `find_small_proteins_with_ligands.py` once the new module is
    verified (keep UniProt only for cofactor enrichment); upgrade the JSON cache
    to the SQLite/DuckDB/Parquet table described in §4b once the entry-count
    scale (whole-PDB Holdings list) makes JSON impractical.
-2. **L2–L3 cheap checks** with SQLite persistence → pass/flag. Cut to a ~20–50 shortlist.
-   - [x] **L2 FULLY IMPLEMENTED (2026-07-04)** — all four checks, all field
+2. **Simulability and parameterizability cheap checks** with SQLite persistence →
+   pass/flag. Cut to a ~20–50 shortlist.
+   - [x] **Simulability FULLY IMPLEMENTED (2026-07-04)** — all four checks, all field
      paths **live-verified against data.rcsb.org**, not guessed:
      - `check_size_and_resolution` — residue-count window (~50–300 aa) +
-       tightened resolution ceiling, pure logic on fields L1 already fetches.
+       tightened resolution ceiling, pure logic on fields the hard filters already fetch.
      - `check_completeness` — unmodeled-residue fraction, using
        `n_modeled_residues`/`n_unmodeled_residues` (verified fields
        `deposited_modeled_polymer_monomer_count`/`deposited_unmodeled_polymer_monomer_count`,
-       added to L1's entry-level fetch for free — same query, no new round trip).
+       added to the hard filters' entry-level fetch for free — same query, no new round trip).
      - `check_oligomeric_state` — needs `composition.py`'s new assembly-level
        fetch (verified: `pdbx_struct_assembly.oligomeric_details`/`oligomeric_count`).
      - `check_non_standard_residues` — needs `composition.py`'s new polymer-entity
@@ -371,8 +378,8 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      oligomeric-state/non-standard-residue checks are informational by default
      (no ceiling / allowed) since PLAN.md never mandated a hard rule for either —
      set `max_oligomeric_count`/`allow_non_standard_residues` to actually gate.
-     All persisted via `store.py`'s new `l2_oligomeric_state`/`l2_entity_composition`
-     tables. Full pipeline (L1 fetch → composition fetch → combined check)
+     All persisted via `store.py`'s new `oligomeric_state`/`entity_composition`
+     tables. Full pipeline (hard-filters fetch → composition fetch → combined check)
      verified end-to-end against the real live API for 4HHB, not just mocked.
    - [x] **Two real, significant bugs caught via live verification — see
      `.claude/CLAUDE.md` "Bugs found via live verification" for full detail:**
@@ -385,23 +392,23 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
         response.
      2. `search_candidate_ids`'s `list(session)` auto-paginates through **every**
         matching result when materialized — `rows` is a page size, not a total
-        cap. A broad L1 filter (tens of thousands of matches) would silently
-        take from many minutes to hours instead of being "instant" (the L1
+        cap. A broad hard-filters filter (tens of thousands of matches) would silently
+        take from many minutes to hours instead of being "instant" (the hard-filters
         promise, §3). Fixed with `itertools.islice(session, rows)`; regression
         test added (`test_caps_results_at_rows_even_if_session_yields_more`).
      **Lesson reinforced:** mocked tests validate internal logic, not
      assumptions about an external API's actual shape/behavior — periodically
      re-verify live, don't just trust that mocks match reality once and forever.
-   - [x] **L3 ligand parameterizability (RDKit sanitization)** —
+   - [x] **Parameterizability (RDKit sanitization)** —
      `parameterizability.py`: `check_ligand_parameterizable`/`filter_parameterizable`,
      a fast necessary-but-not-sufficient pre-filter (can RDKit even parse/sanitize
      the ligand's SMILES?). Tested with **real RDKit calls, not mocked** — pure
      local library logic, no network. Requires the `validate` extra
      (`uv sync --extra validate`); `rdkit` is imported lazily inside the check
-     function specifically so `store.py` (which every layer needs) stays
+     function specifically so `store.py` (which every stage needs) stays
      importable without the `validate` extra installed — see `.claude/CLAUDE.md`
      for the real bug this caught.
-   - [x] **L3 SMILES wiring** — `ligands.py`: `fetch_ligand_ccd_codes`
+   - [x] **Parameterizability SMILES wiring** — `ligands.py`: `fetch_ligand_ccd_codes`
      (non-polymer entity ID → CCD code, e.g. "HEM") then
      `fetch_smiles_for_ccd_codes` (CCD code → SMILES), two batched RCSB Data
      API calls, both **live-verified (2026-07-05)** against real 4HHB data
@@ -409,8 +416,8 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      `chem_comp`/`rcsb_chem_comp_descriptor.SMILES`; compound ID format
      `"{pdb_id}_{entity_id}"`, same convention as `composition.py`'s
      polymer-entity fetch). Now the full CCD-code→SMILES→sanitization path
-     can run end-to-end on real L1 survivors.
-   - [x] **L3 Meeko parameterization (docking side)** —
+     can run end-to-end on real hard-filters survivors.
+   - [x] **Parameterizability Meeko parameterization (docking side)** —
      `meeko_parameterization.py`: `check_meeko_parameterizable`/
      `filter_meeko_parameterizable`, the real check Vina docking depends on:
      SMILES → RDKit 3D embed → Meeko `MoleculePreparation` → PDBQT. Tested
@@ -423,13 +430,13 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      guessed in one shot). `rdkit`'s `AllChem.EmbedMolecule` needed the same
      `# ty: ignore[unresolved-attribute]` stub-gap treatment as
      `RDLogger.DisableLog`.
-   - [ ] **L3 OpenFF parameterization (MD side)** — not started. `openmm`
+   - [ ] **Parameterizability OpenFF parameterization (MD side)** — not started. `openmm`
      (real PyPI package, verified — `openmm==8.5.2` installs cleanly) is now
      in the `validate` extra for this, but no wrapper code has been written;
      `openff-toolkit` itself remains excluded from pip deps entirely (its
      only PyPI release is yanked — conda-forge-first, see pyproject.toml
      note) and would need a conda-side install when this work starts.
-   - [x] **L3 fpocket pocket detection** — `pocket.py`: `run_fpocket`/
+   - [x] **Parameterizability fpocket pocket detection** — `pocket.py`: `run_fpocket`/
      `check_pocket_detected`, plus a standalone `parse_fpocket_info` (pure
      text parsing, no subprocess, tested directly against the verbatim
      documented output format). **Decided against p2rank** (rejected the
@@ -451,27 +458,28 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
    — 0 is a real, meaningful answer here: "no papers found" is different from
    "couldn't ask the question"). No batch endpoint exists (unlike RCSB's Data API) —
    one HTTP request per PDB ID, sharing one `requests.Session` for connection pooling.
-   Persisted via `store.py`'s new `l4_literature` table (plain `pdb_id → int|None`,
+   Persisted via `store.py`'s new `literature` table (plain `pdb_id → int|None`,
    no dataclass — a single scalar doesn't need one). Verified live end-to-end:
    candidates → literature counts → SQLite round-trip, all matching.
-4. **L5 validation harness (the core):**
-   - [x] **ex03 MD validator** — `l5_common.py` (shared `ValidationStatus`/`FailureMode`/
-     `ValidationResult` across all L5 validators, per §4a) + `md_validation.py`'s
+4. **Validation harness (the core):**
+   - [x] **ex03 MD validator** — `validation_result.py` (shared `ValidationStatus`/`FailureMode`/
+     `ValidationResult` across all validation-stage validators, per §4a) + `md_validation.py`'s
      `run_test_md`: real PDBFixer repair (fill missing atoms/loops, strip heterogens,
      protonate) then a real short OpenMM MD run (vacuum, `NoCutoff` — see
      `md_validation.py`'s docstring for why not explicit solvent). **Live-verified
      end-to-end (2026-07-05)** in a throwaway conda env (this sandbox has no conda by
-     default; bootstrapped via `micromamba`, see `environment-l5.yml`): both the
+     default; bootstrapped via `micromamba`, see `environment-validation.yml`): both the
      success path (1UBQ, 1231 atoms, ~23s for 5ps→10ps-scale runs on CPU) and the real
      `FailureMode.PARAMETERIZATION` path (4HHB with HEM left in — `ValueError: No
      template found for residue 574 (HEM)...`, verified message, not guessed) work.
-     Requires the `environment-l5.yml` conda env (`openmm`, `pdbfixer`) — **not** pip;
+     Requires the `environment-validation.yml` conda env (`openmm`, `pdbfixer`) — **not** pip;
      `pdbfixer` has no meaningful pip release. Persisted via `store.py`'s
-     `l5_validation` table, keyed by `(pdb_id, exercise)` so ex02/ex04 can share it.
+     `validation` table, keyed by `(pdb_id, exercise)` so ex02/ex04 can share it.
      Real per-ns wall-clock, measured live: ~2370s/ns for a 1231-atom apo protein in
      vacuum on CPU (no GPU in this sandbox) — a real protein-ligand complex in
      explicit water will be substantially slower; budget accordingly for "a couple ns."
-   - [ ] **ex04 docking validator** — not started (fpocket + Meeko already built in L3;
+   - [ ] **ex04 docking validator** — not started (fpocket + Meeko already built in the
+     parameterizability stage;
      the remaining piece is a real Vina test-dock + PLIP interaction analysis).
    - [ ] **ex02 AlphaFold validator** — not started.
    Record `{status, effort, failure_mode}` per exercise; cache per PDB.
@@ -481,7 +489,7 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
 **v0 slicing:** you can ship after step 4 with only the ex04 validator wired — that alone
 catches the most common "breaks in class" case. Add ex03 then ex02 validators next.
 Sourcing dynamics from ATLAS/mdCATH is a *supplement* for discussion material, **not** a
-substitute for L5 — the instructor still needs to know the exercise itself runs.
+substitute for validation — the instructor still needs to know the exercise itself runs.
 
 ---
 
@@ -516,6 +524,6 @@ substitute for L5 — the instructor still needs to know the exercise itself run
   grid-box failure point; PLIP for interaction reasoning.
 - **Instructor tool, confirmed (§2).** Its core job is *a-priori validation*: attempt the
   real exercises on candidates to grade actual difficulty, because metadata cannot tell
-  "easy" from "breaks in class." L5 (§4a) is therefore mandatory, not deferred.
-- The L5 validators must run in the **student-equivalent Colab environment** so measured
+  "easy" from "breaks in class." Validation (§4a) is therefore mandatory, not deferred.
+- The validation-stage validators must run in the **student-equivalent Colab environment** so measured
   effort reflects what students will hit, not a workstation.

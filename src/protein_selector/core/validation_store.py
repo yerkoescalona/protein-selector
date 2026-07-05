@@ -38,7 +38,7 @@ def upsert_validation_results(
     with connect(db_path) as conn:
         conn.executemany(
             """
-            INSERT INTO l5_validation
+            INSERT INTO validation
                 (pdb_id, exercise, status, effort_seconds, failure_mode, notes)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(pdb_id, exercise) DO UPDATE SET
@@ -71,7 +71,7 @@ def load_validation_results(
         rows = conn.execute(
             """
             SELECT pdb_id, status, effort_seconds, failure_mode, notes
-            FROM l5_validation WHERE exercise = ?
+            FROM validation WHERE exercise = ?
             """,
             (exercise,),
         ).fetchall()

@@ -1,4 +1,4 @@
-# L5 a-priori validation environment (PLAN.md §4a) -- conda-only, separate
+# A-priori validation environment (PLAN.md §4a) -- conda-only, separate
 # from this project's pip/uv base environment (pyproject.toml).
 #
 # Why a second environment: openff-toolkit and pdbfixer have no usable pip
@@ -9,14 +9,14 @@
 # a real `openff.toolkit.Molecule` object (confirmed by reading its actual
 # source, not its docstring -- see md_validation.py's module docstring).
 #
-# Create with: micromamba env create -f environment-l5.yml
-# Run L5 modules with: micromamba run -n protein-selector-l5 <command>
+# Create with: micromamba env create -f environment-validation.yml
+# Run validation modules with: micromamba run -n protein-selector-validation <command>
 #
 # Per .claude/CLAUDE.md's "Boundary with the course repo": this environment
 # is instructor-tool-only. Never let it leak into the student course repo's
 # own environment.yml -- students don't need openff-toolkit/pdbfixer to run
 # the pre-selected exercises this tool produces.
-name: protein-selector-l5
+name: protein-selector-validation
 channels:
   - conda-forge
 dependencies:

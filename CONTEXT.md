@@ -8,10 +8,10 @@ I go?"
 
 | If the task is about... | Go to | Notes |
 |---|---|---|
-| PDB search, entry metadata, oligomeric state, non-standard residues, resolution/size gates | `src/protein_selector/structural_biology/` | L1 search/fetch + L2 simulability checks. `store.py` here persists this domain's tables only. |
-| Literature-richness / evidence counts | `src/protein_selector/bioinformatics/` | Europe PMC (L4 judgment signal). |
-| Ligand sanitization, Meeko/PDBQT parameterization, SMILES lookup, fpocket pocket detection | `src/protein_selector/docking/` | L3, needs the `validate` extra. **Deferred decision:** if MD-side OpenFF parameterization is ever written, decide then whether it reuses `parameterizability.py`'s RDKit-sanitize check — don't move anything here preemptively (see `.claude/CLAUDE.md`'s deferred-decision note). |
-| The a-priori OpenMM/PDBFixer test-MD validator | `src/protein_selector/molecular_dynamics/` | Needs `environment-l5.yml` (conda), not the `validate` extra. |
+| PDB search, entry metadata, oligomeric state, non-standard residues, resolution/size gates | `src/protein_selector/structural_biology/` | Hard-filters search/fetch + simulability checks. `store.py` here persists this domain's tables only. |
+| Literature-richness / evidence counts | `src/protein_selector/bioinformatics/` | Europe PMC (literature judgment signal). |
+| Ligand sanitization, Meeko/PDBQT parameterization, SMILES lookup, fpocket pocket detection | `src/protein_selector/docking/` | Parameterizability, needs the `validate` extra. **Deferred decision:** if MD-side OpenFF parameterization is ever written, decide then whether it reuses `parameterizability.py`'s RDKit-sanitize check — don't move anything here preemptively (see `.claude/CLAUDE.md`'s deferred-decision note). |
+| The a-priori OpenMM/PDBFixer test-MD validator | `src/protein_selector/molecular_dynamics/` | Needs `environment-validation.yml` (conda), not the `validate` extra. |
 | Persistence (SQLite schema/connection) or the cross-exercise validation-result contract | `src/protein_selector/core/` | Cross-domain infrastructure, not biology — every domain's `store.py` imports `connect`/`DEFAULT_DB_PATH` from `core/db.py`. |
 | The superseded v0 script | `src/protein_selector/legacy/` | Reference only; do not extend. Slated for removal per `PLAN.md` §4/§10 step 1. |
 | Manual live-API performance diagnostics | `scripts/benchmark_pipeline.py` | Not a pytest test — see its own docstring. |

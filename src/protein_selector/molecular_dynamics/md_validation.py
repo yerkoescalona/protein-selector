@@ -1,16 +1,16 @@
-"""L5 ex03 validator: PDBFixer prep + a real short test MD in OpenMM (PLAN.md §4a).
+"""Validation-stage ex03 validator: PDBFixer prep + a real short test MD in OpenMM (PLAN.md §4a).
 
 This is the empirical "does this actually work" check for the MD exercise --
-not a fast L1-L3 gate. It fetches/reads a structure, runs PDBFixer's real
+not a fast hard-filters/simulability/parameterizability gate. It fetches/reads a structure, runs PDBFixer's real
 repair pipeline (fill missing atoms/loops, strip heterogens, protonate),
 then runs a genuinely short OpenMM MD run and reports what happened.
 
 Requires a conda environment with ``openmm`` and ``pdbfixer`` (both
 conda-forge; `pdbfixer` in particular is not a meaningful pip package this
-project's base env can rely on -- see ``environment-l5.yml``). Lazily
+project's base env can rely on -- see ``environment-validation.yml``). Lazily
 imported inside the one function that needs them, same reason as
 `parameterizability.py`'s rdkit import: keeps this module (and anything
-that transitively imports it) loadable without the L5 conda env installed.
+that transitively imports it) loadable without the validation conda env installed.
 
 Design choice, live-verified (2026-07-05, this sandbox has no conda by
 default -- verified via a throwaway `micromamba` env created just for this):
@@ -69,7 +69,7 @@ def run_test_md(
     the actual Colab wall-clock budget (PLAN.md §9), which this module
     doesn't hardcode.
 
-    Requires the L5 conda environment (`openmm`, `pdbfixer`); raises
+    Requires the validation conda environment (`openmm`, `pdbfixer`); raises
     ``ImportError`` with an install hint if unavailable.
     """
     try:
@@ -77,15 +77,15 @@ def run_test_md(
         from openmm import LangevinMiddleIntegrator, app, unit
 
         # pdbfixer has no real pip release (conda-forge only, see
-        # environment-l5.yml's header); it's genuinely absent from this
+        # environment-validation.yml's header); it's genuinely absent from this
         # project's pip/uv-managed venv, not a stub gap -- ty can't resolve
         # it here by design.
         from pdbfixer import PDBFixer  # ty: ignore[unresolved-import]
     except ImportError as exc:
         raise ImportError(
             "run_test_md requires openmm and pdbfixer; "
-            "install them via the L5 conda environment "
-            "(`micromamba env create -f environment-l5.yml`), not pip."
+            "install them via the validation conda environment "
+            "(`micromamba env create -f environment-validation.yml`), not pip."
         ) from exc
 
     try:

@@ -1,6 +1,6 @@
 """Shared fixtures for protein_selector.structural_biology.candidates tests.
 
-Network-touching classes (DataQuery, the Session-producing build_l1_query) are
+Network-touching classes (DataQuery, the Session-producing build_hard_filters_query) are
 patched via monkeypatch fixtures here rather than re-mocked in every test --
 see .claude/CLAUDE.md "Testing" for why the network boundary is mocked at all.
 """
@@ -126,14 +126,14 @@ def mock_ligands_data_query(monkeypatch) -> MagicMock:
 
 
 @pytest.fixture
-def mock_l1_query(monkeypatch) -> MagicMock:
-    """Patch build_l1_query; returns the mock query object ``.exec()`` is called on.
+def mock_hard_filters_query(monkeypatch) -> MagicMock:
+    """Patch build_hard_filters_query; returns the mock query object ``.exec()`` is called on.
 
-    Usage: set ``mock_l1_query.exec.return_value = [...]`` in the test.
+    Usage: set ``mock_hard_filters_query.exec.return_value = [...]`` in the test.
     """
     fake_query = MagicMock()
     monkeypatch.setattr(
-        "protein_selector.structural_biology.candidates.build_l1_query",
+        "protein_selector.structural_biology.candidates.build_hard_filters_query",
         MagicMock(return_value=fake_query),
     )
     return fake_query

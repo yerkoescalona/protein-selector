@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# L3 ligand parameterizability + pocket detection (heavier deps kept optional
-# so L1/L2 candidate search works with just the base deps).
+# Parameterizability ligand parameterizability + pocket detection (heavier deps kept
+# optional so hard-filters/simulability candidate search works with just the base deps).
 # scipy, numpy, and gemmi are meeko's real transitive dependencies -- meeko
 # does not declare them itself (a live-discovered packaging gap, confirmed
 # by import errors, not guessed), so they're pinned explicitly here.

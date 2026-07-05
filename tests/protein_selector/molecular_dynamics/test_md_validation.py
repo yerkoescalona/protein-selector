@@ -1,10 +1,10 @@
 """Tests for protein_selector.molecular_dynamics.md_validation.
 
-Requires the L5 conda environment (openmm + pdbfixer, see
-environment-l5.yml) -- these tests are skipped, not failed, when it's
+Requires the validation conda environment (openmm + pdbfixer, see
+environment-validation.yml) -- these tests are skipped, not failed, when it's
 unavailable (e.g. this project's normal pip/uv venv), since pdbfixer has no
 real pip release. Run with:
-    micromamba run -n protein-selector-l5 pytest tests/protein_selector/test_md_validation.py
+    micromamba run -n protein-selector-validation pytest tests/protein_selector/test_md_validation.py
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ pytest.importorskip("openmm")
 
 class TestRunTestMd:
     def test_missing_dependency_raises_with_install_hint(self, monkeypatch):
-        # Exercised even without the L5 env: verifies the *message*, not the
+        # Exercised even without the validation env: verifies the *message*, not the
         # import machinery, so it's meaningful in both environments.
         import builtins
 
@@ -33,7 +33,7 @@ class TestRunTestMd:
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
-        with pytest.raises(ImportError, match="environment-l5.yml"):
+        with pytest.raises(ImportError, match="environment-validation.yml"):
             run_test_md("1UBQ")
 
     def test_well_behaved_small_protein_succeeds(self):

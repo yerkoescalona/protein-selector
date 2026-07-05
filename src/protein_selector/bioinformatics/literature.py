@@ -1,4 +1,4 @@
-"""L4 literature-richness count via Europe PMC.
+"""Literature-richness count via Europe PMC.
 
 Per PLAN.md §3/§5, literature richness (how much has been written referencing
 a PDB structure) is one predicted-difficulty proxy -- a well-studied

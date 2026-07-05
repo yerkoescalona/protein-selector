@@ -4,7 +4,7 @@ Network-touching calls (Session.exec / DataQuery.exec+get_response) are mocked -
 this sandbox has no outbound access to search.rcsb.org/data.rcsb.org, and the real
 course environment shouldn't need network access just to run the test suite. See
 .claude/CLAUDE.md "Testing" for the rationale, and conftest.py for the shared
-mock_data_query/mock_l1_query/fake_graphql_entry/sample_candidate_entry fixtures.
+mock_data_query/mock_hard_filters_query/fake_graphql_entry/sample_candidate_entry fixtures.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from protein_selector.structural_biology.candidates import (
     CandidateEntry,
     _first_or_none,
     _parse_entry,
-    build_l1_query,
+    build_hard_filters_query,
     fetch_entry_metadata,
     search_candidate_ids,
 )
 
 # Same five filters the v0 RCSBLigandFinder query used.
-_L1_ATTRIBUTES = {
+_HARD_FILTERS_ATTRIBUTES = {
     "rcsb_entry_info.polymer_entity_count_protein",
     "rcsb_entry_info.deposited_nonpolymer_entity_instance_count",
     "rcsb_entry_info.deposited_atom_count",
@@ -30,16 +30,16 @@ _L1_ATTRIBUTES = {
 }
 
 
-class TestBuildL1Query:
-    """build_l1_query is pure (no network) -- test its structure directly."""
+class TestBuildHardFiltersQuery:
+    """build_hard_filters_query is pure (no network) -- test its structure directly."""
 
     def test_default_filters_match_v0_script(self):
-        as_dict = build_l1_query().to_dict()
+        as_dict = build_hard_filters_query().to_dict()
 
         assert as_dict["type"] == "group"
         assert as_dict["logical_operator"] == "and"
         attributes = {node["parameters"]["attribute"] for node in as_dict["nodes"]}
-        assert attributes == _L1_ATTRIBUTES
+        assert attributes == _HARD_FILTERS_ATTRIBUTES
 
     @pytest.mark.parametrize(
         ("kwargs", "attribute", "expected_value"),
@@ -51,7 +51,7 @@ class TestBuildL1Query:
         ids=["max_atoms", "max_resolution", "method"],
     )
     def test_custom_thresholds_are_applied(self, kwargs, attribute, expected_value):
-        as_dict = build_l1_query(**kwargs).to_dict()
+        as_dict = build_hard_filters_query(**kwargs).to_dict()
         params_by_attr = {
             node["parameters"]["attribute"]: node["parameters"]
             for node in as_dict["nodes"]
@@ -60,19 +60,19 @@ class TestBuildL1Query:
 
 
 class TestSearchCandidateIds:
-    """search_candidate_ids delegates to Session.exec() -- mock_l1_query patches the query."""
+    """search_candidate_ids delegates to Session.exec() -- mock_hard_filters_query patches the query."""
 
     @pytest.mark.parametrize(
         "fake_ids",
         [["4HHB", "1STP", "2JEF"], []],
         ids=["non_empty", "empty"],
     )
-    def test_returns_ids_from_session(self, mock_l1_query, fake_ids):
-        mock_l1_query.exec.return_value = fake_ids
+    def test_returns_ids_from_session(self, mock_hard_filters_query, fake_ids):
+        mock_hard_filters_query.exec.return_value = fake_ids
         assert search_candidate_ids(max_atoms=10_000, rows=50) == fake_ids
-        mock_l1_query.exec.assert_called_once_with(return_type="entry", rows=50)
+        mock_hard_filters_query.exec.assert_called_once_with(return_type="entry", rows=50)
 
-    def test_caps_results_at_rows_even_if_session_yields_more(self, mock_l1_query):
+    def test_caps_results_at_rows_even_if_session_yields_more(self, mock_hard_filters_query):
         """Regression test for a real, live-verified bug (see the function's docstring).
 
         Materializing a Session fully via list() paginates through EVERY
@@ -81,7 +81,7 @@ class TestSearchCandidateIds:
         a mocked session yielding more than `rows` items would leak them all
         through instead of being capped.
         """
-        mock_l1_query.exec.return_value = [f"{i:04d}" for i in range(1000)]
+        mock_hard_filters_query.exec.return_value = [f"{i:04d}" for i in range(1000)]
         result = search_candidate_ids(max_atoms=10_000, rows=5)
         assert result == ["0000", "0001", "0002", "0003", "0004"]
 

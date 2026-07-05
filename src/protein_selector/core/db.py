@@ -28,8 +28,8 @@ from pathlib import Path
 
 DEFAULT_DB_PATH = Path("cache/protein_selector.db")
 
-_L1_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l1_candidates (
+_CANDIDATES_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS candidates (
     pdb_id TEXT PRIMARY KEY,
     title TEXT,
     method TEXT,
@@ -47,8 +47,8 @@ CREATE TABLE IF NOT EXISTS l1_candidates (
 )
 """
 
-_L2_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l2_simulability (
+_SIMULABILITY_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS simulability (
     pdb_id TEXT PRIMARY KEY,
     passed INTEGER NOT NULL,
     reasons TEXT NOT NULL DEFAULT '[]'
@@ -59,21 +59,21 @@ CREATE TABLE IF NOT EXISTS l2_simulability (
 # structural_biology tables, parameterizability is a property of the ligand
 # itself, and the same ligand CCD code can recur across many PDB entries.
 # Joining this back to a particular pdb_id happens via
-# l1_candidates.non_polymer_entity_ids at report-build time (§8), not by
+# candidates.non_polymer_entity_ids at report-build time (§8), not by
 # duplicating rows per entry here.
-_L3_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l3_parameterizability (
+_PARAMETERIZABILITY_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS parameterizability (
     ligand_id TEXT PRIMARY KEY,
     passed INTEGER NOT NULL,
     reasons TEXT NOT NULL DEFAULT '[]'
 )
 """
 
-# Keyed by ligand_id, same rationale as l3_parameterizability above -- this
+# Keyed by ligand_id, same rationale as parameterizability above -- this
 # is stage 2 of the same per-ligand check (real Meeko parameterization, not
 # just RDKit sanitization), so it shares the same key.
-_L3_MEEKO_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l3_meeko_parameterization (
+_MEEKO_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS meeko_parameterization (
     ligand_id TEXT PRIMARY KEY,
     passed INTEGER NOT NULL,
     reasons TEXT NOT NULL DEFAULT '[]'
@@ -85,8 +85,8 @@ CREATE TABLE IF NOT EXISTS l3_meeko_parameterization (
 # can be validated against multiple exercises independently. Shared table
 # for all validators since they share one dataclass
 # (core.validation_result), rather than one table per exercise.
-_L5_VALIDATION_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l5_validation (
+_VALIDATION_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS validation (
     pdb_id TEXT NOT NULL,
     exercise TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -99,8 +99,8 @@ CREATE TABLE IF NOT EXISTS l5_validation (
 
 # Keyed by pdb_id -- one primary-assembly oligomeric-state record per entry
 # (see structural_biology.composition.fetch_oligomeric_state).
-_L2_OLIGOMERIC_STATE_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l2_oligomeric_state (
+_OLIGOMERIC_STATE_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS oligomeric_state (
     pdb_id TEXT PRIMARY KEY,
     oligomeric_details TEXT,
     oligomeric_count INTEGER
@@ -109,8 +109,8 @@ CREATE TABLE IF NOT EXISTS l2_oligomeric_state (
 
 # Keyed by (pdb_id, entity_id) -- one row per polymer entity, since an entry
 # can have multiple (see structural_biology.composition.fetch_non_standard_residues).
-_L2_ENTITY_COMPOSITION_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l2_entity_composition (
+_ENTITY_COMPOSITION_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS entity_composition (
     pdb_id TEXT NOT NULL,
     entity_id TEXT NOT NULL,
     nstd_monomer INTEGER NOT NULL,
@@ -125,8 +125,8 @@ CREATE TABLE IF NOT EXISTS l2_entity_composition (
 # single scalar per pdb_id, not a multi-field record, so a plain dict is the
 # right shape (unlike SimulabilityResult/AssemblyInfo/etc., which bundle
 # multiple fields).
-_L4_LITERATURE_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l4_literature (
+_LITERATURE_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS literature (
     pdb_id TEXT PRIMARY KEY,
     literature_count INTEGER
 )
@@ -138,8 +138,8 @@ CREATE TABLE IF NOT EXISTS l4_literature (
 # columns above rather than a separate per-pocket table, since pockets are
 # only ever read back as a whole list for one pdb_id, never queried
 # individually.
-_L3_POCKET_TABLE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS l3_pocket_detection (
+_POCKET_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS pocket_detection (
     pdb_id TEXT PRIMARY KEY,
     passed INTEGER NOT NULL,
     reasons TEXT NOT NULL DEFAULT '[]',
@@ -157,15 +157,15 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.execute(_L1_TABLE_SCHEMA)
-    conn.execute(_L2_TABLE_SCHEMA)
-    conn.execute(_L3_TABLE_SCHEMA)
-    conn.execute(_L2_OLIGOMERIC_STATE_TABLE_SCHEMA)
-    conn.execute(_L2_ENTITY_COMPOSITION_TABLE_SCHEMA)
-    conn.execute(_L4_LITERATURE_TABLE_SCHEMA)
-    conn.execute(_L3_POCKET_TABLE_SCHEMA)
-    conn.execute(_L3_MEEKO_TABLE_SCHEMA)
-    conn.execute(_L5_VALIDATION_TABLE_SCHEMA)
+    conn.execute(_CANDIDATES_TABLE_SCHEMA)
+    conn.execute(_SIMULABILITY_TABLE_SCHEMA)
+    conn.execute(_PARAMETERIZABILITY_TABLE_SCHEMA)
+    conn.execute(_OLIGOMERIC_STATE_TABLE_SCHEMA)
+    conn.execute(_ENTITY_COMPOSITION_TABLE_SCHEMA)
+    conn.execute(_LITERATURE_TABLE_SCHEMA)
+    conn.execute(_POCKET_TABLE_SCHEMA)
+    conn.execute(_MEEKO_TABLE_SCHEMA)
+    conn.execute(_VALIDATION_TABLE_SCHEMA)
     try:
         yield conn
         conn.commit()
