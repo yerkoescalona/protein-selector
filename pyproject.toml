@@ -16,12 +16,22 @@ dependencies = [
 [project.optional-dependencies]
 # L3 ligand parameterizability + pocket detection (heavier deps kept optional
 # so L1/L2 candidate search works with just the base deps).
+# scipy, numpy, and gemmi are meeko's real transitive dependencies -- meeko
+# does not declare them itself (a live-discovered packaging gap, confirmed
+# by import errors, not guessed), so they're pinned explicitly here.
+# openmm is for future OpenFF-side (MD, not docking) parameterization --
+# not yet used by any module; kept alongside meeko since both serve the
+# same "full force-field parameterization" PLAN.md §10 goal.
 # NOTE: openff-toolkit is intentionally excluded here — its only PyPI release
-# is yanked (it's conda-forge-first). Install it separately via conda when L3
-# parameterization work starts; do not add it back as a pip dependency.
+# is yanked (it's conda-forge-first). Install it separately via conda when
+# that OpenFF-side work starts; do not add it back as a pip dependency.
 validate = [
     "rdkit>=2024.3",
     "meeko",
+    "scipy>=1.17.1",
+    "numpy>=2.4.6",
+    "openmm>=8.5.2",
+    "gemmi>=0.7.5",
 ]
 
 [dependency-groups]

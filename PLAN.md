@@ -394,16 +394,25 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      `"{pdb_id}_{entity_id}"`, same convention as `composition.py`'s
      polymer-entity fetch). Now the full CCD-code→SMILES→sanitization path
      can run end-to-end on real L1 survivors.
-   - [ ] **L3 full Meeko/OpenFF parameterization** — not started. RDKit
-     sanitization is necessary but not sufficient; a ligand that passes it can
-     still fail real force-field parameterization. Heavier, slower check for
-     the shortlist only. **Live-discovered blocker:** `meeko` (already listed
-     under the `validate` extra) fails to import — it transitively needs
-     `scipy`, which meeko does not declare as a dependency. Not worked around
-     yet; needs a real decision (add `scipy` explicitly? pin a meeko version
-     that doesn't need it?) before writing wrapper code, per §11's
-     don't-guess-around-a-broken-dependency discipline. `openff-toolkit`
-     remains excluded from pip deps entirely (see pyproject.toml note).
+   - [x] **L3 Meeko parameterization (docking side)** —
+     `meeko_parameterization.py`: `check_meeko_parameterizable`/
+     `filter_meeko_parameterizable`, the real check Vina docking depends on:
+     SMILES → RDKit 3D embed → Meeko `MoleculePreparation` → PDBQT. Tested
+     with **real rdkit + meeko calls, not mocked**, including a real bound-
+     ligand SMILES (PO4). **Live-discovered blocker fixed:** `meeko` (already
+     in the `validate` extra) failed to import — it transitively needs
+     `scipy`, `numpy`, and `gemmi`, none of which it declares as
+     dependencies; all three pinned explicitly in `pyproject.toml`'s
+     `validate` extra now (confirmed via repeated live import attempts, not
+     guessed in one shot). `rdkit`'s `AllChem.EmbedMolecule` needed the same
+     `# ty: ignore[unresolved-attribute]` stub-gap treatment as
+     `RDLogger.DisableLog`.
+   - [ ] **L3 OpenFF parameterization (MD side)** — not started. `openmm`
+     (real PyPI package, verified — `openmm==8.5.2` installs cleanly) is now
+     in the `validate` extra for this, but no wrapper code has been written;
+     `openff-toolkit` itself remains excluded from pip deps entirely (its
+     only PyPI release is yanked — conda-forge-first, see pyproject.toml
+     note) and would need a conda-side install when this work starts.
    - [x] **L3 fpocket pocket detection** — `pocket.py`: `run_fpocket`/
      `check_pocket_detected`, plus a standalone `parse_fpocket_info` (pure
      text parsing, no subprocess, tested directly against the verbatim

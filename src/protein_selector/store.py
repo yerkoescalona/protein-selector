@@ -27,6 +27,7 @@ from typing import Any
 
 from protein_selector.candidates import CandidateEntry
 from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
+from protein_selector.meeko_parameterization import MeekoParameterizationResult
 from protein_selector.parameterizability import ParameterizabilityResult
 from protein_selector.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.simulability import SimulabilityResult
@@ -67,6 +68,17 @@ CREATE TABLE IF NOT EXISTS l2_simulability (
 # report-build time (§8), not by duplicating rows per entry here.
 _L3_TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS l3_parameterizability (
+    ligand_id TEXT PRIMARY KEY,
+    passed INTEGER NOT NULL,
+    reasons TEXT NOT NULL DEFAULT '[]'
+)
+"""
+
+# Keyed by ligand_id, same rationale as l3_parameterizability above -- this
+# is stage 2 of the same per-ligand check (real Meeko parameterization, not
+# just RDKit sanitization), so it shares the same key.
+_L3_MEEKO_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS l3_meeko_parameterization (
     ligand_id TEXT PRIMARY KEY,
     passed INTEGER NOT NULL,
     reasons TEXT NOT NULL DEFAULT '[]'
@@ -139,6 +151,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_L2_ENTITY_COMPOSITION_TABLE_SCHEMA)
     conn.execute(_L4_LITERATURE_TABLE_SCHEMA)
     conn.execute(_L3_POCKET_TABLE_SCHEMA)
+    conn.execute(_L3_MEEKO_TABLE_SCHEMA)
     try:
         yield conn
         conn.commit()
@@ -386,6 +399,43 @@ def load_parameterizability(
         ).fetchall()
     return {
         row[0]: ParameterizabilityResult(
+            ligand_id=row[0], passed=bool(row[1]), reasons=json.loads(row[2])
+        )
+        for row in rows
+    }
+
+
+def upsert_meeko_parameterization(
+    results: list[MeekoParameterizationResult], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Insert or update L3 Meeko-parameterization rows, keyed by ``ligand_id``."""
+    if not results:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO l3_meeko_parameterization (ligand_id, passed, reasons)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ligand_id) DO UPDATE SET
+                passed=excluded.passed,
+                reasons=excluded.reasons
+            """,
+            [(r.ligand_id, int(r.passed), json.dumps(r.reasons)) for r in results],
+        )
+
+
+def load_meeko_parameterization(
+    db_path: Path = DEFAULT_DB_PATH,
+) -> dict[str, MeekoParameterizationResult]:
+    """Load all L3 Meeko-parameterization rows, keyed by ``ligand_id``."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT ligand_id, passed, reasons FROM l3_meeko_parameterization"
+        ).fetchall()
+    return {
+        row[0]: MeekoParameterizationResult(
             ligand_id=row[0], passed=bool(row[1]), reasons=json.loads(row[2])
         )
         for row in rows

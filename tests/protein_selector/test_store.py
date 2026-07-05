@@ -10,6 +10,7 @@ import pytest
 
 from protein_selector.candidates import CandidateEntry
 from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
+from protein_selector.meeko_parameterization import MeekoParameterizationResult
 from protein_selector.parameterizability import ParameterizabilityResult
 from protein_selector.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.simulability import SimulabilityResult
@@ -17,6 +18,7 @@ from protein_selector.store import (
     load_candidates,
     load_entity_composition,
     load_literature_counts,
+    load_meeko_parameterization,
     load_oligomeric_state,
     load_parameterizability,
     load_pocket_detection,
@@ -24,6 +26,7 @@ from protein_selector.store import (
     upsert_candidates,
     upsert_entity_composition,
     upsert_literature_counts,
+    upsert_meeko_parameterization,
     upsert_oligomeric_state,
     upsert_parameterizability,
     upsert_pocket_detection,
@@ -141,6 +144,43 @@ class TestParameterizabilityRoundTrip:
 
         assert len(loaded) == 1
         assert loaded["GLC"].passed is True
+
+
+class TestMeekoParameterizationRoundTrip:
+    """Keyed by ligand_id -- stage 2 of the same per-ligand check as L3 RDKit."""
+
+    def test_round_trip_preserves_data(self, db_path):
+        results = [
+            MeekoParameterizationResult(ligand_id="ETH", passed=True, reasons=[]),
+            MeekoParameterizationResult(
+                ligand_id="BAD", passed=False, reasons=["Meeko produced no molecule setup"]
+            ),
+        ]
+
+        upsert_meeko_parameterization(results, db_path=db_path)
+        loaded = load_meeko_parameterization(db_path=db_path)
+
+        assert set(loaded.keys()) == {"ETH", "BAD"}
+        assert loaded["ETH"] == results[0]
+        assert loaded["BAD"] == results[1]
+
+    def test_load_missing_file_returns_empty_dict(self, tmp_path):
+        assert load_meeko_parameterization(db_path=tmp_path / "does_not_exist.db") == {}
+
+    def test_upsert_updates_existing_row_by_ligand_id(self, db_path):
+        upsert_meeko_parameterization(
+            [MeekoParameterizationResult(ligand_id="ETH", passed=False, reasons=["bad"])],
+            db_path=db_path,
+        )
+        upsert_meeko_parameterization(
+            [MeekoParameterizationResult(ligand_id="ETH", passed=True, reasons=[])],
+            db_path=db_path,
+        )
+
+        loaded = load_meeko_parameterization(db_path=db_path)
+
+        assert len(loaded) == 1
+        assert loaded["ETH"].passed is True
 
 
 class TestPocketDetectionRoundTrip:

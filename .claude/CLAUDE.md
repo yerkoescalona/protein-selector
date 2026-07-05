@@ -166,21 +166,27 @@ re-verify live against a real PDB ID before trusting the change.
   gating is informational by default (no ceiling / allowed), since PLAN.md never mandated
   a hard rule for either; set `max_oligomeric_count`/`allow_non_standard_residues` to
   actually gate. Full pipeline verified live end-to-end for 4HHB.
-- **L3 (`parameterizability.py` + `ligands.py` + `pocket.py`):** mostly done, two pieces
-  remain. RDKit sanitization (`check_ligand_parameterizable`/`filter_parameterizable`) is
-  implemented and tested with **real RDKit calls** (pure local logic, no network) —
-  requires the `validate` extra. **SMILES wiring is done and live-verified (2026-07-05):**
-  `ligands.py`'s `fetch_ligand_ccd_codes` (non-polymer entity ID → CCD code) then
-  `fetch_smiles_for_ccd_codes` (CCD code → SMILES) connect real L1 survivors to the RDKit
-  check end-to-end. **fpocket pocket detection is done** (`pocket.py`: `run_fpocket`/
+- **L3 (`parameterizability.py` + `meeko_parameterization.py` + `ligands.py` +
+  `pocket.py`):** nearly done, one piece remains. RDKit sanitization
+  (`check_ligand_parameterizable`/`filter_parameterizable`) and real Meeko
+  parameterization (`check_meeko_parameterizable`/`filter_meeko_parameterizable`, SMILES →
+  3D embed → `MoleculePreparation` → PDBQT) are both implemented and tested with **real
+  rdkit/meeko calls** (pure local logic, no network) — requires the `validate` extra.
+  **SMILES wiring is done and live-verified (2026-07-05):** `ligands.py`'s
+  `fetch_ligand_ccd_codes` (non-polymer entity ID → CCD code) then
+  `fetch_smiles_for_ccd_codes` (CCD code → SMILES) connect real L1 survivors to both
+  checks end-to-end. **fpocket pocket detection is done** (`pocket.py`: `run_fpocket`/
   `check_pocket_detected`/`parse_fpocket_info`) — decided over p2rank (no JVM, see
   `PLAN.md` §9); CLI/output format transcribed verbatim from fpocket's own
   `GETTINGSTARTED.md`, not guessed, but **not yet cross-checked against a real fpocket
   binary** (unavailable in this sandbox — no conda). Run it for real before trusting it.
-  **Full Meeko/OpenFF parameterization is still not started** — live-discovered blocker:
-  `meeko` (already in the `validate` extra) fails to import because it transitively needs
-  `scipy`, which meeko doesn't declare as a dependency; needs a real decision before
-  writing wrapper code, not a guessed workaround.
+  **`meeko`'s undeclared transitive deps (`scipy`/`numpy`/`gemmi`) are now pinned
+  explicitly** in the `validate` extra — found by repeatedly trying to import meeko live,
+  not guessed in one shot; `AllChem.EmbedMolecule` needed the same
+  `# ty: ignore[unresolved-attribute]` stub-gap treatment as `RDLogger.DisableLog`.
+  **OpenFF (MD-side) parameterization is still not started** — `openmm` (verified real
+  PyPI package) is in the `validate` extra for this, but no wrapper exists yet;
+  `openff-toolkit` itself remains excluded (its only PyPI release is yanked).
 - **L4 (`literature.py`): fully implemented, live-verified.** `fetch_literature_count`/
   `fetch_literature_counts` query Europe PMC's REST search API using the officially
   documented `ACCESSION_ID`/`ACCESSION_TYPE:pdb` fields (verified against the real Web
@@ -192,7 +198,8 @@ re-verify live against a real PDB ID before trusting the change.
   SQLite round-trip.
 - **Persistence (`store.py`):** SQLite, one table per layer (`l1_candidates`,
   `l2_simulability`, `l2_oligomeric_state`, `l2_entity_composition`,
-  `l3_parameterizability`, `l3_pocket_detection`, `l4_literature`), keyed by `pdb_id`
+  `l3_parameterizability`, `l3_meeko_parameterization`, `l3_pocket_detection`,
+  `l4_literature`), keyed by `pdb_id`
   (most), `(pdb_id, entity_id)` (`l2_entity_composition` — an entry can have multiple
   polymer entities), or `ligand_id` (`l3_parameterizability` — a ligand's
   parameterizability doesn't depend on which entry it appears in), all upsert-based. Replaced `candidates.py`'s original
