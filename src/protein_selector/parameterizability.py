@@ -7,23 +7,21 @@ sanitize will break the exercise regardless of how good the protein is.
 Implemented here: a pure RDKit sanitization check (no network, no external
 Java tool). Requires the `validate` extra (`uv sync --extra validate`).
 
-Deliberately NOT implemented yet:
+Deliberately NOT implemented here:
 - Full Meeko/OpenFF force-field parameterization -- a stronger, slower check.
   RDKit sanitization is a fast, necessary-but-not-sufficient pre-filter: a
   ligand that fails here will definitely break docking/MD; one that passes
   still needs real parameterization (Meeko for Vina; OpenFF for MD) to be
-  fully confirmed, which is a separate, heavier L3/L5 step.
-- p2rank pocket detection (see `pocket.py`'s deferral note -- not yet
-  written, requires verifying p2rank's actual CLI/output format against its
-  real documentation before shipping any assumed column names, per PLAN.md
-  §11's anti-hallucination gate).
+  fully confirmed, which is a separate, heavier L3/L5 step -- not started.
+- Pocket detection lives in `pocket.py` (fpocket, a native C binary -- p2rank
+  was rejected outright for its JVM dependency, see PLAN.md §9).
 
-Where does the SMILES come from? Not wired up yet -- `candidates.py`'s L1
-fetch pulls non-polymer entity IDs (CCD codes: e.g. "ATP", "HEM"), not their
-SMILES. Fetching a SMILES per CCD code (RCSB's `chem_comps` root query, per
-the RCSB Data API docs) is the wiring step needed before this check can run
-end-to-end on real L1 survivors; this module takes a SMILES directly so it
-can be built and tested independently of that wiring.
+Where does the SMILES come from? `ligands.py` wires this up: entry ->
+non-polymer entity IDs (from `candidates.py`'s L1 fetch) -> CCD codes (e.g.
+"ATP", "HEM") -> SMILES, via two batched RCSB Data API calls
+(`fetch_ligand_ccd_codes` then `fetch_smiles_for_ccd_codes`). This module
+still takes a SMILES directly so it can be tested independently of that
+network wiring.
 """
 
 from __future__ import annotations

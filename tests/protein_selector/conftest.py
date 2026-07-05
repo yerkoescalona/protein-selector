@@ -118,6 +118,14 @@ def mock_composition_data_query(monkeypatch) -> MagicMock:
 
 
 @pytest.fixture
+def mock_ligands_data_query(monkeypatch) -> MagicMock:
+    """Patch DataQuery as imported into ligands.py; returns the mock *class*."""
+    fake_class = MagicMock()
+    monkeypatch.setattr("protein_selector.ligands.DataQuery", fake_class)
+    return fake_class
+
+
+@pytest.fixture
 def mock_l1_query(monkeypatch) -> MagicMock:
     """Patch build_l1_query; returns the mock query object ``.exec()`` is called on.
 

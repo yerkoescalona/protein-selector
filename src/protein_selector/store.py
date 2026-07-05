@@ -23,10 +23,12 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from protein_selector.candidates import CandidateEntry
 from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
 from protein_selector.parameterizability import ParameterizabilityResult
+from protein_selector.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.simulability import SimulabilityResult
 
 DEFAULT_DB_PATH = Path("cache/protein_selector.db")
@@ -105,6 +107,21 @@ CREATE TABLE IF NOT EXISTS l4_literature (
 )
 """
 
+# Keyed by pdb_id -- one fpocket run per structure. ``pockets`` stores each
+# PocketInfo's fields as a JSON list (score/druggability_score/volume/
+# pocket_number/fields), mirroring the uniprot_ids/assembly_ids JSON-list
+# columns above rather than a separate per-pocket table, since pockets are
+# only ever read back as a whole list for one pdb_id, never queried
+# individually.
+_L3_POCKET_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS l3_pocket_detection (
+    pdb_id TEXT PRIMARY KEY,
+    passed INTEGER NOT NULL,
+    reasons TEXT NOT NULL DEFAULT '[]',
+    pockets TEXT NOT NULL DEFAULT '[]'
+)
+"""
+
 
 @contextmanager
 def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
@@ -121,6 +138,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_L2_OLIGOMERIC_STATE_TABLE_SCHEMA)
     conn.execute(_L2_ENTITY_COMPOSITION_TABLE_SCHEMA)
     conn.execute(_L4_LITERATURE_TABLE_SCHEMA)
+    conn.execute(_L3_POCKET_TABLE_SCHEMA)
     try:
         yield conn
         conn.commit()
@@ -369,6 +387,75 @@ def load_parameterizability(
     return {
         row[0]: ParameterizabilityResult(
             ligand_id=row[0], passed=bool(row[1]), reasons=json.loads(row[2])
+        )
+        for row in rows
+    }
+
+
+def _pocket_to_json(pocket: PocketInfo) -> dict[str, object]:
+    return {
+        "pocket_number": pocket.pocket_number,
+        "score": pocket.score,
+        "druggability_score": pocket.druggability_score,
+        "volume": pocket.volume,
+        "fields": pocket.fields,
+    }
+
+
+def _pocket_from_json(data: Any) -> PocketInfo:
+    return PocketInfo(
+        pocket_number=data["pocket_number"],
+        score=data["score"],
+        druggability_score=data["druggability_score"],
+        volume=data["volume"],
+        fields=data["fields"],
+    )
+
+
+def upsert_pocket_detection(
+    results: list[PocketDetectionResult], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Insert or update L3 pocket-detection rows, keyed by ``pdb_id``."""
+    if not results:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO l3_pocket_detection (pdb_id, passed, reasons, pockets)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(pdb_id) DO UPDATE SET
+                passed=excluded.passed,
+                reasons=excluded.reasons,
+                pockets=excluded.pockets
+            """,
+            [
+                (
+                    r.pdb_id,
+                    int(r.passed),
+                    json.dumps(r.reasons),
+                    json.dumps([_pocket_to_json(p) for p in r.pockets]),
+                )
+                for r in results
+            ],
+        )
+
+
+def load_pocket_detection(
+    db_path: Path = DEFAULT_DB_PATH,
+) -> dict[str, PocketDetectionResult]:
+    """Load all L3 pocket-detection rows, keyed by ``pdb_id``."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT pdb_id, passed, reasons, pockets FROM l3_pocket_detection"
+        ).fetchall()
+    return {
+        row[0]: PocketDetectionResult(
+            pdb_id=row[0],
+            passed=bool(row[1]),
+            reasons=json.loads(row[2]),
+            pockets=[_pocket_from_json(p) for p in json.loads(row[3])],
         )
         for row in rows
     }

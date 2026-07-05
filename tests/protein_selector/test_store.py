@@ -11,6 +11,7 @@ import pytest
 from protein_selector.candidates import CandidateEntry
 from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
 from protein_selector.parameterizability import ParameterizabilityResult
+from protein_selector.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.simulability import SimulabilityResult
 from protein_selector.store import (
     load_candidates,
@@ -18,12 +19,14 @@ from protein_selector.store import (
     load_literature_counts,
     load_oligomeric_state,
     load_parameterizability,
+    load_pocket_detection,
     load_simulability,
     upsert_candidates,
     upsert_entity_composition,
     upsert_literature_counts,
     upsert_oligomeric_state,
     upsert_parameterizability,
+    upsert_pocket_detection,
     upsert_simulability,
 )
 
@@ -138,6 +141,52 @@ class TestParameterizabilityRoundTrip:
 
         assert len(loaded) == 1
         assert loaded["GLC"].passed is True
+
+
+class TestPocketDetectionRoundTrip:
+    def test_round_trip_preserves_pockets(self, db_path):
+        results = [
+            PocketDetectionResult(
+                pdb_id="1UYD",
+                passed=True,
+                reasons=[],
+                pockets=[
+                    PocketInfo(
+                        pocket_number=1,
+                        score=0.490,
+                        druggability_score=0.850,
+                        volume=270.934,
+                        fields={"Number of Alpha Spheres": "21"},
+                    )
+                ],
+            ),
+            PocketDetectionResult(pdb_id="1NOPOCKET", passed=False, reasons=["no pockets"]),
+        ]
+
+        upsert_pocket_detection(results, db_path=db_path)
+        loaded = load_pocket_detection(db_path=db_path)
+
+        assert set(loaded.keys()) == {"1UYD", "1NOPOCKET"}
+        assert loaded["1UYD"] == results[0]
+        assert loaded["1NOPOCKET"] == results[1]
+
+    def test_load_missing_file_returns_empty_dict(self, tmp_path):
+        assert load_pocket_detection(db_path=tmp_path / "does_not_exist.db") == {}
+
+    def test_upsert_updates_existing_row_by_pdb_id(self, db_path):
+        upsert_pocket_detection(
+            [PocketDetectionResult(pdb_id="1UYD", passed=False, reasons=["bad"])],
+            db_path=db_path,
+        )
+        upsert_pocket_detection(
+            [PocketDetectionResult(pdb_id="1UYD", passed=True, reasons=[])],
+            db_path=db_path,
+        )
+
+        loaded = load_pocket_detection(db_path=db_path)
+
+        assert len(loaded) == 1
+        assert loaded["1UYD"].passed is True
 
 
 class TestOligomericStateRoundTrip:

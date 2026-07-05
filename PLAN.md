@@ -384,19 +384,40 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      (`uv sync --extra validate`); `rdkit` is imported lazily inside the check
      function specifically so `store.py` (which every layer needs) stays
      importable without the `validate` extra installed — see `.claude/CLAUDE.md`
-     for the real bug this caught. **Not yet wired to real data:** L1 fetches
-     ligand CCD codes (non-polymer entity IDs), not SMILES; fetching SMILES per
-     CCD code via RCSB's `chem_comps` query is the remaining wiring step.
+     for the real bug this caught.
+   - [x] **L3 SMILES wiring** — `ligands.py`: `fetch_ligand_ccd_codes`
+     (non-polymer entity ID → CCD code, e.g. "HEM") then
+     `fetch_smiles_for_ccd_codes` (CCD code → SMILES), two batched RCSB Data
+     API calls, both **live-verified (2026-07-05)** against real 4HHB data
+     (`nonpolymer_entity`/`pdbx_entity_nonpoly.comp_id` and
+     `chem_comp`/`rcsb_chem_comp_descriptor.SMILES`; compound ID format
+     `"{pdb_id}_{entity_id}"`, same convention as `composition.py`'s
+     polymer-entity fetch). Now the full CCD-code→SMILES→sanitization path
+     can run end-to-end on real L1 survivors.
    - [ ] **L3 full Meeko/OpenFF parameterization** — not started. RDKit
      sanitization is necessary but not sufficient; a ligand that passes it can
      still fail real force-field parameterization. Heavier, slower check for
-     the shortlist only.
-   - [ ] **L3 fpocket pocket detection** — not started; **decided against p2rank**
-     (rejected the Java/JVM dependency — see §9) **in favor of `fpocket`**, a
-     native C binary (verified real and maintained: `fpocket-4.2.3` on
-     conda-forge). Still deferred pending verification of fpocket's actual
-     CLI/output format against its real documentation — do not guess column
-     names/flags into a shipped subprocess wrapper, per §11.
+     the shortlist only. **Live-discovered blocker:** `meeko` (already listed
+     under the `validate` extra) fails to import — it transitively needs
+     `scipy`, which meeko does not declare as a dependency. Not worked around
+     yet; needs a real decision (add `scipy` explicitly? pin a meeko version
+     that doesn't need it?) before writing wrapper code, per §11's
+     don't-guess-around-a-broken-dependency discipline. `openff-toolkit`
+     remains excluded from pip deps entirely (see pyproject.toml note).
+   - [x] **L3 fpocket pocket detection** — `pocket.py`: `run_fpocket`/
+     `check_pocket_detected`, plus a standalone `parse_fpocket_info` (pure
+     text parsing, no subprocess, tested directly against the verbatim
+     documented output format). **Decided against p2rank** (rejected the
+     Java/JVM dependency — see §9) **in favor of `fpocket`**, a native C
+     binary (verified real and maintained: `fpocket-4.2.3` on conda-forge).
+     CLI invocation (`fpocket -f x.pdb`) and `<stem>_out/<stem>_info.txt`
+     output format transcribed verbatim from fpocket's own
+     `GETTINGSTARTED.md` (Discngine/fpocket, fetched live 2026-07-05) — not
+     guessed. **Caveat: not yet run against a real fpocket binary** — this
+     sandbox has neither conda nor fpocket installed, so the subprocess
+     wrapper is built from documentation, not cross-checked against a live
+     run. Run it once for real (e.g. on fpocket's own `sample/1UYD.pdb`)
+     before trusting it on real candidates.
 3. [x] **Literature count** via Europe PMC → integer. **Implemented, live-verified
    (2026-07-05).** `literature.py`: `fetch_literature_count`/`fetch_literature_counts`,
    using the officially documented `ACCESSION_ID`/`ACCESSION_TYPE:pdb` search fields
