@@ -1,4 +1,4 @@
-"""Shared fixtures for protein_selector.candidates tests.
+"""Shared fixtures for protein_selector.structural_biology.candidates tests.
 
 Network-touching classes (DataQuery, the Session-producing build_l1_query) are
 patched via monkeypatch fixtures here rather than re-mocked in every test --
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from protein_selector.candidates import CandidateEntry
+from protein_selector.structural_biology.candidates import CandidateEntry
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ def mock_data_query(monkeypatch) -> MagicMock:
     generalize this into one that patches "wherever" via a parameter.
     """
     fake_class = MagicMock()
-    monkeypatch.setattr("protein_selector.candidates.DataQuery", fake_class)
+    monkeypatch.setattr("protein_selector.structural_biology.candidates.DataQuery", fake_class)
     return fake_class
 
 
@@ -113,7 +113,7 @@ def mock_data_query(monkeypatch) -> MagicMock:
 def mock_composition_data_query(monkeypatch) -> MagicMock:
     """Patch DataQuery as imported into composition.py; returns the mock *class*."""
     fake_class = MagicMock()
-    monkeypatch.setattr("protein_selector.composition.DataQuery", fake_class)
+    monkeypatch.setattr("protein_selector.structural_biology.composition.DataQuery", fake_class)
     return fake_class
 
 
@@ -121,7 +121,7 @@ def mock_composition_data_query(monkeypatch) -> MagicMock:
 def mock_ligands_data_query(monkeypatch) -> MagicMock:
     """Patch DataQuery as imported into ligands.py; returns the mock *class*."""
     fake_class = MagicMock()
-    monkeypatch.setattr("protein_selector.ligands.DataQuery", fake_class)
+    monkeypatch.setattr("protein_selector.docking.ligands.DataQuery", fake_class)
     return fake_class
 
 
@@ -133,7 +133,7 @@ def mock_l1_query(monkeypatch) -> MagicMock:
     """
     fake_query = MagicMock()
     monkeypatch.setattr(
-        "protein_selector.candidates.build_l1_query",
+        "protein_selector.structural_biology.candidates.build_l1_query",
         MagicMock(return_value=fake_query),
     )
     return fake_query

@@ -1,4 +1,4 @@
-"""Tests for protein_selector.md_validation.
+"""Tests for protein_selector.molecular_dynamics.md_validation.
 
 Requires the L5 conda environment (openmm + pdbfixer, see
 environment-l5.yml) -- these tests are skipped, not failed, when it's
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.l5_common import FailureMode, ValidationStatus
-from protein_selector.md_validation import run_test_md
+from protein_selector.core.validation_result import FailureMode, ValidationStatus
+from protein_selector.molecular_dynamics.md_validation import run_test_md
 
 pytest.importorskip("pdbfixer")
 pytest.importorskip("openmm")

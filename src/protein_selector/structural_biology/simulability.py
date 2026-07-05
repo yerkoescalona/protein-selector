@@ -32,8 +32,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from protein_selector.candidates import CandidateEntry
-from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
+from protein_selector.structural_biology.candidates import CandidateEntry
+from protein_selector.structural_biology.composition import (
+    AssemblyInfo,
+    EntityCompositionInfo,
+)
 
 
 @dataclass

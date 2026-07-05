@@ -1,4 +1,4 @@
-"""Tests for protein_selector.pocket.
+"""Tests for protein_selector.docking.pocket.
 
 parse_fpocket_info is pure text parsing -- no mocks needed, tested against
 the verbatim documented fpocket output format (see pocket.py's header
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from protein_selector.pocket import (
+from protein_selector.docking.pocket import (
     check_pocket_detected,
     parse_fpocket_info,
     run_fpocket,
@@ -75,7 +75,7 @@ class TestRunFpocket:
         pdb_path = tmp_path / "1uyd.pdb"
         pdb_path.write_text("ATOM ...")
 
-        with patch("protein_selector.pocket.subprocess.run", side_effect=FileNotFoundError):
+        with patch("protein_selector.docking.pocket.subprocess.run", side_effect=FileNotFoundError):
             try:
                 run_fpocket(pdb_path)
             except FileNotFoundError as exc:
@@ -87,7 +87,7 @@ class TestRunFpocket:
         pdb_path = tmp_path / "1uyd.pdb"
         pdb_path.write_text("ATOM ...")
 
-        with patch("protein_selector.pocket.subprocess.run", return_value=MagicMock()):
+        with patch("protein_selector.docking.pocket.subprocess.run", return_value=MagicMock()):
             try:
                 run_fpocket(pdb_path)
             except RuntimeError as exc:
@@ -102,7 +102,7 @@ class TestRunFpocket:
         out_dir.mkdir()
         (out_dir / "1uyd_info.txt").write_text(_SAMPLE_INFO_TXT)
 
-        with patch("protein_selector.pocket.subprocess.run", return_value=MagicMock()):
+        with patch("protein_selector.docking.pocket.subprocess.run", return_value=MagicMock()):
             pockets = run_fpocket(pdb_path)
 
         assert len(pockets) == 2
@@ -120,7 +120,7 @@ class TestCheckPocketDetected:
     def test_passes_when_best_pocket_meets_threshold(self, tmp_path):
         pdb_path = self._write_info(tmp_path, _SAMPLE_INFO_TXT)
 
-        with patch("protein_selector.pocket.subprocess.run", return_value=MagicMock()):
+        with patch("protein_selector.docking.pocket.subprocess.run", return_value=MagicMock()):
             result = check_pocket_detected("1UYD", pdb_path, min_druggability_score=0.5)
 
         assert result.passed is True
@@ -129,7 +129,7 @@ class TestCheckPocketDetected:
     def test_fails_when_no_pocket_meets_threshold(self, tmp_path):
         pdb_path = self._write_info(tmp_path, _SAMPLE_INFO_TXT)
 
-        with patch("protein_selector.pocket.subprocess.run", return_value=MagicMock()):
+        with patch("protein_selector.docking.pocket.subprocess.run", return_value=MagicMock()):
             result = check_pocket_detected("1UYD", pdb_path, min_druggability_score=0.99)
 
         assert result.passed is False
@@ -138,7 +138,7 @@ class TestCheckPocketDetected:
     def test_fails_with_no_pockets_detected(self, tmp_path):
         pdb_path = self._write_info(tmp_path, "")
 
-        with patch("protein_selector.pocket.subprocess.run", return_value=MagicMock()):
+        with patch("protein_selector.docking.pocket.subprocess.run", return_value=MagicMock()):
             result = check_pocket_detected("1UYD", pdb_path)
 
         assert result.passed is False

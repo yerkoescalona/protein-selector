@@ -1,4 +1,4 @@
-"""Tests for protein_selector.meeko_parameterization.
+"""Tests for protein_selector.docking.meeko_parameterization.
 
 Real rdkit + meeko calls, not mocked -- pure local library logic, no
 network (same rationale as test_parameterizability.py). Requires the
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.meeko_parameterization import (
+from protein_selector.docking.meeko_parameterization import (
     check_meeko_parameterizable,
     filter_meeko_parameterizable,
 )

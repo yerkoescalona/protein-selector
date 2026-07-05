@@ -33,7 +33,7 @@ from dataclasses import dataclass
 
 from rcsbapi.data import DataQuery
 
-from protein_selector.candidates import CandidateEntry
+from protein_selector.structural_biology.candidates import CandidateEntry
 
 
 @dataclass

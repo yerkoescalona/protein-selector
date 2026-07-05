@@ -1,4 +1,4 @@
-"""Tests for protein_selector.composition.
+"""Tests for protein_selector.structural_biology.composition.
 
 Network-touching calls (DataQuery.exec+get_response) are mocked -- see
 conftest.py's mock_composition_data_query and .claude/CLAUDE.md "Testing".
@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.candidates import CandidateEntry
-from protein_selector.composition import (
+from protein_selector.structural_biology.candidates import CandidateEntry
+from protein_selector.structural_biology.composition import (
     AssemblyInfo,
     EntityCompositionInfo,
     fetch_non_standard_residues,

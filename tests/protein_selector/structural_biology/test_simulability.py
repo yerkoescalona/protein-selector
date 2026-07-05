@@ -1,4 +1,4 @@
-"""Tests for protein_selector.simulability.
+"""Tests for protein_selector.structural_biology.simulability.
 
 Pure logic operating on CandidateEntry -- no network, no mocks needed.
 """
@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.candidates import CandidateEntry
-from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
-from protein_selector.simulability import (
+from protein_selector.structural_biology.candidates import CandidateEntry
+from protein_selector.structural_biology.composition import (
+    AssemblyInfo,
+    EntityCompositionInfo,
+)
+from protein_selector.structural_biology.simulability import (
     check_completeness,
     check_full_simulability,
     check_non_standard_residues,

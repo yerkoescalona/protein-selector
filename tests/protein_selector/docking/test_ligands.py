@@ -1,4 +1,4 @@
-"""Tests for protein_selector.ligands.
+"""Tests for protein_selector.docking.ligands.
 
 Network-touching calls (DataQuery.exec+get_response) are mocked -- see
 conftest.py's mock_ligands_data_query and .claude/CLAUDE.md "Testing".
@@ -6,8 +6,11 @@ conftest.py's mock_ligands_data_query and .claude/CLAUDE.md "Testing".
 
 from __future__ import annotations
 
-from protein_selector.candidates import CandidateEntry
-from protein_selector.ligands import fetch_ligand_ccd_codes, fetch_smiles_for_ccd_codes
+from protein_selector.docking.ligands import (
+    fetch_ligand_ccd_codes,
+    fetch_smiles_for_ccd_codes,
+)
+from protein_selector.structural_biology.candidates import CandidateEntry
 
 
 def _entry(pdb_id="4HHB", non_polymer_entity_ids=None) -> CandidateEntry:

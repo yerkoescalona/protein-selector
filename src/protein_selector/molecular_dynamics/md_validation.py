@@ -36,7 +36,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from protein_selector.l5_common import FailureMode, ValidationResult, ValidationStatus
+from protein_selector.core.validation_result import (
+    FailureMode,
+    ValidationResult,
+    ValidationStatus,
+)
 
 _DEFAULT_N_STEPS = 2500  # 5 ps at the 2 fs timestep below -- a quick smoke test, not a
 # production run; PLAN.md §4a wants "short test MD sized to the Colab time budget".

@@ -30,8 +30,11 @@ from collections.abc import Callable, Sized
 from dataclasses import dataclass
 from typing import TypeVar
 
-from protein_selector.candidates import fetch_entry_metadata, search_candidate_ids
-from protein_selector.composition import (
+from protein_selector.structural_biology.candidates import (
+    fetch_entry_metadata,
+    search_candidate_ids,
+)
+from protein_selector.structural_biology.composition import (
     fetch_non_standard_residues,
     fetch_oligomeric_state,
 )
