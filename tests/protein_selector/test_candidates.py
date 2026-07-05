@@ -72,6 +72,19 @@ class TestSearchCandidateIds:
         assert search_candidate_ids(max_atoms=10_000, rows=50) == fake_ids
         mock_l1_query.exec.assert_called_once_with(return_type="entry", rows=50)
 
+    def test_caps_results_at_rows_even_if_session_yields_more(self, mock_l1_query):
+        """Regression test for a real, live-verified bug (see the function's docstring).
+
+        Materializing a Session fully via list() paginates through EVERY
+        matching result, not just `rows`-many. This locks in the
+        itertools.islice fix -- if this ever regresses to plain list(session),
+        a mocked session yielding more than `rows` items would leak them all
+        through instead of being capped.
+        """
+        mock_l1_query.exec.return_value = [f"{i:04d}" for i in range(1000)]
+        result = search_candidate_ids(max_atoms=10_000, rows=5)
+        assert result == ["0000", "0001", "0002", "0003", "0004"]
+
 
 class TestFetchEntryMetadata:
     """fetch_entry_metadata delegates to DataQuery -- mock_data_query patches the class."""
@@ -113,16 +126,38 @@ class TestParseEntry:
     @pytest.mark.parametrize(
         "entry",
         [
-            {"rcsb_id": "1ABC", "exptl": [], "rcsb_entity_source_organism": []},
+            {"rcsb_id": "1ABC", "exptl": [], "polymer_entities": []},
             {"rcsb_id": "1ABC"},
+            # An entity present but with no organism/uniprot_ids of its own --
+            # exercises the nested-list walk finding nothing to collect.
+            {"rcsb_id": "1ABC", "polymer_entities": [{}]},
         ],
-        ids=["empty_lists", "keys_absent"],
+        ids=["empty_lists", "keys_absent", "entity_with_no_organism_data"],
     )
     def test_handles_missing_exptl_and_organism(self, entry):
         result = _parse_entry(entry)
         assert result.pdb_id == "1ABC"
         assert result.method is None
         assert result.organism is None
+        assert result.uniprot_ids == []
+
+    def test_aggregates_uniprot_ids_across_multiple_entities_and_uses_first_organism(self):
+        entry = {
+            "rcsb_id": "1ABC",
+            "polymer_entities": [
+                {
+                    "rcsb_entity_source_organism": [{"ncbi_scientific_name": "Homo sapiens"}],
+                    "rcsb_polymer_entity_container_identifiers": {"uniprot_ids": ["P00001"]},
+                },
+                {
+                    "rcsb_entity_source_organism": [{"ncbi_scientific_name": "Mus musculus"}],
+                    "rcsb_polymer_entity_container_identifiers": {"uniprot_ids": ["P00002"]},
+                },
+            ],
+        }
+        result = _parse_entry(entry)
+        assert result.organism == "Homo sapiens"  # first entity's organism, not second
+        assert result.uniprot_ids == ["P00001", "P00002"]  # aggregated across entities
 
     def test_round_trips_a_fully_populated_entry(
         self, fake_graphql_entry, sample_candidate_entry

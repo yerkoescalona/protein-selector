@@ -43,9 +43,11 @@ pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/
                                 (rdkit/meeko — openff-toolkit deliberately excluded, see below)
 src/protein_selector/          Pipeline code: find_small_proteins_with_ligands.py (v0 seed,
                                 superseded), candidates.py (L1), simulability.py (L2,
-                                partial), parameterizability.py (L3, partial — needs the
-                                `validate` extra), store.py (SQLite persistence, all
-                                layers) — a proper src-layout package, not loose scripts
+                                complete), composition.py (L2's assembly/entity-level
+                                fetches: oligomeric state, non-standard residues),
+                                parameterizability.py (L3, partial — needs the `validate`
+                                extra), store.py (SQLite persistence, all layers) —
+                                a proper src-layout package, not loose scripts
 tests/protein_selector/        Tests, mirroring src/protein_selector/'s structure 1:1 —
                                 see "Testing" below
 uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
@@ -90,49 +92,97 @@ Tests live in `tests/`, mirroring `src/protein_selector/`'s structure file-for-f
 Add tests alongside new modules as they're written, not as a separate later pass.
 
 Network-touching code (anything that calls the live RCSB/Europe PMC/AlphaFold APIs) should
-be tested with the network boundary mocked — this sandbox has no outbound access to
-`search.rcsb.org`/`data.rcsb.org` (confirmed: a live test query hung and had to be killed),
-and the real course environment shouldn't need network access just to run the test suite.
-Test the pure logic (query construction, response parsing, cache round-trips) against
-fixed/fake inputs; reserve actual live-API calls for manual verification before trusting a
-module as done (see `PLAN.md`'s per-module "not yet verified end-to-end" notes).
+be tested with the network boundary mocked in the committed test suite -- the real course
+environment shouldn't need network access just to run `uv run pytest`, and it keeps CI fast.
+Test the pure logic (query construction, response parsing) against fixed/fake inputs.
+
+**But mocks are not a substitute for live verification, and network access is NOT reliably
+absent** -- earlier in this project network access appeared unavailable (a live query hung
+and was killed) and later turned out to be available again (a plain `curl` succeeded).
+**Two real, significant bugs were caught only by actually running code against the live
+API** (both mocked tests passed throughout, because the mock fixtures encoded the same
+wrong assumptions the code made) -- see "Bugs found via live verification" below. Whenever
+network access is available, spend a few minutes running new fetch code against a real,
+known PDB ID (e.g. 4HHB) before trusting it, and update fixtures to match the *verified*
+response shape, not a plausible-looking guess.
 
 Run via `uv run pytest`.
+
+## Bugs found via live verification (read before touching candidates.py/composition.py)
+
+Both caught 2026-07-04 by actually calling the real RCSB API, after weeks of mocked tests
+passing cleanly. Concrete lesson: a mock that encodes the same wrong assumption as the code
+it's mocking will never catch that assumption being wrong.
+
+1. **Wrong field paths, silently wrong for several commits.**
+   `rcsb_entry_container_identifiers.uniprot_ids` and an unqualified
+   `rcsb_entity_source_organism.ncbi_scientific_name` are **not valid entry-level GraphQL
+   paths at all** -- both `uniprot_ids` and `organism` are **polymer-entity-level** fields,
+   reachable from an entry query only via a nested `polymer_entities` list (one dict per
+   entity). `rcsb-api` will silently "autocomplete" an ambiguous/incomplete path and still
+   return data (with a warning) -- don't rely on that; it depends on "current schema
+   uniqueness" and isn't guaranteed stable. Fixed: `_ENTRY_RETURN_FIELDS` now uses the
+   fully-qualified `polymer_entities.rcsb_entity_source_organism.ncbi_scientific_name` /
+   `polymer_entities.rcsb_polymer_entity_container_identifiers.uniprot_ids`; `_parse_entry`
+   walks the nested list, aggregating `uniprot_ids` across entities and taking the first
+   entity's organism. `conftest.py`'s fixtures were rebuilt from a real verified response.
+
+2. **`search_candidate_ids` silently paginated through EVERY matching result.**
+   `Session.exec(rows=N)` sets `N` as a **per-page size**, not a total cap --
+   `list(session)` auto-paginates until the *entire* matching set is exhausted, however
+   large. A broad L1 filter (tens of thousands of matches, easily -- see PLAN.md §3's "free,
+   instant" L1 promise, which this violated) would take many minutes to hours instead of
+   being instant, with no error, just an apparent hang. Verified: `list(session)` on a
+   query matching 3,785 entries with `rows=5` did not return within 30s; the same query
+   with `itertools.islice(session, 5)` returned in 0.35s. Fixed: `search_candidate_ids` now
+   uses `itertools.islice(session, rows)`. **Never revert to plain `list(session)` here.**
+   A regression test locks this in
+   (`test_caps_results_at_rows_even_if_session_yields_more`).
+
+If you touch `_ENTRY_RETURN_FIELDS`, `_parse_entry`, or `search_candidate_ids` again,
+re-verify live against a real PDB ID before trusting the change.
 
 ## Status
 
 - **L1 (`candidates.py`):** implemented via the official `rcsb-api` package — a single
   structured search query (`build_l1_query`/`search_candidate_ids`) plus batched GraphQL
-  metadata fetch (`fetch_entry_metadata`, up to 1000 IDs/request). **Not yet verified
-  against the live API** — this sandbox has no outbound network access; tests mock the
-  `DataQuery`/`Session` boundary against the documented response shape. Verify end-to-end
-  once network access is available.
-- **L2 (`simulability.py`):** partial. The size/resolution gate (`check_size_and_resolution`
-  / `filter_simulable`) is implemented and tested, using only fields L1 already fetches.
-  Completeness/gaps, non-standard residues, and oligomeric state are **deliberately
-  deferred** — each needs an RCSB field not yet fetched, and the exact field names are
-  unverified against the live GraphQL schema. See `PLAN.md` §10 step 2 before extending.
+  metadata fetch (`fetch_entry_metadata`, up to 1000 IDs/request). **Live-verified
+  end-to-end against 4HHB (2026-07-04)** — see "Bugs found via live verification" above for
+  two real bugs this caught and fixed (wrong field paths; a pagination footgun).
+- **L2 (`simulability.py` + `composition.py`): fully implemented, all four checks,
+  live-verified.** `check_size_and_resolution` (residue-count window + resolution ceiling)
+  and `check_completeness` (unmodeled-residue fraction) are pure logic on `CandidateEntry`
+  fields L1 already fetches. `check_oligomeric_state` and `check_non_standard_residues`
+  need `composition.py`'s separate assembly-level and polymer-entity-level fetches
+  (`fetch_oligomeric_state`/`fetch_non_standard_residues`). `check_full_simulability`
+  composes all four into one `SimulabilityResult` — oligomeric-state/non-standard-residue
+  gating is informational by default (no ceiling / allowed), since PLAN.md never mandated
+  a hard rule for either; set `max_oligomeric_count`/`allow_non_standard_residues` to
+  actually gate. Full pipeline verified live end-to-end for 4HHB.
 - **L3 (`parameterizability.py`):** partial. RDKit sanitization
   (`check_ligand_parameterizable`/`filter_parameterizable`) is implemented and tested with
   **real RDKit calls** (pure local logic, no network) — requires the `validate` extra.
   **Not yet wired to real data:** L1 only fetches ligand CCD codes, not SMILES; fetching
   SMILES per CCD code is the remaining wiring step. Full Meeko/OpenFF parameterization and
   p2rank pocket detection are **not started** — p2rank is deferred pending verification of
-  its actual CLI/output format (no network access so far); do not guess its interface into
-  a shipped wrapper. See `PLAN.md` §10 step 2.
+  its actual CLI/output format; do not guess its interface into a shipped wrapper.
 - **Persistence (`store.py`):** SQLite, one table per layer (`l1_candidates`,
-  `l2_simulability`, `l3_parameterizability`), keyed by `pdb_id` (L1/L2) or `ligand_id`
-  (L3 — a ligand's parameterizability doesn't depend on which entry it appears in), all
-  upsert-based. Replaced `candidates.py`'s original JSON-file cache (see `PLAN.md` §4b for
-  why SQLite was chosen over DuckDB/Parquet). **Each layer keeps its own small dataclass**
-  (`CandidateEntry`, `SimulabilityResult`, `ParameterizabilityResult`) — `store.py` only
-  persists/reloads them, it does not merge them into one growing object. Joining across
-  layers into the final §8 output row is a separate, not-yet-built step; don't conflate
-  "persist this layer's result" with "build the final report."
+  `l2_simulability`, `l2_oligomeric_state`, `l2_entity_composition`,
+  `l3_parameterizability`), keyed by `pdb_id` (most), `(pdb_id, entity_id)`
+  (`l2_entity_composition` — an entry can have multiple polymer entities), or `ligand_id`
+  (`l3_parameterizability` — a ligand's parameterizability doesn't depend on which entry it
+  appears in), all upsert-based. Replaced `candidates.py`'s original JSON-file cache (see
+  `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet). **Each layer keeps its own
+  small dataclass** (`CandidateEntry`, `SimulabilityResult`, `ParameterizabilityResult`,
+  `AssemblyInfo`, `EntityCompositionInfo`) — `store.py` only persists/reloads them, it does
+  not merge them into one growing object. Joining across layers into the final §8 output
+  row is a separate, not-yet-built step; don't conflate "persist this layer's result" with
+  "build the final report."
 - **L4–L5, difficulty scoring, output table:** not started. `find_small_proteins_with_ligands.py`
   (the original v0 seed) still exists unchanged and is superseded by `candidates.py`; it can
-  be removed once `candidates.py` is verified end-to-end (keep its UniProt cofactor-lookup
-  logic if that path is still wanted — see `PLAN.md` §4/§10 step 1).
+  be removed once `candidates.py`'s UniProt cofactor-lookup path is confirmed no longer
+  wanted (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10
+  step 1.
 
 ## Anti-hallucination rules
 

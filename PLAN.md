@@ -310,17 +310,45 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
    verified (keep UniProt only for cofactor enrichment); upgrade the JSON cache
    to the SQLite/DuckDB/Parquet table described in §4b once the entry-count
    scale (whole-PDB Holdings list) makes JSON impractical.
-2. **L2–L3 cheap checks** with JSON caching → pass/flag. Cut to a ~20–50 shortlist.
-   - [x] **L2 size/resolution gate** — `simulability.py`: residue-count window
-     (~50–300 aa) + tightened resolution ceiling, operating purely on fields
-     L1 already fetches (no new network calls). Tested (`test_simulability.py`).
-   - [ ] **L2 completeness/gaps, non-standard residues, oligomeric state** —
-     deferred: each needs an RCSB field not yet fetched by L1, and the exact
-     field names are unverified against the live GraphQL schema (no network
-     access in the sessions so far — same situation as the §4b Holdings-API
-     caveat). Verify field names first, then extend `candidates.py`'s fetch and
-     add a corresponding check in `simulability.py`. Do not guess field names
-     into a shipped fetch call.
+2. **L2–L3 cheap checks** with SQLite persistence → pass/flag. Cut to a ~20–50 shortlist.
+   - [x] **L2 FULLY IMPLEMENTED (2026-07-04)** — all four checks, all field
+     paths **live-verified against data.rcsb.org**, not guessed:
+     - `check_size_and_resolution` — residue-count window (~50–300 aa) +
+       tightened resolution ceiling, pure logic on fields L1 already fetches.
+     - `check_completeness` — unmodeled-residue fraction, using
+       `n_modeled_residues`/`n_unmodeled_residues` (verified fields
+       `deposited_modeled_polymer_monomer_count`/`deposited_unmodeled_polymer_monomer_count`,
+       added to L1's entry-level fetch for free — same query, no new round trip).
+     - `check_oligomeric_state` — needs `composition.py`'s new assembly-level
+       fetch (verified: `pdbx_struct_assembly.oligomeric_details`/`oligomeric_count`).
+     - `check_non_standard_residues` — needs `composition.py`'s new polymer-entity
+       -level fetch (verified: `entity_poly.nstd_monomer` "yes"/"no" string,
+       `entity_poly.rcsb_non_std_monomer_count`).
+     `check_full_simulability` composes all four into one `SimulabilityResult`;
+     oligomeric-state/non-standard-residue checks are informational by default
+     (no ceiling / allowed) since PLAN.md never mandated a hard rule for either —
+     set `max_oligomeric_count`/`allow_non_standard_residues` to actually gate.
+     All persisted via `store.py`'s new `l2_oligomeric_state`/`l2_entity_composition`
+     tables. Full pipeline (L1 fetch → composition fetch → combined check)
+     verified end-to-end against the real live API for 4HHB, not just mocked.
+   - [x] **Two real, significant bugs caught via live verification — see
+     `.claude/CLAUDE.md` "Bugs found via live verification" for full detail:**
+     1. `rcsb_entry_container_identifiers.uniprot_ids` and unqualified
+        `rcsb_entity_source_organism...` were **not valid entry-level paths at
+        all** — both are polymer-entity-level fields reached only via a nested
+        `polymer_entities` list. Silently shipped broken for several commits
+        because mocked test fixtures encoded the same wrong assumption the code
+        made. Fixed in `candidates.py`; fixture rebuilt from a real verified
+        response.
+     2. `search_candidate_ids`'s `list(session)` auto-paginates through **every**
+        matching result when materialized — `rows` is a page size, not a total
+        cap. A broad L1 filter (tens of thousands of matches) would silently
+        take from many minutes to hours instead of being "instant" (the L1
+        promise, §3). Fixed with `itertools.islice(session, rows)`; regression
+        test added (`test_caps_results_at_rows_even_if_session_yields_more`).
+     **Lesson reinforced:** mocked tests validate internal logic, not
+     assumptions about an external API's actual shape/behavior — periodically
+     re-verify live, don't just trust that mocks match reality once and forever.
    - [x] **L3 ligand parameterizability (RDKit sanitization)** —
      `parameterizability.py`: `check_ligand_parameterizable`/`filter_parameterizable`,
      a fast necessary-but-not-sufficient pre-filter (can RDKit even parse/sanitize

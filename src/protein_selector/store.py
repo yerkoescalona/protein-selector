@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from protein_selector.candidates import CandidateEntry
+from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
 from protein_selector.parameterizability import ParameterizabilityResult
 from protein_selector.simulability import SimulabilityResult
 
@@ -38,9 +39,13 @@ CREATE TABLE IF NOT EXISTS l1_candidates (
     resolution REAL,
     n_atoms INTEGER,
     n_residues INTEGER,
+    n_modeled_residues INTEGER,
+    n_unmodeled_residues INTEGER,
     n_protein_entities INTEGER,
     uniprot_ids TEXT NOT NULL DEFAULT '[]',
     non_polymer_entity_ids TEXT NOT NULL DEFAULT '[]',
+    polymer_entity_ids TEXT NOT NULL DEFAULT '[]',
+    assembly_ids TEXT NOT NULL DEFAULT '[]',
     organism TEXT
 )
 """
@@ -66,6 +71,28 @@ CREATE TABLE IF NOT EXISTS l3_parameterizability (
 )
 """
 
+# Keyed by pdb_id -- one primary-assembly oligomeric-state record per entry
+# (see composition.fetch_oligomeric_state).
+_L2_OLIGOMERIC_STATE_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS l2_oligomeric_state (
+    pdb_id TEXT PRIMARY KEY,
+    oligomeric_details TEXT,
+    oligomeric_count INTEGER
+)
+"""
+
+# Keyed by (pdb_id, entity_id) -- one row per polymer entity, since an entry
+# can have multiple (see composition.fetch_non_standard_residues).
+_L2_ENTITY_COMPOSITION_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS l2_entity_composition (
+    pdb_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    nstd_monomer INTEGER NOT NULL,
+    non_std_monomer_count INTEGER NOT NULL,
+    PRIMARY KEY (pdb_id, entity_id)
+)
+"""
+
 
 @contextmanager
 def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
@@ -79,6 +106,8 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_L1_TABLE_SCHEMA)
     conn.execute(_L2_TABLE_SCHEMA)
     conn.execute(_L3_TABLE_SCHEMA)
+    conn.execute(_L2_OLIGOMERIC_STATE_TABLE_SCHEMA)
+    conn.execute(_L2_ENTITY_COMPOSITION_TABLE_SCHEMA)
     try:
         yield conn
         conn.commit()
@@ -100,17 +129,23 @@ def upsert_candidates(
             """
             INSERT INTO l1_candidates
                 (pdb_id, title, method, resolution, n_atoms, n_residues,
-                 n_protein_entities, uniprot_ids, non_polymer_entity_ids, organism)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 n_modeled_residues, n_unmodeled_residues, n_protein_entities,
+                 uniprot_ids, non_polymer_entity_ids, polymer_entity_ids,
+                 assembly_ids, organism)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(pdb_id) DO UPDATE SET
                 title=excluded.title,
                 method=excluded.method,
                 resolution=excluded.resolution,
                 n_atoms=excluded.n_atoms,
                 n_residues=excluded.n_residues,
+                n_modeled_residues=excluded.n_modeled_residues,
+                n_unmodeled_residues=excluded.n_unmodeled_residues,
                 n_protein_entities=excluded.n_protein_entities,
                 uniprot_ids=excluded.uniprot_ids,
                 non_polymer_entity_ids=excluded.non_polymer_entity_ids,
+                polymer_entity_ids=excluded.polymer_entity_ids,
+                assembly_ids=excluded.assembly_ids,
                 organism=excluded.organism
             """,
             [
@@ -121,9 +156,13 @@ def upsert_candidates(
                     e.resolution,
                     e.n_atoms,
                     e.n_residues,
+                    e.n_modeled_residues,
+                    e.n_unmodeled_residues,
                     e.n_protein_entities,
                     json.dumps(e.uniprot_ids),
                     json.dumps(e.non_polymer_entity_ids),
+                    json.dumps(e.polymer_entity_ids),
+                    json.dumps(e.assembly_ids),
                     e.organism,
                 )
                 for e in entries
@@ -139,7 +178,9 @@ def load_candidates(db_path: Path = DEFAULT_DB_PATH) -> dict[str, CandidateEntry
         rows = conn.execute(
             """
             SELECT pdb_id, title, method, resolution, n_atoms, n_residues,
-                   n_protein_entities, uniprot_ids, non_polymer_entity_ids, organism
+                   n_modeled_residues, n_unmodeled_residues, n_protein_entities,
+                   uniprot_ids, non_polymer_entity_ids, polymer_entity_ids,
+                   assembly_ids, organism
             FROM l1_candidates
             """
         ).fetchall()
@@ -151,10 +192,14 @@ def load_candidates(db_path: Path = DEFAULT_DB_PATH) -> dict[str, CandidateEntry
             resolution=row[3],
             n_atoms=row[4],
             n_residues=row[5],
-            n_protein_entities=row[6],
-            uniprot_ids=json.loads(row[7]),
-            non_polymer_entity_ids=json.loads(row[8]),
-            organism=row[9],
+            n_modeled_residues=row[6],
+            n_unmodeled_residues=row[7],
+            n_protein_entities=row[8],
+            uniprot_ids=json.loads(row[9]),
+            non_polymer_entity_ids=json.loads(row[10]),
+            polymer_entity_ids=json.loads(row[11]),
+            assembly_ids=json.loads(row[12]),
+            organism=row[13],
         )
         for row in rows
     }
@@ -193,6 +238,90 @@ def load_simulability(db_path: Path = DEFAULT_DB_PATH) -> dict[str, Simulability
         )
         for row in rows
     }
+
+
+def upsert_oligomeric_state(
+    results: list[AssemblyInfo], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Insert or update L2 oligomeric-state rows, keyed by ``pdb_id``."""
+    if not results:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO l2_oligomeric_state (pdb_id, oligomeric_details, oligomeric_count)
+            VALUES (?, ?, ?)
+            ON CONFLICT(pdb_id) DO UPDATE SET
+                oligomeric_details=excluded.oligomeric_details,
+                oligomeric_count=excluded.oligomeric_count
+            """,
+            [(r.pdb_id, r.oligomeric_details, r.oligomeric_count) for r in results],
+        )
+
+
+def load_oligomeric_state(db_path: Path = DEFAULT_DB_PATH) -> dict[str, AssemblyInfo]:
+    """Load all L2 oligomeric-state rows, keyed by ``pdb_id``."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT pdb_id, oligomeric_details, oligomeric_count FROM l2_oligomeric_state"
+        ).fetchall()
+    return {
+        row[0]: AssemblyInfo(pdb_id=row[0], oligomeric_details=row[1], oligomeric_count=row[2])
+        for row in rows
+    }
+
+
+def upsert_entity_composition(
+    results: list[EntityCompositionInfo], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Insert or update L2 entity-composition rows, keyed by ``(pdb_id, entity_id)``."""
+    if not results:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO l2_entity_composition
+                (pdb_id, entity_id, nstd_monomer, non_std_monomer_count)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(pdb_id, entity_id) DO UPDATE SET
+                nstd_monomer=excluded.nstd_monomer,
+                non_std_monomer_count=excluded.non_std_monomer_count
+            """,
+            [
+                (r.pdb_id, r.entity_id, int(r.nstd_monomer), r.non_std_monomer_count)
+                for r in results
+            ],
+        )
+
+
+def load_entity_composition(
+    db_path: Path = DEFAULT_DB_PATH,
+) -> dict[str, list[EntityCompositionInfo]]:
+    """Load all L2 entity-composition rows, grouped back by ``pdb_id``.
+
+    Mirrors ``composition.fetch_non_standard_residues``'s return shape (one
+    entry's multiple polymer entities grouped under its ``pdb_id``).
+    """
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT pdb_id, entity_id, nstd_monomer, non_std_monomer_count "
+            "FROM l2_entity_composition"
+        ).fetchall()
+    results: dict[str, list[EntityCompositionInfo]] = {}
+    for row in rows:
+        results.setdefault(row[0], []).append(
+            EntityCompositionInfo(
+                pdb_id=row[0],
+                entity_id=row[1],
+                nstd_monomer=bool(row[2]),
+                non_std_monomer_count=row[3],
+            )
+        )
+    return results
 
 
 def upsert_parameterizability(

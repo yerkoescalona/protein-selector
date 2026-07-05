@@ -16,57 +16,104 @@ from protein_selector.candidates import CandidateEntry
 
 @pytest.fixture
 def sample_candidate_entry() -> CandidateEntry:
-    """A fully populated CandidateEntry, matching fake_graphql_entry's content."""
+    """A fully populated CandidateEntry, matching fake_graphql_entry's content.
+
+    Values are the real live data.rcsb.org / rcsb-api GraphQL response for 4HHB
+    (verified 2026-07-04), not invented -- see candidates.py's
+    _ENTRY_RETURN_FIELDS comment for the "organism/uniprot_ids are polymer-entity
+    -level, not entry-level" bug this verification caught (the previous version
+    of this fixture encoded the same wrong assumption the code made, so the
+    mocked tests couldn't catch it).
+    """
     return CandidateEntry(
         pdb_id="4HHB",
-        title="Hemoglobin",
+        title="THE CRYSTAL STRUCTURE OF HUMAN DEOXYHAEMOGLOBIN AT 1.74 ANGSTROMS RESOLUTION",
         method="X-RAY DIFFRACTION",
         resolution=1.74,
         n_atoms=4779,
         n_residues=574,
-        n_protein_entities=4,
+        n_modeled_residues=574,
+        n_unmodeled_residues=0,
+        n_protein_entities=2,
         uniprot_ids=["P69905", "P68871"],
-        non_polymer_entity_ids=["1", "2"],
+        non_polymer_entity_ids=["3", "4"],
+        polymer_entity_ids=["1", "2"],
+        assembly_ids=["1"],
         organism="Homo sapiens",
     )
 
 
 @pytest.fixture
 def fake_graphql_entry() -> dict:
-    """One raw 'entries' object shaped like the RCSB Data API's GraphQL response.
+    """One raw 'entries' object shaped like the RCSB Data API's real GraphQL response.
 
     Represents the same entry as sample_candidate_entry, so a test can assert
     that fetch_entry_metadata/_parse_entry produce equivalent CandidateEntry data.
+    Organism and uniprot_ids are nested under "polymer_entities" (one dict per
+    polymer entity) -- this is the REAL response shape, live-verified against
+    data.rcsb.org, not the flat shape a plausible-looking guess would produce.
     """
     return {
         "rcsb_id": "4HHB",
-        "struct": {"title": "Hemoglobin"},
+        "struct": {
+            "title": "THE CRYSTAL STRUCTURE OF HUMAN DEOXYHAEMOGLOBIN AT 1.74 ANGSTROMS RESOLUTION"
+        },
         "exptl": [{"method": "X-RAY DIFFRACTION"}],
         "rcsb_entry_info": {
             "resolution_combined": [1.74],
             "deposited_atom_count": 4779,
             "deposited_polymer_monomer_count": 574,
-            "polymer_entity_count_protein": 4,
+            "deposited_modeled_polymer_monomer_count": 574,
+            "deposited_unmodeled_polymer_monomer_count": 0,
+            "polymer_entity_count_protein": 2,
         },
         "rcsb_entry_container_identifiers": {
-            "uniprot_ids": ["P69905", "P68871"],
-            "non_polymer_entity_ids": ["1", "2"],
+            "non_polymer_entity_ids": ["3", "4"],
+            "polymer_entity_ids": ["1", "2"],
+            "assembly_ids": ["1"],
         },
-        "rcsb_entity_source_organism": [{"ncbi_scientific_name": "Homo sapiens"}],
+        "polymer_entities": [
+            {
+                "rcsb_entity_source_organism": [{"ncbi_scientific_name": "Homo sapiens"}],
+                "rcsb_polymer_entity_container_identifiers": {
+                    "uniprot_ids": ["P69905"]
+                },
+            },
+            {
+                "rcsb_entity_source_organism": [{"ncbi_scientific_name": "Homo sapiens"}],
+                "rcsb_polymer_entity_container_identifiers": {
+                    "uniprot_ids": ["P68871"]
+                },
+            },
+        ],
     }
 
 
 @pytest.fixture
 def mock_data_query(monkeypatch) -> MagicMock:
-    """Patch DataQuery; returns the mock *class* (not an instance).
+    """Patch DataQuery as imported into candidates.py; returns the mock *class*.
 
     Exposing the class -- not a pre-built instance -- lets a test assert the
     constructor itself was (or wasn't) called, e.g. for the empty-input
     short-circuit. Configure the response via
     ``mock_data_query.return_value.get_response.return_value = {...}``.
+
+    Each module that does ``from rcsbapi.data import DataQuery`` gets its own
+    name bound in its own namespace -- patching one module's ``DataQuery``
+    does NOT affect another's. See ``mock_composition_data_query`` below for
+    the composition.py equivalent; add a new fixture per module, don't try to
+    generalize this into one that patches "wherever" via a parameter.
     """
     fake_class = MagicMock()
     monkeypatch.setattr("protein_selector.candidates.DataQuery", fake_class)
+    return fake_class
+
+
+@pytest.fixture
+def mock_composition_data_query(monkeypatch) -> MagicMock:
+    """Patch DataQuery as imported into composition.py; returns the mock *class*."""
+    fake_class = MagicMock()
+    monkeypatch.setattr("protein_selector.composition.DataQuery", fake_class)
     return fake_class
 
 

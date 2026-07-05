@@ -4,7 +4,10 @@ Replaces the v0 seed's (`find_small_proteins_with_ligands.py`) per-entry `reques
 and manual pagination with:
 
 - a single structured search query for candidate PDB IDs (`rcsbapi.search`), whose
-  ``Session`` handles pagination and rate-limiting internally, and
+  ``Session`` auto-paginates internally -- but only up to however many results are
+  actually consumed from it. See `search_candidate_ids`'s docstring for a real,
+  live-verified footgun here: materializing the full session via `list(session)`
+  fetches EVERY matching page, not just `rows`-many results.
 - one batched metadata fetch (`rcsbapi.data.DataQuery`), which chunks/rate-limits
   internally rather than one HTTP round trip per PDB ID.
 
@@ -15,6 +18,7 @@ See ``PLAN.md`` §4 and §4b for the design rationale.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +27,23 @@ from rcsbapi.search import Attr
 
 # Fields fetched per entry -- superset of what the v0 script's get_structure_details/
 # get_ligands issued one HTTP request per PDB ID for.
+#
+# IMPORTANT, learned the hard way (2026-07-04, live-verified against data.rcsb.org):
+# "rcsb_entry_container_identifiers.uniprot_ids" and "rcsb_entity_source_organism...."
+# (unqualified) are NOT valid entry-level paths -- both organism and uniprot_ids are
+# POLYMER-ENTITY-level fields, reached from an entry query only via the nested
+# "polymer_entities" list. The original (mocked-only) tests never caught this because
+# the mock fixtures encoded the same wrong assumption the code made, so parsing "passed"
+# against fabricated data that didn't match the real API shape. `rcsb-api` will silently
+# autocomplete an ambiguous/incomplete path and still return data (with a warning) --
+# don't rely on that; use the fully-qualified path so behavior doesn't depend on
+# "current schema uniqueness". See `_parse_entry`'s corresponding nested-list handling.
+#
+# deposited_modeled_polymer_monomer_count / deposited_unmodeled_polymer_monomer_count
+# and the assembly_ids/polymer_entity_ids container fields were added to support the
+# L2 completeness/oligomeric-state/non-standard-residue checks (PLAN.md §10 step 2) --
+# all field paths verified against a live data.rcsb.org response (2026-07-04). See
+# composition.py for the assembly/entity-level fetches these two ID lists feed.
 _ENTRY_RETURN_FIELDS = [
     "rcsb_id",
     "struct.title",
@@ -30,10 +51,14 @@ _ENTRY_RETURN_FIELDS = [
     "rcsb_entry_info.resolution_combined",
     "rcsb_entry_info.deposited_atom_count",
     "rcsb_entry_info.deposited_polymer_monomer_count",
+    "rcsb_entry_info.deposited_modeled_polymer_monomer_count",
+    "rcsb_entry_info.deposited_unmodeled_polymer_monomer_count",
     "rcsb_entry_info.polymer_entity_count_protein",
-    "rcsb_entry_container_identifiers.uniprot_ids",
     "rcsb_entry_container_identifiers.non_polymer_entity_ids",
-    "rcsb_entity_source_organism.ncbi_scientific_name",
+    "rcsb_entry_container_identifiers.polymer_entity_ids",
+    "rcsb_entry_container_identifiers.assembly_ids",
+    "polymer_entities.rcsb_entity_source_organism.ncbi_scientific_name",
+    "polymer_entities.rcsb_polymer_entity_container_identifiers.uniprot_ids",
 ]
 
 
@@ -47,9 +72,13 @@ class CandidateEntry:
     resolution: float | None = None
     n_atoms: int | None = None
     n_residues: int | None = None
+    n_modeled_residues: int | None = None
+    n_unmodeled_residues: int | None = None
     n_protein_entities: int | None = None
     uniprot_ids: list[str] = field(default_factory=list)
     non_polymer_entity_ids: list[str] = field(default_factory=list)
+    polymer_entity_ids: list[str] = field(default_factory=list)
+    assembly_ids: list[str] = field(default_factory=list)
     organism: str | None = None
 
 
@@ -95,16 +124,25 @@ def search_candidate_ids(
     method: str = "X-RAY DIFFRACTION",
     rows: int = 10_000,
 ) -> list[str]:
-    """Run the L1 search and return matching PDB IDs.
+    """Run the L1 search and return at most ``rows`` matching PDB IDs.
 
-    ``Session`` (returned by ``.exec()``) handles pagination and rate limiting
-    internally -- no manual paginate/sleep loop, unlike the v0 script.
+    CRITICAL, live-verified (2026-07-04): ``Session`` (returned by ``.exec()``)
+    auto-paginates through ALL matching results when fully materialized via
+    ``list(session)`` -- ``rows`` is the per-page size passed to the server,
+    NOT a cap on the total results a caller gets back. A query matching more
+    entries than ``rows`` will keep fetching subsequent pages until the whole
+    result set is exhausted. Confirmed: ``list(session)`` on a real query
+    matching 3,785 entries with ``rows=5`` did not return within 30s (many
+    hundreds of sequential round trips); the identical query with
+    ``itertools.islice(session, 5)`` returned in 0.35s. Do not go back to
+    plain ``list(session)`` here -- it silently degrades from "instant" (the
+    L1 promise in PLAN.md §3) to potentially hours, with no error or warning.
     """
     query = build_l1_query(
         max_atoms=max_atoms, max_resolution=max_resolution, method=method
     )
     session = query.exec(return_type="entry", rows=rows)
-    return list(session)
+    return list(itertools.islice(session, rows))
 
 
 def fetch_entry_metadata(pdb_ids: list[str]) -> list[CandidateEntry]:
@@ -131,12 +169,33 @@ def fetch_entry_metadata(pdb_ids: list[str]) -> list[CandidateEntry]:
 
 
 def _parse_entry(entry: dict[str, Any]) -> CandidateEntry:
-    """Convert one raw GraphQL entry object into a ``CandidateEntry``."""
+    """Convert one raw GraphQL entry object into a ``CandidateEntry``.
+
+    Organism and UniProt IDs live on the nested ``polymer_entities`` list, one
+    dict per polymer entity, NOT flat on the entry -- see ``_ENTRY_RETURN_FIELDS``'s
+    comment for why. UniProt IDs are aggregated (flattened) across all entities,
+    since a multi-entity structure (e.g. hemoglobin's alpha/beta chains) has a
+    different UniProt accession per entity. Organism uses the first populated
+    entity's first organism, matching the "first" semantics already used for
+    method/resolution.
+    """
     entry_info = entry.get("rcsb_entry_info") or {}
     container_ids = entry.get("rcsb_entry_container_identifiers") or {}
-    organisms = entry.get("rcsb_entity_source_organism") or []
+    polymer_entities = entry.get("polymer_entities") or []
     exptl = entry.get("exptl") or []
     struct = entry.get("struct") or {}
+
+    uniprot_ids: list[str] = []
+    organism: str | None = None
+    for polymer_entity in polymer_entities:
+        entity_container_ids = (
+            polymer_entity.get("rcsb_polymer_entity_container_identifiers") or {}
+        )
+        uniprot_ids.extend(entity_container_ids.get("uniprot_ids") or [])
+        if organism is None:
+            organisms = polymer_entity.get("rcsb_entity_source_organism") or []
+            if organisms:
+                organism = organisms[0].get("ncbi_scientific_name")
 
     return CandidateEntry(
         pdb_id=entry.get("rcsb_id", ""),
@@ -145,10 +204,14 @@ def _parse_entry(entry: dict[str, Any]) -> CandidateEntry:
         resolution=_first_or_none(entry_info.get("resolution_combined")),
         n_atoms=entry_info.get("deposited_atom_count"),
         n_residues=entry_info.get("deposited_polymer_monomer_count"),
+        n_modeled_residues=entry_info.get("deposited_modeled_polymer_monomer_count"),
+        n_unmodeled_residues=entry_info.get("deposited_unmodeled_polymer_monomer_count"),
         n_protein_entities=entry_info.get("polymer_entity_count_protein"),
-        uniprot_ids=list(container_ids.get("uniprot_ids") or []),
+        uniprot_ids=uniprot_ids,
         non_polymer_entity_ids=list(container_ids.get("non_polymer_entity_ids") or []),
-        organism=organisms[0].get("ncbi_scientific_name") if organisms else None,
+        polymer_entity_ids=list(container_ids.get("polymer_entity_ids") or []),
+        assembly_ids=list(container_ids.get("assembly_ids") or []),
+        organism=organism,
     )
 
 

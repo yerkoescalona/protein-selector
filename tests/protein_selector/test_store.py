@@ -9,13 +9,18 @@ from __future__ import annotations
 import pytest
 
 from protein_selector.candidates import CandidateEntry
+from protein_selector.composition import AssemblyInfo, EntityCompositionInfo
 from protein_selector.parameterizability import ParameterizabilityResult
 from protein_selector.simulability import SimulabilityResult
 from protein_selector.store import (
     load_candidates,
+    load_entity_composition,
+    load_oligomeric_state,
     load_parameterizability,
     load_simulability,
     upsert_candidates,
+    upsert_entity_composition,
+    upsert_oligomeric_state,
     upsert_parameterizability,
     upsert_simulability,
 )
@@ -133,8 +138,83 @@ class TestParameterizabilityRoundTrip:
         assert loaded["GLC"].passed is True
 
 
+class TestOligomericStateRoundTrip:
+    def test_round_trip_preserves_data(self, db_path):
+        results = [
+            AssemblyInfo(pdb_id="4HHB", oligomeric_details="tetrameric", oligomeric_count=4),
+            AssemblyInfo(pdb_id="1STP", oligomeric_details="monomeric", oligomeric_count=1),
+        ]
+
+        upsert_oligomeric_state(results, db_path=db_path)
+        loaded = load_oligomeric_state(db_path=db_path)
+
+        assert set(loaded.keys()) == {"4HHB", "1STP"}
+        assert loaded["4HHB"] == results[0]
+        assert loaded["1STP"] == results[1]
+
+    def test_load_missing_file_returns_empty_dict(self, tmp_path):
+        assert load_oligomeric_state(db_path=tmp_path / "does_not_exist.db") == {}
+
+    def test_upsert_updates_existing_row_by_pdb_id(self, db_path):
+        upsert_oligomeric_state(
+            [AssemblyInfo(pdb_id="4HHB", oligomeric_details="dimeric", oligomeric_count=2)],
+            db_path=db_path,
+        )
+        upsert_oligomeric_state(
+            [AssemblyInfo(pdb_id="4HHB", oligomeric_details="tetrameric", oligomeric_count=4)],
+            db_path=db_path,
+        )
+
+        loaded = load_oligomeric_state(db_path=db_path)
+
+        assert len(loaded) == 1
+        assert loaded["4HHB"].oligomeric_count == 4
+
+
+class TestEntityCompositionRoundTrip:
+    """Keyed by (pdb_id, entity_id) -- an entry can have multiple entities."""
+
+    def test_round_trip_groups_entities_by_pdb_id(self, db_path):
+        results = [
+            EntityCompositionInfo(pdb_id="4HHB", entity_id="1", nstd_monomer=False),
+            EntityCompositionInfo(
+                pdb_id="4HHB", entity_id="2", nstd_monomer=True, non_std_monomer_count=1
+            ),
+            EntityCompositionInfo(pdb_id="1STP", entity_id="1", nstd_monomer=False),
+        ]
+
+        upsert_entity_composition(results, db_path=db_path)
+        loaded = load_entity_composition(db_path=db_path)
+
+        assert set(loaded.keys()) == {"4HHB", "1STP"}
+        assert loaded["4HHB"] == results[:2]
+        assert loaded["1STP"] == results[2:]
+
+    def test_load_missing_file_returns_empty_dict(self, tmp_path):
+        assert load_entity_composition(db_path=tmp_path / "does_not_exist.db") == {}
+
+    def test_upsert_updates_existing_row_by_pdb_id_and_entity_id(self, db_path):
+        upsert_entity_composition(
+            [EntityCompositionInfo(pdb_id="4HHB", entity_id="1", nstd_monomer=False)],
+            db_path=db_path,
+        )
+        upsert_entity_composition(
+            [
+                EntityCompositionInfo(
+                    pdb_id="4HHB", entity_id="1", nstd_monomer=True, non_std_monomer_count=2
+                )
+            ],
+            db_path=db_path,
+        )
+
+        loaded = load_entity_composition(db_path=db_path)
+
+        assert len(loaded["4HHB"]) == 1  # updated in place, not duplicated
+        assert loaded["4HHB"][0].nstd_monomer is True
+
+
 class TestAllTablesShareOneFile:
-    """L1/L2/L3 tables live in the same SQLite file, independently keyed."""
+    """All L1/L2/L3 tables live in the same SQLite file, independently keyed."""
 
     def test_all_layers_coexist(self, db_path, sample_candidate_entry):
         upsert_candidates([sample_candidate_entry], db_path=db_path)
@@ -146,7 +226,17 @@ class TestAllTablesShareOneFile:
             [ParameterizabilityResult(ligand_id="GLC", passed=True, reasons=[])],
             db_path=db_path,
         )
+        upsert_oligomeric_state(
+            [AssemblyInfo(pdb_id="4HHB", oligomeric_details="tetrameric", oligomeric_count=4)],
+            db_path=db_path,
+        )
+        upsert_entity_composition(
+            [EntityCompositionInfo(pdb_id="4HHB", entity_id="1", nstd_monomer=False)],
+            db_path=db_path,
+        )
 
         assert set(load_candidates(db_path=db_path)) == {"4HHB"}
         assert set(load_simulability(db_path=db_path)) == {"4HHB"}
         assert set(load_parameterizability(db_path=db_path)) == {"GLC"}
+        assert set(load_oligomeric_state(db_path=db_path)) == {"4HHB"}
+        assert set(load_entity_composition(db_path=db_path)) == {"4HHB"}
