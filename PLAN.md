@@ -164,12 +164,21 @@ For each shortlist protein, run the **real exercise pipelines** the students wil
 the **same Colab-equivalent environment**, and record what happens. This is the empirical
 core. Each exercise gets a validator that returns `{status, effort, failure_mode, notes}`.
 
-**ex02 / AlphaFold validator** (Block B)
-- Run the prediction (or pull the AlphaFold DB entry). Record pLDDT distribution and
-  inter-domain PAE.
-- Failure/difficulty modes: large low-pLDDT stretches (floppy → hard to reason about),
-  high inter-domain PAE (ill-defined domain), no DB entry + slow to fold.
-- Easy-signal: crisp single domain, high pLDDT, low PAE → good intro example.
+**ex02 / modeling validator** (Block B, lives in `modeling/`)
+- **Scope is deliberately narrow: fetch-only, never fold.** Pull the AlphaFold DB entry
+  for the candidate if one exists; record its pLDDT distribution and inter-domain PAE.
+  Do **not** run a new AlphaFold prediction — that's expensive, and this validator's job
+  is just "is there already a well-known, trusted structure for this protein," not
+  structure prediction itself.
+- Failure/difficulty modes: no AlphaFold DB entry at all, large low-pLDDT stretches
+  (floppy → hard to reason about), high inter-domain PAE (ill-defined domain).
+- Easy-signal: DB entry exists, crisp single domain, high pLDDT, low PAE → good intro
+  example.
+- **Mutation-focused work is explicitly out of scope here** and belongs in a separate,
+  future `protein_design/` domain (RFdiffusion/ProteinMPNN-adjacent — matches the parent
+  course repo's lecture 12 territory). Don't fold mutation logic into `modeling/`; the two
+  are different pedagogical purposes (extracting a known structure vs. designing/mutating
+  one) and should stay in separate folders even though both touch "AlphaFold."
 
 **ex03 / MD validator** (Block C)
 - Run the real prep (PDBFixer: caps, missing atoms/loops) then a **short test MD** in
@@ -178,6 +187,11 @@ core. Each exercise gets a validator that returns `{status, effort, failure_mode
   field rejects, box/atom count blows the Colab wall-clock, instability/blow-up at
   minimization, requires a ligand that must be parameterized first.
 - Easy-signal: clean fixup, small box, stable short run.
+- **The apo-protein-only version is done; the actual pedagogical goal is a protein +
+  relevant-ligand complex simulation**, which needs the ligand parameterized for the MD
+  force field first (OpenFF, not Meeko/PDBQT — that's the docking toolchain, a different
+  concern). See the reordered step list in §10: OpenFF parameterization is now sequenced
+  *before* the ex04 docking validator for this reason.
 
 **ex04 / docking validator** (Block D)
 - Parameterize the ligand (Meeko/OpenFF), detect the pocket (fpocket), run a **real
@@ -430,12 +444,16 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      guessed in one shot). `rdkit`'s `AllChem.EmbedMolecule` needed the same
      `# ty: ignore[unresolved-attribute]` stub-gap treatment as
      `RDLogger.DisableLog`.
-   - [ ] **Parameterizability OpenFF parameterization (MD side)** — not started. `openmm`
+   - [ ] **Parameterizability OpenFF parameterization (MD side)** — not started, **but now
+     sequenced ahead of the ex04 docking validator below** (see step 4). `openmm`
      (real PyPI package, verified — `openmm==8.5.2` installs cleanly) is now
      in the `validate` extra for this, but no wrapper code has been written;
      `openff-toolkit` itself remains excluded from pip deps entirely (its
      only PyPI release is yanked — conda-forge-first, see pyproject.toml
-     note) and would need a conda-side install when this work starts.
+     note) and would need a conda-side install when this work starts. Lives in
+     `molecular_dynamics/`, next to `md_validation.py`, not in `docking/` — it preps a
+     ligand for the *OpenMM* force field for a protein+ligand MD run, a different
+     toolchain from Meeko/PDBQT (which is Vina/docking-specific).
    - [x] **Parameterizability fpocket pocket detection** — `pocket.py`: `run_fpocket`/
      `check_pocket_detected`, plus a standalone `parse_fpocket_info` (pure
      text parsing, no subprocess, tested directly against the verbatim
@@ -478,18 +496,43 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      Real per-ns wall-clock, measured live: ~2370s/ns for a 1231-atom apo protein in
      vacuum on CPU (no GPU in this sandbox) — a real protein-ligand complex in
      explicit water will be substantially slower; budget accordingly for "a couple ns."
-   - [ ] **ex04 docking validator** — not started (fpocket + Meeko already built in the
-     parameterizability stage;
-     the remaining piece is a real Vina test-dock + PLIP interaction analysis).
-   - [ ] **ex02 AlphaFold validator** — not started.
+   - [x] **OpenFF parameterization (MD side, `molecular_dynamics/openff_parameterization.py`)**
+     — implemented: `check_ligand_openff_parameterizable`/`filter_openff_parameterizable`,
+     mirroring `docking/meeko_parameterization.py`'s shape (SMILES → `Molecule.from_smiles`
+     → conformer → SMIRNOFF `ForceField.create_openmm_system`). Persisted via the new
+     `molecular_dynamics/store.py` (`openff_parameterization` table, keyed by `ligand_id`,
+     separate from `parameterizability`/`meeko_parameterization` since it's a different
+     toolchain — a ligand can pass one and fail the other). `openff.toolkit` is lazily
+     imported inside the check function, same pattern as `md_validation.py`'s
+     `pdbfixer`/`openmm` imports, so `store.py` stays importable without the conda env.
+     **Not yet cross-checked against a real OpenFF install** (this sandbox has no conda by
+     default, same caveat as `docking/pocket.py`'s fpocket wrapper) — built from the
+     documented `openff.toolkit`/SMIRNOFF API, not guessed; run it for real before trusting
+     it on actual candidates, same discipline as the other conda-only checks in this repo.
+   - [ ] **ex04 docking validator** (`docking/`) — not started (fpocket + Meeko already
+     built in the parameterizability stage; the remaining piece is a real Vina test-dock +
+     PLIP interaction analysis).
+   - [ ] **ex02 modeling validator** (`modeling/`, new domain folder) — not started.
+     Fetch-only: pull an existing AlphaFold DB entry for the candidate if one exists,
+     record pLDDT/PAE. Deliberately does **not** run a new AlphaFold prediction.
    Record `{status, effort, failure_mode}` per exercise; cache per PDB.
 5. [ ] **Per-exercise difficulty score** (predicted + measured, §5); emit the §8 table
    with `suitable_for` and the predicted-vs-measured gap.
 
-**v0 slicing:** you can ship after step 4 with only the ex04 validator wired — that alone
-catches the most common "breaks in class" case. Add ex03 then ex02 validators next.
-Sourcing dynamics from ATLAS/mdCATH is a *supplement* for discussion material, **not** a
-substitute for validation — the instructor still needs to know the exercise itself runs.
+**Deferred, not part of v0:** `protein_design/` (new domain folder, future) — mutation-
+focused work (RFdiffusion/ProteinMPNN-adjacent). Explicitly out of scope until the v0
+validation harness above ships; don't fold mutation logic into `modeling/`'s AlphaFold-DB
+fetch, the two are different pedagogical purposes.
+
+**v0 slicing:** the priority order above (OpenFF → ex04 docking → ex02 modeling) reflects
+the actual end goal — a protein+ligand MD simulation — over shipping the narrowest
+"catches the most common breaks-in-class case" slice first. If time is tight, OpenFF +
+ex04 docking together still catch the two most common "breaks in class" cases (ligand
+won't parameterize for either force field; no dockable pocket); ex02 modeling can trail
+since it's the cheapest of the three (a DB fetch, not a real validation run) and least
+likely to be the blocker. Sourcing dynamics from ATLAS/mdCATH is a *supplement* for
+discussion material, **not** a substitute for validation — the instructor still needs to
+know the exercise itself runs.
 
 ---
 

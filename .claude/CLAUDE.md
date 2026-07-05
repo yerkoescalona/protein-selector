@@ -100,14 +100,30 @@ src/protein_selector/
   docking/                       parameterizability.py + meeko_parameterization.py +
                                  ligands.py + pocket.py (parameterizability ligand chemistry, nearly
                                  complete — needs the `validate` extra), store.py.
-                                 **Deferred decision:** if/when MD-side OpenFF
-                                 parameterization is written (not started), decide then
-                                 whether it reuses parameterizability.py's RDKit-sanitize
-                                 check or gets its own module — don't move anything here
-                                 preemptively; today every consumer of these four files is
-                                 docking-only (verified via the import graph 2026-07-05).
+                                 **Resolved (2026-07-05):** MD-side OpenFF parameterization
+                                 got its own module in `molecular_dynamics/`, not this
+                                 folder — see below. Every consumer of these four files
+                                 remains docking-only (Vina/Meeko/PDBQT toolchain).
   molecular_dynamics/            md_validation.py (ex03 MD validator, needs
-                                 `environment-validation.yml`, NOT the `validate` extra)
+                                 `environment-validation.yml`, NOT the `validate` extra) +
+                                 openff_parameterization.py (OpenFF ligand parameterization
+                                 for the *OpenMM* force field, so ex03 can eventually
+                                 validate a protein+ligand complex, not just the apo
+                                 protein — a different toolchain from `docking/`'s
+                                 Meeko/PDBQT; a ligand can pass one and fail the other) +
+                                 store.py (persists `openff_parameterization`, keyed by
+                                 `ligand_id`).
+  modeling/                      **Planned, not yet created.** ex02 validator: fetch-only
+                                 — pull an existing AlphaFold DB entry for a candidate if
+                                 one exists, record pLDDT/PAE. Deliberately never runs a
+                                 new AlphaFold prediction.
+  protein_design/                **Planned, not yet created, deferred past v0.**
+                                 Mutation-focused work (RFdiffusion/ProteinMPNN-adjacent —
+                                 matches the parent course repo's lecture 12 territory).
+                                 Kept separate from `modeling/` even though both touch
+                                 AlphaFold: extracting a known structure vs.
+                                 designing/mutating one are different pedagogical
+                                 purposes.
   legacy/                        find_small_proteins_with_ligands.py (v0 seed, superseded)
 scripts/                       benchmark_pipeline.py — manual live-API diagnostic, not a
                                 pytest test (see its docstring)
@@ -297,9 +313,19 @@ re-verify live against a real PDB ID before trusting the change.
   the exact commands) — do the same before trusting this module runs, don't assume.
   Runs in vacuum (`NoCutoff`), not explicit solvent — see `md_validation.py`'s
   docstring for the real measured wall-clock tradeoff this was chosen on (~2370s/ns for
-  a 1231-atom apo protein on CPU). **ex02 (AlphaFold) and ex04 (docking/Vina+PLIP)
-  validators are not started** (they will live in a future `structure_prediction/` and in
-  `docking/`, respectively).
+  a 1231-atom apo protein on CPU). **OpenFF ligand parameterization (MD side) is now
+  implemented** — `molecular_dynamics/openff_parameterization.py`:
+  `check_ligand_openff_parameterizable`/`filter_openff_parameterizable` (SMILES →
+  `Molecule.from_smiles` → conformer → SMIRNOFF `ForceField.create_openmm_system`),
+  persisted via the new `molecular_dynamics/store.py`'s `openff_parameterization` table
+  (keyed by `ligand_id`, separate from `parameterizability`/`meeko_parameterization` — a
+  different toolchain, a ligand can pass one and fail the other). `openff.toolkit` is
+  lazily imported, same pattern as `md_validation.py`. **Not yet cross-checked against a
+  real OpenFF install** (no conda in this sandbox) — built from the documented API, not
+  guessed; run it for real before trusting it. **ex04 (docking/Vina+PLIP) and ex02
+  (modeling) are not started.** Priority order per PLAN.md §10: ex04 docking validator
+  (`docking/`) next, then ex02 modeling validator (`modeling/`, fetch-only AlphaFold DB
+  lookup). `protein_design/` (mutation-focused) is deferred past v0 entirely.
 - **Difficulty scoring, output table:** not started. `legacy/find_small_proteins_with_ligands.py`
   (the original v0 seed) still exists unchanged and is superseded by
   `structural_biology/candidates.py`; it can be removed once `candidates.py`'s UniProt

@@ -80,6 +80,20 @@ CREATE TABLE IF NOT EXISTS meeko_parameterization (
 )
 """
 
+# Keyed by ligand_id, same rationale as parameterizability above -- a
+# ligand's OpenFF-parameterizability doesn't depend on which entry it
+# appears in. Separate table from meeko_parameterization/parameterizability:
+# a different toolchain (OpenFF/OpenMM, not Meeko/Vina), so a ligand can
+# pass one and fail the other (see
+# molecular_dynamics.openff_parameterization's module docstring).
+_OPENFF_PARAMETERIZATION_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS openff_parameterization (
+    ligand_id TEXT PRIMARY KEY,
+    passed INTEGER NOT NULL,
+    reasons TEXT NOT NULL DEFAULT '[]'
+)
+"""
+
 # Keyed by (pdb_id, exercise) -- one ValidationResult per exercise's
 # validator (PLAN.md §4a: "ex02"/"ex03"/"ex04", etc.), since the same entry
 # can be validated against multiple exercises independently. Shared table
@@ -165,6 +179,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_LITERATURE_TABLE_SCHEMA)
     conn.execute(_POCKET_TABLE_SCHEMA)
     conn.execute(_MEEKO_TABLE_SCHEMA)
+    conn.execute(_OPENFF_PARAMETERIZATION_TABLE_SCHEMA)
     conn.execute(_VALIDATION_TABLE_SCHEMA)
     try:
         yield conn
