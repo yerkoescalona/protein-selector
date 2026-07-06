@@ -41,6 +41,12 @@ dev = [
     "ruff>=0.6",
     "ty>=0.0.1a1",
 ]
+# Not installed by a plain `uv sync` -- only needed to open notebooks/db_explorer.ipynb.
+# Install with `uv sync --group notebook`.
+notebook = [
+    "jupyter>=1.0",
+    "ipykernel>=6.29",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -60,6 +66,8 @@ exclude = [
     "dist",
     ".pytest_cache",
     ".ruff_cache",
+    "notebooks",  # example/exploratory cells (e.g. commented-out alternative calls,
+    # display() with no import) follow different conventions than source -- not linted.
 ]
 
 [tool.ruff.lint]
@@ -84,6 +92,11 @@ convention = "google"
 
 [tool.ty.environment]
 root = ["src", "tests"]
+
+[tool.ty.src]
+# `display()` is an IPython/Jupyter builtin auto-imported at kernel startup,
+# not resolvable statically -- same reason notebooks/ is excluded from ruff.
+exclude = ["notebooks"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

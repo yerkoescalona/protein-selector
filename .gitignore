@@ -5,6 +5,7 @@ venv/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.ipynb_checkpoints/
 
 # generated candidate/validation output (per-run artifacts, not source)
 *.csv

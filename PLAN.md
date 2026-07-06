@@ -287,9 +287,15 @@ open the source** (anti-hallucination — see §11):
   specifically at the validation stage.
   **Nextflow is overkill** unless HPC/cloud or nf-core conventions become goals.
 
-- [ ] **Decision:** script-first for hard filters through parameterizability; introduce
-      Snakemake when validation lands, so each
-      protein×exercise validation is a cached DAG node.
+- [x] **Decision implemented (2026-07-06):** `pipeline.py`'s `run_pipeline()` is the
+      script-first orchestrator this decision calls for — wires hard filters through
+      literature/ex02 always-on, `run_ex03`/`run_pocket_detection` as optional off-by
+      -default flags. **Still not Snakemake** — validation landing (ex02/ex03/ex04 all
+      exist now) hasn't yet made per-protein caching/resume a real pain point in
+      practice, since every stage's SQLite upsert already gives most of that benefit for
+      free (re-running the pipeline just refreshes rows, doesn't duplicate work).
+      Revisit this decision if/when a real multi-year, many-candidate run makes the lack
+      of a cached DAG actually hurt — not preemptively.
 
 ---
 

@@ -142,8 +142,37 @@ src/protein_selector/
                                  designing/mutating one are different pedagogical
                                  purposes.
   legacy/                        find_small_proteins_with_ligands.py (v0 seed, superseded)
+  pipeline.py                    run_pipeline() -- end-to-end orchestration (PLAN.md §7/§10),
+                                 wiring every stage above into one call, script-first per
+                                 PLAN.md §7's decision (not Snakemake). See its own module
+                                 docstring for exactly which stages are always-on vs.
+                                 optional (ex03/pocket detection) vs. deliberately not
+                                 auto-wired yet (ex04 docking).
 scripts/                       benchmark_pipeline.py — manual live-API diagnostic, not a
                                 pytest test (see its docstring)
+notebooks/                     db_explorer.ipynb — a static (not a live dashboard) notebook
+                                for browsing cache/protein_selector.db: raw tables via plain
+                                pandas.read_sql_query, plus the joined report
+                                (core.report.build_report_table). build_demo_db.ipynb seeds a
+                                small, clearly-labeled illustrative db (3 real PDB IDs,
+                                hand-authored field values, not live-fetched) via the same
+                                upsert_* functions the real pipeline uses, purely so
+                                db_explorer.ipynb has something to show without running the
+                                real pipeline or any conda-only validator first. Both notebooks
+                                resolve DEFAULT_DB_PATH relative to the kernel's cwd (usually
+                                the notebook's own directory) — as long as both are opened in
+                                the same Jupyter session they naturally agree on one file; see
+                                db_explorer.ipynb's first cell for the repo-root-vs-notebooks/
+                                fallback if launching some other way. All real logic lives in
+                                the package, not the notebooks, so nothing here has its own
+                                tests — both were instead live-executed end-to-end via
+                                `jupyter nbconvert --execute` to confirm every cell actually
+                                runs. Needs the `notebook` dependency group
+                                (`uv sync --group notebook`), not installed by a plain
+                                `uv sync`. Excluded from ruff/ty (see pyproject.toml) --
+                                notebook cells use `display()` (an IPython builtin, not
+                                statically resolvable) and follow different conventions
+                                than source.
 tests/protein_selector/        Tests, mirroring src/protein_selector/'s structure 1:1 —
                                 see "Testing" below. test_md_validation.py needs
                                 environment-validation.yml and is skipped (not failed) otherwise.
@@ -422,11 +451,31 @@ a real docked complex before trusting the change.
   `alphafold_entries` table, keyed by `uniprot_accession` (a property of the sequence, not
   any one PDB entry). `protein_design/` (mutation-focused) remains deferred past v0
   entirely — not the same domain as this fetch-only lookup.
-- **Difficulty scoring, output table:** not started. `legacy/find_small_proteins_with_ligands.py`
-  (the original v0 seed) still exists unchanged and is superseded by
-  `structural_biology/candidates.py`; it can be removed once `candidates.py`'s UniProt
-  cofactor-lookup path is confirmed no longer wanted (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10
+- **Difficulty scoring, output table: implemented (2026-07-06), see "Report" above.**
+  `legacy/find_small_proteins_with_ligands.py` (the original v0 seed) still exists
+  unchanged and is superseded by `structural_biology/candidates.py`; it can be removed
+  once `candidates.py`'s UniProt cofactor-lookup path is confirmed no longer wanted
+  (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10
   step 1.
+- **Pipeline orchestration (`pipeline.py`): implemented.** `run_pipeline()` wires hard
+  filters → simulability → ligand CCD/SMILES → RDKit parameterizability (+ best-effort
+  Meeko) → literature → ex02 modeling → the joined report/CSV, script-first per PLAN.md
+  §7's decision (not Snakemake). `run_ex03`/`run_pocket_detection` are optional,
+  off-by-default flags (need the conda env / a local `fpocket` binary respectively;
+  missing either is caught and logged, not fatal). **ex04 docking is deliberately NOT
+  auto-wired** — no receptor-PDBQT-prep wrapper or pocket-center-extraction exists yet;
+  call `docking_validation.run_docking_validation` directly with prepared inputs. See the
+  module's own docstring for the full stage-by-stage breakdown.
+- **DB exploration (`notebooks/db_explorer.ipynb` + `notebooks/build_demo_db.ipynb`):
+  implemented.** A static notebook (not a live dashboard) for browsing
+  `cache/protein_selector.db` — any raw table via plain `pandas.read_sql_query`, plus the
+  same joined report `write_report_csv` produces. `build_demo_db.ipynb` seeds a small,
+  clearly-labeled illustrative db (3 real PDB IDs, hand-authored not live-fetched values)
+  via the real `upsert_*` functions, so there's something to browse without running the
+  real pipeline first. Needs the `notebook` dependency group (`uv sync --group notebook`),
+  not installed by a plain `uv sync`. Both live-executed end-to-end via
+  `jupyter nbconvert --execute` (build the demo db, then browse it) to confirm every cell
+  actually runs — not just written and assumed correct.
 
 ## Anti-hallucination rules
 
