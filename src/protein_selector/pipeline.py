@@ -42,18 +42,41 @@ existed.
 
 Returns the final joined report rows (`core.report.CandidateReportRow`);
 optionally writes them to CSV.
+
+**Real gap, found and fixed (2026-07-06): incremental skip-if-already-persisted.**
+Earlier revisions of this function always recomputed every stage for every
+candidate the hard-filters search returned, on every call -- upserts made
+that safe (no duplicate rows), but not *efficient*: re-running against an
+unchanged candidate set repeated real RCSB/Europe PMC/AlphaFold network
+calls and real RDKit/Meeko checks for no reason, which matters a lot for
+Meeko in particular (real, sometimes tens-of-seconds-per-ligand work, see
+``meeko_parameterization.py``). Every per-ligand/per-candidate stage below
+now checks what's already in ``db_path`` first and skips only the
+already-covered subset, controlled by ``force_refresh`` (default ``False``):
+set it ``True`` to force a full recompute regardless of what's persisted
+(e.g. after changing a check's logic/thresholds and wanting fresh numbers).
+Hard filters' own metadata fetch is deliberately NOT skipped even when
+``force_refresh=False`` -- it's one cheap batched call regardless of
+candidate count, and every later stage depends on having a fresh
+``CandidateEntry`` list to iterate, so skipping it would save nothing while
+adding real complexity (partial entry lists to reconcile).
 """
 
 from __future__ import annotations
 
 import logging
+import random
 import tempfile
 from pathlib import Path
 
 import requests
+from tqdm.auto import tqdm
 
 from protein_selector.bioinformatics.literature import fetch_literature_counts
-from protein_selector.bioinformatics.store import upsert_literature_counts
+from protein_selector.bioinformatics.store import (
+    load_literature_counts,
+    upsert_literature_counts,
+)
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.core.difficulty import ScoringWeights
 from protein_selector.core.report import (
@@ -62,7 +85,10 @@ from protein_selector.core.report import (
     write_report_csv,
 )
 from protein_selector.core.validation_result import ValidationResult
-from protein_selector.core.validation_store import upsert_validation_results
+from protein_selector.core.validation_store import (
+    load_validation_results,
+    upsert_validation_results,
+)
 from protein_selector.docking.ligands import (
     fetch_ligand_ccd_codes,
     fetch_smiles_for_ccd_codes,
@@ -70,6 +96,8 @@ from protein_selector.docking.ligands import (
 from protein_selector.docking.parameterizability import filter_parameterizable
 from protein_selector.docking.pocket import check_pocket_detected
 from protein_selector.docking.store import (
+    load_parameterizability,
+    load_pocket_detection,
     upsert_ligand_ccd_codes,
     upsert_parameterizability,
     upsert_pocket_detection,
@@ -137,17 +165,46 @@ def run_pipeline(
     ex03_n_steps: int | None = None,
     report_csv_path: Path | None = None,
     weights: ScoringWeights | None = None,
+    force_refresh: bool = False,
+    sample_pool_size: int | None = None,
+    random_seed: int | None = None,
 ) -> list[CandidateReportRow]:
     """Run every wired stage over one hard-filters search, persisting as it goes.
 
+    Incremental by default (``force_refresh=False``): each per-ligand/
+    per-candidate stage below first checks what's already persisted in
+    ``db_path`` and only does real work (network calls, RDKit/Meeko checks)
+    for what's missing -- see this module's docstring for why this matters
+    (Meeko in particular). Set ``force_refresh=True`` to recompute
+    everything regardless of what's already there (e.g. after changing a
+    check's logic/thresholds).
+
+    **Candidate selection is randomly sampled, not just "the first
+    ``max_candidates`` RCSB returns."** RCSB's Search API has no random-sort
+    option (only ``"score"`` or a named attribute, confirmed via
+    ``rcsbapi.search.Sort``'s own docstring) -- with no ``sort`` specified
+    (this repo's hard-filters query doesn't set one), the API falls back to
+    a stable deterministic order (empirically: ascending PDB ID), so calling
+    this with the same ``max_candidates`` repeatedly always processed the
+    exact same entries. Fixed by fetching a larger pool
+    (``sample_pool_size``, default ``max(max_candidates * 20, 200)``) and
+    randomly sampling ``max_candidates`` IDs from it in Python. Pass
+    ``random_seed`` for a reproducible sample (e.g. in tests); leave it
+    ``None`` for a genuinely different sample each call.
+
     Returns the final joined report (also written to ``report_csv_path`` if
-    given). Safe to call repeatedly -- every persisted table is upsert-based
-    (see each domain's ``store.py``), so re-running just refreshes rows
-    rather than duplicating them.
+    given).
     """
-    pdb_ids = search_candidate_ids(
+    pool_size = sample_pool_size if sample_pool_size is not None else max(max_candidates * 20, 200)
+    candidate_pool = search_candidate_ids(
         max_atoms=max_atoms, max_resolution=hard_filter_max_resolution, method=method,
-        rows=max_candidates,
+        rows=pool_size,
+    )
+    pdb_ids = random.Random(random_seed).sample(
+        candidate_pool, k=min(max_candidates, len(candidate_pool))
+    )
+    logger.info(
+        "hard filters: sampled %d of %d matching candidates", len(pdb_ids), len(candidate_pool)
     )
     entries = fetch_entry_metadata(pdb_ids)
     upsert_candidates(entries, db_path=db_path)
@@ -180,33 +237,83 @@ def run_pipeline(
     ligand_ccd_by_pdb_id = fetch_ligand_ccd_codes(entries)
     upsert_ligand_ccd_codes(ligand_ccd_by_pdb_id, db_path=db_path)
     all_ccd_codes = sorted({code for codes in ligand_ccd_by_pdb_id.values() for code in codes})
-    smiles_by_ccd_code = fetch_smiles_for_ccd_codes(all_ccd_codes)
-    _, parameterizability_results = filter_parameterizable(smiles_by_ccd_code)
-    upsert_parameterizability(parameterizability_results, db_path=db_path)
-    logger.info("parameterizability: %d ligands checked", len(parameterizability_results))
+
+    # Ligand parameterizability is keyed by ligand_id (CCD code), not
+    # pdb_id -- a code already checked (e.g. HEM, recurring across many
+    # entries) never needs rechecking. Only fetch SMILES for, and run
+    # RDKit/Meeko on, codes actually missing.
+    already_parameterizability_checked = (
+        set() if force_refresh else set(load_parameterizability(db_path).keys())
+    )
+    new_ccd_codes = [c for c in all_ccd_codes if c not in already_parameterizability_checked]
+    logger.info(
+        "parameterizability: %d/%d ligands already checked, %d new",
+        len(all_ccd_codes) - len(new_ccd_codes), len(all_ccd_codes), len(new_ccd_codes),
+    )
+    smiles_by_ccd_code = fetch_smiles_for_ccd_codes(new_ccd_codes)
+    if smiles_by_ccd_code:
+        _, parameterizability_results = filter_parameterizable(smiles_by_ccd_code)
+        upsert_parameterizability(parameterizability_results, db_path=db_path)
 
     try:
         from protein_selector.docking.meeko_parameterization import (
             filter_meeko_parameterizable,
         )
-        from protein_selector.docking.store import upsert_meeko_parameterization
+        from protein_selector.docking.store import (
+            load_meeko_parameterization,
+            upsert_meeko_parameterization,
+        )
     except ImportError:
         logger.info("meeko parameterization skipped: `validate` extra not installed")
     else:
-        _, meeko_results = filter_meeko_parameterizable(smiles_by_ccd_code)
-        upsert_meeko_parameterization(meeko_results, db_path=db_path)
-        logger.info("meeko parameterization: %d ligands checked", len(meeko_results))
+        already_meeko_checked = (
+            set() if force_refresh else set(load_meeko_parameterization(db_path).keys())
+        )
+        new_meeko_codes = [c for c in all_ccd_codes if c not in already_meeko_checked]
+        logger.info(
+            "meeko: %d/%d ligands already checked, %d new",
+            len(all_ccd_codes) - len(new_meeko_codes), len(all_ccd_codes), len(new_meeko_codes),
+        )
+        if new_meeko_codes:
+            # SMILES for codes already covered by RDKit but not yet by Meeko
+            # (e.g. a first run without the `validate` extra, followed by
+            # one with it) aren't in smiles_by_ccd_code above -- fetch
+            # whatever's still missing.
+            still_needed = [c for c in new_meeko_codes if c not in smiles_by_ccd_code]
+            if still_needed:
+                smiles_by_ccd_code.update(fetch_smiles_for_ccd_codes(still_needed))
+            _, meeko_results = filter_meeko_parameterizable(
+                {c: smiles_by_ccd_code.get(c) for c in new_meeko_codes}
+            )
+            upsert_meeko_parameterization(meeko_results, db_path=db_path)
 
-    literature_counts = fetch_literature_counts(pdb_ids)
-    upsert_literature_counts(literature_counts, db_path=db_path)
-    logger.info("literature: %d counts fetched", len(literature_counts))
+    already_literature_fetched = (
+        set() if force_refresh else set(load_literature_counts(db_path).keys())
+    )
+    new_literature_pdb_ids = [p for p in pdb_ids if p not in already_literature_fetched]
+    logger.info(
+        "literature: %d/%d already fetched, %d new",
+        len(pdb_ids) - len(new_literature_pdb_ids), len(pdb_ids), len(new_literature_pdb_ids),
+    )
+    if new_literature_pdb_ids:
+        upsert_literature_counts(
+            fetch_literature_counts(new_literature_pdb_ids), db_path=db_path
+        )
 
     if run_ex02:
+        already_ex02_validated = (
+            set() if force_refresh else set(load_validation_results(EX02_EXERCISE, db_path).keys())
+        )
         ex02_results: list[ValidationResult] = []
-        for entry in entries:
+        for entry in tqdm(entries, desc="ex02 modeling", unit="candidate"):
+            if entry.pdb_id in already_ex02_validated:
+                logger.debug("ex02 %s: already validated, skipping", entry.pdb_id)
+                continue
             uniprot_accession = entry.uniprot_ids[0] if entry.uniprot_ids else None
             if uniprot_accession is None:
+                logger.debug("ex02 %s: no UniProt accession, skipping", entry.pdb_id)
                 continue
+            logger.debug("ex02 %s: fetching AlphaFold DB entry for %s", entry.pdb_id, uniprot_accession)
             try:
                 alphafold_entry = fetch_alphafold_entry(uniprot_accession)
             except ValueError as exc:
@@ -214,37 +321,70 @@ def run_pipeline(
                 continue
             if alphafold_entry is not None:
                 upsert_alphafold_entry(alphafold_entry, db_path=db_path)
-            ex02_results.append(run_modeling_validation(entry.pdb_id, uniprot_accession))
-        upsert_validation_results(EX02_EXERCISE, ex02_results, db_path=db_path)
-        logger.info("ex02 modeling: %d candidates validated", len(ex02_results))
+            result = run_modeling_validation(entry.pdb_id, uniprot_accession)
+            logger.debug("ex02 %s: %s", entry.pdb_id, result.status.value)
+            ex02_results.append(result)
+        if ex02_results:
+            upsert_validation_results(EX02_EXERCISE, ex02_results, db_path=db_path)
+        already_ex02_in_batch = sum(1 for e in entries if e.pdb_id in already_ex02_validated)
+        logger.info(
+            "ex02 modeling: %d/%d already validated, %d newly validated",
+            already_ex02_in_batch, len(entries), len(ex02_results),
+        )
 
     if run_ex03:
         from protein_selector.molecular_dynamics.md_validation import run_test_md
 
+        already_ex03_validated = (
+            set() if force_refresh else set(load_validation_results(EX03_EXERCISE, db_path).keys())
+        )
         ex03_results: list[ValidationResult] = []
-        for entry in entries:
+        for entry in tqdm(entries, desc="ex03 MD", unit="candidate"):
+            if entry.pdb_id in already_ex03_validated:
+                logger.debug("ex03 %s: already validated, skipping", entry.pdb_id)
+                continue
+            logger.info("ex03 %s: starting PDBFixer repair + short test MD", entry.pdb_id)
             try:
                 if ex03_n_steps is None:
-                    ex03_results.append(run_test_md(entry.pdb_id))
+                    result = run_test_md(entry.pdb_id)
                 else:
-                    ex03_results.append(run_test_md(entry.pdb_id, n_steps=ex03_n_steps))
+                    result = run_test_md(entry.pdb_id, n_steps=ex03_n_steps)
             except ImportError:
                 logger.warning(
                     "ex03 MD validation stopped: validation conda env not installed "
                     "(see environment-validation.yml)"
                 )
                 break
+            logger.debug(
+                "ex03 %s: %s (%.1fs)", entry.pdb_id, result.status.value, result.effort_seconds or 0.0
+            )
+            ex03_results.append(result)
         if ex03_results:
             upsert_validation_results(EX03_EXERCISE, ex03_results, db_path=db_path)
-            logger.info("ex03 MD: %d candidates validated", len(ex03_results))
+        already_ex03_in_batch = sum(1 for e in entries if e.pdb_id in already_ex03_validated)
+        logger.info(
+            "ex03 MD: %d/%d already validated, %d newly validated",
+            already_ex03_in_batch, len(entries), len(ex03_results),
+        )
 
     if run_pocket_detection:
+        already_pocket_checked = (
+            set() if force_refresh else set(load_pocket_detection(db_path).keys())
+        )
         pocket_results = []
         with tempfile.TemporaryDirectory() as tmp_dir:
-            for entry in entries:
+            for entry in tqdm(entries, desc="pocket detection", unit="candidate"):
+                if entry.pdb_id in already_pocket_checked:
+                    logger.debug("pocket detection %s: already checked, skipping", entry.pdb_id)
+                    continue
                 try:
                     pdb_path = _download_pdb_file(entry.pdb_id, Path(tmp_dir))
-                    pocket_results.append(check_pocket_detected(entry.pdb_id, pdb_path))
+                    result = check_pocket_detected(entry.pdb_id, pdb_path)
+                    logger.debug(
+                        "pocket detection %s: passed=%s, %d pocket(s)",
+                        entry.pdb_id, result.passed, len(result.pockets),
+                    )
+                    pocket_results.append(result)
                 except FileNotFoundError as exc:
                     logger.warning("pocket detection stopped: %s", exc)
                     break
@@ -252,7 +392,11 @@ def run_pipeline(
                     logger.warning("pocket detection skipped for %s: %s", entry.pdb_id, exc)
         if pocket_results:
             upsert_pocket_detection(pocket_results, db_path=db_path)
-            logger.info("pocket detection: %d candidates checked", len(pocket_results))
+        already_pocket_in_batch = sum(1 for e in entries if e.pdb_id in already_pocket_checked)
+        logger.info(
+            "pocket detection: %d/%d already checked, %d newly checked",
+            already_pocket_in_batch, len(entries), len(pocket_results),
+        )
 
     rows = build_report_table(db_path=db_path, weights=weights)
     if report_csv_path is not None:

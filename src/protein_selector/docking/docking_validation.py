@@ -42,6 +42,7 @@ real external packages.
 
 from __future__ import annotations
 
+import logging
 import tempfile
 import time
 from contextlib import contextmanager
@@ -62,6 +63,8 @@ from protein_selector.docking.vina_docking import (
     _rmsd,
     dock_top_pose,
 )
+
+logger = logging.getLogger(__name__)
 
 EXERCISE_NAME = "ex04"
 
@@ -156,6 +159,7 @@ def run_docking_validation(
     - PLIP finds no interpretable interactions for an otherwise-good pose
       (``FailureMode.DOCKING_QUALITY``).
     """
+    logger.info("%s: ex04 docking validation starting", pdb_id)
     start = time.monotonic()
     try:
         pose_text = dock_top_pose(
@@ -167,6 +171,7 @@ def run_docking_validation(
             n_poses=n_poses,
         )
     except RuntimeError as exc:
+        logger.warning("%s: docking failed: %s", pdb_id, exc)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -202,6 +207,7 @@ def run_docking_validation(
             ],
         )
 
+    logger.info("%s: self-dock RMSD %.2f Å, running PLIP analysis", pdb_id, rmsd)
     complex_pdb_text = _assemble_complex_pdb(receptor_pdb_path.read_text(), pose_text)
 
     with _temp_complex_pdb(complex_pdb_text) as complex_path:
@@ -209,6 +215,7 @@ def run_docking_validation(
     total_elapsed = time.monotonic() - start
 
     if not plip_result.passed:
+        logger.info("%s: ex04 failed after %.1fs: %s", pdb_id, total_elapsed, plip_result.reasons)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -217,6 +224,10 @@ def run_docking_validation(
             notes=[f"self-dock RMSD {rmsd:.2f} Å", *plip_result.reasons],
         )
 
+    logger.info(
+        "%s: ex04 succeeded in %.1fs, PLIP interactions: %s",
+        pdb_id, total_elapsed, plip_result.interaction_counts,
+    )
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,

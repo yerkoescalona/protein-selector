@@ -1576,6 +1576,7 @@ dependencies = [
     { name = "pandas" },
     { name = "rcsb-api" },
     { name = "requests" },
+    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -1615,6 +1616,7 @@ requires-dist = [
     { name = "rdkit", marker = "extra == 'validate'", specifier = ">=2024.3" },
     { name = "requests", specifier = ">=2.32" },
     { name = "scipy", marker = "extra == 'validate'", specifier = ">=1.17.1" },
+    { name = "tqdm", specifier = ">=4.66" },
 ]
 provides-extras = ["validate"]
 

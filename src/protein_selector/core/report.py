@@ -16,6 +16,22 @@ nonstd_residues, litref_count`` plus the per-exercise
 ``suitable_for``/``ex0X_status``/``ex0X_difficulty``/``ex0X_failure_mode``/
 ``predicted_vs_measured_gap``/``tier_per_exercise``/``rationale_json`` block.
 
+**Real gap, found and fixed (2026-07-06):** this report originally only
+joined the cheap RDKit-sanitization result (``docking.parameterizability``)
+into ``ligand_parameterizable`` -- the heavier, docking-relevant Meeko check
+(``docking.meeko_parameterization``, the one Vina actually depends on) was
+persisted (`meeko_parameterization` table) but never read here, so a ligand
+that sanitized fine but genuinely couldn't be prepped for docking (e.g. HEM,
+which times out Meeko's real 3D embed -- see
+``meeko_parameterization.py``'s docstring) silently showed as
+"parameterizable" in the report. Added ``ligand_meeko_parameterizable`` as
+its own column (kept separate from ``ligand_parameterizable`` rather than
+overwriting it -- the two checks answer different questions, "can RDKit
+even parse this" vs. "can Meeko actually prep it for Vina", and a ligand can
+pass one and fail the other), and ``predict_ex04_difficulty`` now prefers
+the Meeko verdict over the RDKit one when both are available, since Meeko
+is the check that's actually relevant to docking difficulty.
+
 **Simplification, stated explicitly (not a silent shortcut):** a candidate
 can have multiple bound ligands; this report's flat per-row
 ``ligand_ccd``/``ligand_smiles``/``ligand_parameterizable`` columns describe
@@ -47,10 +63,12 @@ from protein_selector.core.difficulty import (
 from protein_selector.core.validation_result import ValidationResult
 from protein_selector.core.validation_store import load_validation_results
 from protein_selector.docking.docking_validation import EXERCISE_NAME as EX04_EXERCISE
+from protein_selector.docking.meeko_parameterization import MeekoParameterizationResult
 from protein_selector.docking.parameterizability import ParameterizabilityResult
 from protein_selector.docking.pocket import PocketDetectionResult
 from protein_selector.docking.store import (
     load_ligand_ccd_codes,
+    load_meeko_parameterization,
     load_parameterizability,
     load_pocket_detection,
 )
@@ -81,6 +99,7 @@ class CandidateReportRow:
     ligand_ccd: str | None
     ligand_smiles: str | None
     ligand_parameterizable: bool | None
+    ligand_meeko_parameterizable: bool | None
     pocket_found: bool | None
     pocket_score: float | None
     completeness: float | None
@@ -115,6 +134,7 @@ def build_candidate_report(
     ligand_ccd_codes: list[str] | None = None,
     ligand_smiles_by_ccd: dict[str, str | None] | None = None,
     parameterizability_by_ligand: dict[str, ParameterizabilityResult] | None = None,
+    meeko_parameterizability_by_ligand: dict[str, MeekoParameterizationResult] | None = None,
     pocket_result: PocketDetectionResult | None = None,
     literature_count: int | None = None,
     alphafold_entry: AlphaFoldEntry | None = None,
@@ -134,6 +154,7 @@ def build_candidate_report(
     ligand_ccd_codes = sorted(ligand_ccd_codes or [])
     ligand_smiles_by_ccd = ligand_smiles_by_ccd or {}
     parameterizability_by_ligand = parameterizability_by_ligand or {}
+    meeko_parameterizability_by_ligand = meeko_parameterizability_by_ligand or {}
 
     primary_ligand_ccd = ligand_ccd_codes[0] if ligand_ccd_codes else None
     primary_ligand_smiles = (
@@ -147,10 +168,26 @@ def build_candidate_report(
         if primary_ligand_parameterizability is not None
         else None
     )
+    primary_ligand_meeko_parameterizability = (
+        meeko_parameterizability_by_ligand.get(primary_ligand_ccd) if primary_ligand_ccd else None
+    )
+    ligand_meeko_parameterizable = (
+        primary_ligand_meeko_parameterizability.passed
+        if primary_ligand_meeko_parameterizability is not None
+        else None
+    )
 
     predicted_ex02 = predict_ex02_difficulty(alphafold_entry)
     predicted_ex03 = predict_ex03_difficulty(candidate, weights)
-    predicted_ex04 = predict_ex04_difficulty(pocket_result, ligand_parameterizable, weights)
+    # Prefer the Meeko verdict (the check Vina docking actually depends on)
+    # over the cheaper RDKit-sanitization one when both are available -- see
+    # this module's docstring for why the two can disagree (e.g. HEM).
+    ex04_parameterizable = (
+        ligand_meeko_parameterizable
+        if ligand_meeko_parameterizable is not None
+        else ligand_parameterizable
+    )
+    predicted_ex04 = predict_ex04_difficulty(pocket_result, ex04_parameterizable, weights)
 
     ex02 = assess_exercise(predicted_ex02, ex02_result, weights.ex02_max_effort_seconds, weights)
     ex03 = assess_exercise(predicted_ex03, ex03_result, weights.ex03_max_effort_seconds, weights)
@@ -182,6 +219,7 @@ def build_candidate_report(
         ligand_ccd=primary_ligand_ccd,
         ligand_smiles=primary_ligand_smiles,
         ligand_parameterizable=ligand_parameterizable,
+        ligand_meeko_parameterizable=ligand_meeko_parameterizable,
         pocket_found=(pocket_result.passed if pocket_result is not None else None),
         pocket_score=_best_pocket_score(pocket_result),
         completeness=_completeness_fraction(candidate),
@@ -208,6 +246,7 @@ def build_report_table(
     simulability_results = load_simulability(db_path)
     ligand_ccd_by_pdb_id = load_ligand_ccd_codes(db_path)
     parameterizability_by_ligand = load_parameterizability(db_path)
+    meeko_parameterizability_by_ligand = load_meeko_parameterization(db_path)
     pocket_results = load_pocket_detection(db_path)
     literature_counts = load_literature_counts(db_path)
     alphafold_entries = load_alphafold_entries(db_path)
@@ -224,6 +263,7 @@ def build_report_table(
                 simulability=simulability_results.get(pdb_id),
                 ligand_ccd_codes=ligand_ccd_by_pdb_id.get(pdb_id),
                 parameterizability_by_ligand=parameterizability_by_ligand,
+                meeko_parameterizability_by_ligand=meeko_parameterizability_by_ligand,
                 pocket_result=pocket_results.get(pdb_id),
                 literature_count=literature_counts.get(pdb_id),
                 alphafold_entry=(

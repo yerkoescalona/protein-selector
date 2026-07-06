@@ -183,17 +183,26 @@ uv.lock                        Committed; keep in sync via `uv sync` / `uv add`
 
 This repo is managed with `uv`. Environment: `uv sync`. Run/lint via `uv run <cmd>`.
 
-**Priority order: working code first, lint/type-check as a gate at the end.** Don't
-interrupt implementation to run `ruff`/`ty` after every small edit — write the code, get
-the logic right, *then* run both once before committing:
+**Never commit unless the user explicitly asks for it in that turn.** Implementing a
+feature, fixing a bug, or finishing a chunk of work is not by itself permission to run
+`git commit` — wait for an explicit instruction ("commit this", "commit", etc.) each
+time. Building up several uncommitted changes across a session while iterating is
+expected and fine; do not commit "to be safe" or because a natural stopping point was
+reached.
+
+**Priority order: working code first, lint/type-check as a gate at commit time, not
+continuously.** Don't interrupt implementation to run `ruff`/`ty`/`pytest` after every
+small edit while still iterating on a feature. Run the full gate exactly once, right
+before a commit the user has actually asked for:
 ```bash
 uv run ruff check .
 uv run ty check
+uv run pytest -q
 ```
-Fix real findings from both (don't just silence them) before committing. `ruff` catches
-style/modernization issues; `ty` catches real type errors — treat a `ty` finding as a bug
-report, not noise (see the `git history` for a real example: a `dict[str, Any]` mistyped
-as a narrower literal-inferred type in the RCSB query pagination logic).
+Fix real findings from all three (don't just silence them) before committing. `ruff`
+catches style/modernization issues; `ty` catches real type errors — treat a `ty` finding
+as a bug report, not noise (see the `git history` for a real example: a `dict[str, Any]`
+mistyped as a narrower literal-inferred type in the RCSB query pagination logic).
 
 If a dependency doesn't resolve (e.g. a PyPI release is yanked), don't quietly work around
 it — verify via `uv add <pkg>` and document why in `pyproject.toml` as a comment (see the

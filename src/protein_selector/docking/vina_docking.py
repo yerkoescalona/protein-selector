@@ -46,6 +46,7 @@ the Vina API and the RMSD math against a real docking run, not guessed.
 
 from __future__ import annotations
 
+import logging
 import math
 import tempfile
 from pathlib import Path
@@ -55,6 +56,8 @@ from protein_selector.core.validation_result import (
     ValidationResult,
     ValidationStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_BOX_SIZE = (20.0, 20.0, 20.0)
 _DEFAULT_EXHAUSTIVENESS = 8
@@ -111,6 +114,13 @@ def dock_top_pose(
     validation conda environment (``vina``); raises ``ImportError`` with an
     install hint if unavailable, or ``RuntimeError`` if the docking run
     itself fails.
+
+    **No tqdm progress bar here, unlike ``md_validation.run_test_md``'s
+    chunked MD loop, and that's deliberate, not an oversight:** confirmed by
+    inspecting the real ``vina.Vina`` class's public API (`dock`,
+    `compute_vina_maps`, etc.) -- there is no per-iteration callback or
+    chunking hook exposed, `v.dock(...)` is one opaque call into Vina's C++
+    core with no way to report incremental progress from the outside.
     """
     try:
         from vina import Vina  # ty: ignore[unresolved-import]
@@ -122,6 +132,10 @@ def dock_top_pose(
             "(no wheel exists for this platform and building from source needs Boost)."
         ) from exc
 
+    logger.info(
+        "docking %s + %s: exhaustiveness=%d, n_poses=%d, box_center=%s",
+        receptor_pdbqt_path.name, ligand_pdbqt_path.name, exhaustiveness, n_poses, box_center,
+    )
     try:
         v = Vina(sf_name="vina")
         v.set_receptor(str(receptor_pdbqt_path))
@@ -129,11 +143,13 @@ def dock_top_pose(
         v.compute_vina_maps(center=list(box_center), box_size=list(box_size))
         v.dock(exhaustiveness=exhaustiveness, n_poses=n_poses)
     except Exception as exc:  # vina's Python bindings don't document a narrow exception set
+        logger.warning("docking %s failed: %s", receptor_pdbqt_path.name, exc)
         raise RuntimeError(f"Vina docking run failed: {exc}") from exc
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pose_path = Path(tmp_dir) / "top_pose.pdbqt"
         v.write_poses(str(pose_path), n_poses=1, overwrite=True)
+        logger.info("docking %s: completed, top pose written", receptor_pdbqt_path.name)
         return pose_path.read_text()
 
 
@@ -193,6 +209,7 @@ def run_self_dock(
 
     rmsd = _rmsd(docked_coords, reference_coords)
     if rmsd > rmsd_threshold_angstrom:
+        logger.info("%s: self-dock RMSD %.2f Å exceeds threshold %.2f Å", pdb_id, rmsd, rmsd_threshold_angstrom)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -203,6 +220,7 @@ def run_self_dock(
             ],
         )
 
+    logger.info("%s: self-dock RMSD %.2f Å, within threshold", pdb_id, rmsd)
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,

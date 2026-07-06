@@ -46,13 +46,18 @@ an entire batch/pipeline run indefinitely.
 
 from __future__ import annotations
 
+import logging
 import multiprocessing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from tqdm.auto import tqdm
+
 # Not imported at module level -- see module docstring; keeps this module
 # importable (by store.py, transitively by everything) without the heavy
 # `validate` extra installed.
+
+logger = logging.getLogger(__name__)
 
 _EMBED_RANDOM_SEED = 42
 _DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -199,9 +204,11 @@ def filter_meeko_parameterizable(
     Returns (ligand IDs that passed, results for every ligand) -- mirrors
     ``parameterizability.filter_parameterizable``'s shape.
     """
-    results = [
-        _check_meeko_parameterizable_with_timeout(ligand_id, smiles, timeout_seconds)
-        for ligand_id, smiles in ligands.items()
-    ]
+    results = []
+    for ligand_id, smiles in tqdm(ligands.items(), desc="Meeko parameterization", unit="ligand"):
+        logger.debug("meeko %s: starting real 3D-embed + PDBQT check", ligand_id)
+        result = _check_meeko_parameterizable_with_timeout(ligand_id, smiles, timeout_seconds)
+        logger.debug("meeko %s: passed=%s", ligand_id, result.passed)
+        results.append(result)
     passed = [result.ligand_id for result in results if result.passed]
     return passed, results

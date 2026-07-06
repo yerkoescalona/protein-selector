@@ -41,10 +41,13 @@ from fpocket's own repo) before trusting this on real candidates.
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _POCKET_HEADER_RE = re.compile(r"^Pocket\s+(\d+)\s*:\s*$")
 _FIELD_RE = re.compile(r"^(.+?)\s*:\s*(\S+)\s*$")
@@ -113,6 +116,7 @@ def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
     binary isn't on PATH, and ``RuntimeError`` if fpocket exits non-zero or
     doesn't produce the expected ``_info.txt`` file.
     """
+    logger.info("running fpocket on %s", pdb_path)
     try:
         subprocess.run(
             ["fpocket", "-f", str(pdb_path)],
@@ -126,6 +130,7 @@ def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
             "`conda install -c conda-forge fpocket` (no JVM required)."
         ) from exc
     except subprocess.CalledProcessError as exc:
+        logger.warning("fpocket failed on %s: %s", pdb_path, exc.stderr)
         raise RuntimeError(f"fpocket failed on {pdb_path}: {exc.stderr}") from exc
 
     out_dir = pdb_path.parent / f"{pdb_path.stem}_out"
@@ -135,7 +140,9 @@ def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
             f"fpocket ran but expected output file {info_path} was not created."
         )
 
-    return parse_fpocket_info(info_path.read_text())
+    pockets = parse_fpocket_info(info_path.read_text())
+    logger.info("fpocket on %s: found %d pocket(s)", pdb_path, len(pockets))
+    return pockets
 
 
 def check_pocket_detected(

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import csv
 
+import pytest
+
 from protein_selector.bioinformatics.store import upsert_literature_counts
 from protein_selector.core.difficulty import ScoringWeights
 from protein_selector.core.report import (
@@ -27,10 +29,12 @@ from protein_selector.core.validation_result import (
 )
 from protein_selector.core.validation_store import upsert_validation_results
 from protein_selector.docking.docking_validation import EXERCISE_NAME as EX04_EXERCISE
+from protein_selector.docking.meeko_parameterization import MeekoParameterizationResult
 from protein_selector.docking.parameterizability import ParameterizabilityResult
 from protein_selector.docking.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.docking.store import (
     upsert_ligand_ccd_codes,
+    upsert_meeko_parameterization,
     upsert_parameterizability,
     upsert_pocket_detection,
 )
@@ -87,6 +91,69 @@ class TestBuildCandidateReport:
         assert row.ligand_ccd == "HEM"
         assert row.ligand_smiles == "Cc1c2n3..."
         assert row.ligand_parameterizable is True
+
+    def test_ligand_meeko_parameterizable_is_its_own_column(self):
+        # Regression test for a real gap: the report originally only joined
+        # the cheap RDKit-sanitization result, silently ignoring the
+        # heavier, docking-relevant Meeko check (persisted separately).
+        row = build_candidate_report(
+            _CANDIDATE,
+            ligand_ccd_codes=["HEM"],
+            parameterizability_by_ligand={
+                "HEM": ParameterizabilityResult(ligand_id="HEM", passed=True, reasons=[])
+            },
+            meeko_parameterizability_by_ligand={
+                "HEM": MeekoParameterizationResult(
+                    ligand_id="HEM", passed=False, reasons=["Meeko/RDKit check timed out"]
+                )
+            },
+        )
+
+        # RDKit sanitizes HEM fine (it's a valid molecule); Meeko's real 3D
+        # embed times out on it (see meeko_parameterization.py) -- a ligand
+        # can genuinely pass one and fail the other, and both must be
+        # visible, not merged into a single misleading column.
+        assert row.ligand_parameterizable is True
+        assert row.ligand_meeko_parameterizable is False
+
+    def test_predict_ex04_prefers_meeko_verdict_over_rdkit_when_both_present(self):
+        pocket = PocketDetectionResult(
+            pdb_id="4HHB", passed=True,
+            pockets=[PocketInfo(pocket_number=1, druggability_score=0.9)],
+        )
+        row = build_candidate_report(
+            _CANDIDATE,
+            ligand_ccd_codes=["HEM"],
+            pocket_result=pocket,
+            parameterizability_by_ligand={
+                "HEM": ParameterizabilityResult(ligand_id="HEM", passed=True, reasons=[])
+            },
+            meeko_parameterizability_by_ligand={
+                "HEM": MeekoParameterizationResult(ligand_id="HEM", passed=False, reasons=["timed out"])
+            },
+        )
+
+        # If RDKit's (passing) verdict were used, the parameterizability
+        # component would be 0.0; using Meeko's (failing) verdict instead
+        # makes it 1.0 -- confirm the harder, Meeko-driven number wins.
+        assert row.ex04.predicted_difficulty == pytest.approx((0.1 + 1.0) / 2)
+
+    def test_falls_back_to_rdkit_when_meeko_result_absent(self):
+        pocket = PocketDetectionResult(
+            pdb_id="4HHB", passed=True,
+            pockets=[PocketInfo(pocket_number=1, druggability_score=0.9)],
+        )
+        row = build_candidate_report(
+            _CANDIDATE,
+            ligand_ccd_codes=["HEM"],
+            pocket_result=pocket,
+            parameterizability_by_ligand={
+                "HEM": ParameterizabilityResult(ligand_id="HEM", passed=True, reasons=[])
+            },
+        )
+
+        assert row.ligand_meeko_parameterizable is None
+        assert row.ex04.predicted_difficulty == pytest.approx((0.1 + 0.0) / 2)
 
     def test_suitable_for_lists_only_passing_exercises(self):
         row = build_candidate_report(
@@ -170,6 +237,10 @@ class TestBuildReportTableAndCsv:
             [ParameterizabilityResult(ligand_id="HEM", passed=True, reasons=[])],
             db_path=db_path,
         )
+        upsert_meeko_parameterization(
+            [MeekoParameterizationResult(ligand_id="HEM", passed=False, reasons=["timed out"])],
+            db_path=db_path,
+        )
         upsert_pocket_detection(
             [
                 PocketDetectionResult(
@@ -211,6 +282,7 @@ class TestBuildReportTableAndCsv:
         assert row.litref_count == 39
         assert row.ligand_ccd == "HEM"
         assert row.ligand_parameterizable is True
+        assert row.ligand_meeko_parameterizable is False
         assert row.pocket_score == 0.7
         assert row.ex03.status == "pass"
         assert EX03_EXERCISE in row.suitable_for

@@ -33,14 +33,19 @@ to classify `FailureMode.PARAMETERIZATION`.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
+
+from tqdm.auto import tqdm
 
 from protein_selector.core.validation_result import (
     FailureMode,
     ValidationResult,
     ValidationStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 EXERCISE_NAME = "ex03"  # the label callers pass to core.validation_store's
 # upsert/load_validation_results(exercise=...) -- added for consistency with
@@ -52,6 +57,11 @@ _DEFAULT_N_STEPS = 2500  # 5 ps at the 2 fs timestep below -- a quick smoke test
 _DEFAULT_TIMESTEP_FS = 2.0
 _DEFAULT_TEMPERATURE_KELVIN = 300.0
 _DEFAULT_PADDING_NM = 7.0  # PDBFixer's addMissingHydrogens pH argument
+_PROGRESS_CHUNKS = 100  # simulation.step(n_steps) is one opaque OpenMM call with no
+# per-step callback -- broken into ~100 chunks here purely to give a real tqdm bar
+# during a run, since "big simulations" (large n_steps) can take minutes with zero
+# visibility otherwise. Chunking adds a small per-chunk Python/OpenMM call overhead;
+# negligible next to the real cost of the dynamics themselves.
 
 
 def run_test_md(
@@ -93,6 +103,7 @@ def run_test_md(
             "(`micromamba env create -f environment-validation.yml`), not pip."
         ) from exc
 
+    logger.info("%s: PDBFixer repair starting (source=%s)", pdb_id, pdb_path or "RCSB fetch")
     try:
         fixer = PDBFixer(filename=str(pdb_path)) if pdb_path is not None else PDBFixer(pdbid=pdb_id)
         fixer.findMissingResidues()
@@ -103,6 +114,7 @@ def run_test_md(
         fixer.addMissingAtoms()
         fixer.addMissingHydrogens(_DEFAULT_PADDING_NM)
     except Exception as exc:  # PDBFixer/OpenMM don't document a narrow exception set here
+        logger.warning("%s: PDBFixer repair failed: %s", pdb_id, exc)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -111,7 +123,9 @@ def run_test_md(
         )
 
     n_atoms = fixer.topology.getNumAtoms()
+    logger.info("%s: repaired structure has %d atoms", pdb_id, n_atoms)
     if max_atoms is not None and n_atoms > max_atoms:
+        logger.warning("%s: %d atoms exceeds max_atoms=%d, skipping MD", pdb_id, n_atoms, max_atoms)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -128,6 +142,7 @@ def run_test_md(
         # Real, live-verified message shape: 'No template found for residue
         # N (XXX). ...' -- raised when a residue/heterogen the force field
         # doesn't know how to parameterize survives PDBFixer's cleanup.
+        logger.warning("%s: force field could not parameterize structure: %s", pdb_id, exc)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -150,11 +165,22 @@ def run_test_md(
     simulation = app.Simulation(fixer.topology, system, integrator, platform)
     simulation.context.setPositions(fixer.positions)
 
+    logger.info("%s: minimizing then running %d MD steps at %.1f fs", pdb_id, n_steps, timestep_fs)
     start = time.monotonic()
     try:
         simulation.minimizeEnergy()
-        simulation.step(n_steps)
+        # Chunked, not simulation.step(n_steps) in one call -- see _PROGRESS_CHUNKS'
+        # comment: gives a real tqdm bar for what can be a minutes-long run.
+        chunk_size = max(1, n_steps // _PROGRESS_CHUNKS)
+        with tqdm(total=n_steps, desc=f"{pdb_id} MD", unit="step") as progress:
+            steps_done = 0
+            while steps_done < n_steps:
+                this_chunk = min(chunk_size, n_steps - steps_done)
+                simulation.step(this_chunk)
+                steps_done += this_chunk
+                progress.update(this_chunk)
     except Exception as exc:
+        logger.warning("%s: simulation failed to complete: %s", pdb_id, exc)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -166,6 +192,7 @@ def run_test_md(
     state = simulation.context.getState(getEnergy=True)
     potential_energy = state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
     if potential_energy != potential_energy:  # NaN check -- NaN is never equal to itself
+        logger.warning("%s: potential energy is NaN after %.1fs -- simulation blew up", pdb_id, elapsed)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -174,6 +201,7 @@ def run_test_md(
             notes=["potential energy is NaN after the test run -- simulation blew up"],
         )
 
+    logger.info("%s: MD completed in %.1fs, final PE %.1f kJ/mol", pdb_id, elapsed, potential_energy)
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,
