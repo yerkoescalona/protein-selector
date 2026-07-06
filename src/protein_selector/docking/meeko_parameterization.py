@@ -28,10 +28,25 @@ its docstrings alone:
     AllChem.EmbedMolecule(mol, randomSeed=...)   # returns 0 on success, -1 on failure
     setups = MoleculePreparation().prepare(mol)  # a list; empty list on failure
     pdbqt_string, is_ok, err = PDBQTWriterLegacy.write_string(setups[0])
+
+**Real, live-discovered bug (2026-07-06), fixed here:** ``AllChem.EmbedMolecule``
+can hang indefinitely, not just fail fast, on certain real bound ligands --
+confirmed live running the real pipeline against a random hard-filters
+sample: HEM (heme) hung for minutes with no CPU-bound progress (its
+iron-coordination bonds are a known real limitation of RDKit's ETKDG
+embedding algorithm, not a bug in this code). There is no in-process,
+reliable way to interrupt a hung native (C-extension) call from Python --
+``signal.alarm`` does not reliably interrupt code that never returns to the
+Python bytecode dispatch loop. ``filter_meeko_parameterizable`` therefore
+runs each ligand's check in its own subprocess (``multiprocessing``, spawn
+context) with a real wall-clock timeout, killing and recording a timeout
+failure for any ligand that hangs, rather than letting one bad ligand stall
+an entire batch/pipeline run indefinitely.
 """
 
 from __future__ import annotations
 
+import multiprocessing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -40,6 +55,7 @@ from dataclasses import dataclass, field
 # `validate` extra installed.
 
 _EMBED_RANDOM_SEED = 42
+_DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass
@@ -125,8 +141,50 @@ def check_meeko_parameterizable(
     return MeekoParameterizationResult(ligand_id=ligand_id, passed=True, reasons=[])
 
 
+def _run_check_into_queue(
+    ligand_id: str, smiles: str | None, queue: multiprocessing.Queue[MeekoParameterizationResult]
+) -> None:
+    """Subprocess entry point: run the real check and put its result on the queue.
+
+    Not called directly -- see ``_check_meeko_parameterizable_with_timeout``.
+    """
+    queue.put(check_meeko_parameterizable(ligand_id, smiles))
+
+
+def _check_meeko_parameterizable_with_timeout(
+    ligand_id: str, smiles: str | None, timeout_seconds: float
+) -> MeekoParameterizationResult:
+    """Run ``check_meeko_parameterizable`` in its own process, killing it on a real hang.
+
+    See the module docstring for why: ``AllChem.EmbedMolecule`` can hang
+    indefinitely on some real ligands (live-confirmed on HEM), and there is
+    no reliable in-process way to interrupt a hung native call. Uses the
+    ``spawn`` start method deliberately (not the default ``fork`` on Linux) --
+    safer around native extensions that may hold locks/threads at fork time.
+    """
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue[MeekoParameterizationResult] = ctx.Queue()
+    process = ctx.Process(target=_run_check_into_queue, args=(ligand_id, smiles, queue))
+    process.start()
+    process.join(timeout_seconds)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        return MeekoParameterizationResult(
+            ligand_id=ligand_id,
+            passed=False,
+            reasons=[
+                f"Meeko/RDKit check timed out after {timeout_seconds}s -- likely a hung "
+                "3D embed (known real limitation for some organometallic/coordination "
+                "ligands, e.g. HEM)"
+            ],
+        )
+    return queue.get()
+
+
 def filter_meeko_parameterizable(
     ligands: Mapping[str, str | None],
+    timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> tuple[list[str], list[MeekoParameterizationResult]]:
     """Apply the parameterizability stage-2 check to a batch of ``{ligand_id: smiles}`` pairs.
 
@@ -134,11 +192,15 @@ def filter_meeko_parameterizable(
     docstring for why (straight from ``ligands.fetch_smiles_for_ccd_codes``);
     ``check_meeko_parameterizable`` already handles it as a real failure.
 
+    Each ligand is checked in its own subprocess with a real wall-clock
+    ``timeout_seconds`` -- see ``_check_meeko_parameterizable_with_timeout``'s
+    docstring for why (a live-confirmed hang on HEM, not a guessed risk).
+
     Returns (ligand IDs that passed, results for every ligand) -- mirrors
     ``parameterizability.filter_parameterizable``'s shape.
     """
     results = [
-        check_meeko_parameterizable(ligand_id, smiles)
+        _check_meeko_parameterizable_with_timeout(ligand_id, smiles, timeout_seconds)
         for ligand_id, smiles in ligands.items()
     ]
     passed = [result.ligand_id for result in results if result.passed]
