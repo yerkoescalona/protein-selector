@@ -26,6 +26,7 @@ network wiring.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 # `rdkit` is NOT imported at module level: this module is imported by
@@ -100,9 +101,15 @@ def check_ligand_parameterizable(
 
 
 def filter_parameterizable(
-    ligands: dict[str, str],
+    ligands: Mapping[str, str | None],
 ) -> tuple[list[str], list[ParameterizabilityResult]]:
     """Apply the parameterizability check to a batch of ``{ligand_id: smiles}`` pairs.
+
+    ``smiles`` may be ``None`` (e.g. straight from
+    ``ligands.fetch_smiles_for_ccd_codes``, which maps a CCD code with no
+    SMILES in RCSB's dictionary to ``None`` rather than dropping it) --
+    ``check_ligand_parameterizable`` already handles that as a real "no
+    SMILES provided" failure, not a caller error.
 
     Returns (ligand IDs that passed, results for every ligand) -- mirrors
     ``simulability.filter_simulable``'s shape.

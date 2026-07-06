@@ -32,6 +32,7 @@ its docstrings alone:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 # Not imported at module level -- see module docstring; keeps this module
@@ -125,9 +126,13 @@ def check_meeko_parameterizable(
 
 
 def filter_meeko_parameterizable(
-    ligands: dict[str, str],
+    ligands: Mapping[str, str | None],
 ) -> tuple[list[str], list[MeekoParameterizationResult]]:
     """Apply the parameterizability stage-2 check to a batch of ``{ligand_id: smiles}`` pairs.
+
+    ``smiles`` may be ``None`` -- see ``parameterizability.filter_parameterizable``'s
+    docstring for why (straight from ``ligands.fetch_smiles_for_ccd_codes``);
+    ``check_meeko_parameterizable`` already handles it as a real failure.
 
     Returns (ligand IDs that passed, results for every ligand) -- mirrors
     ``parameterizability.filter_parameterizable``'s shape.
