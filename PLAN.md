@@ -232,14 +232,27 @@ for ex03 MD, so there is no single scalar.
 **(b) Measured difficulty (from the validation-stage validators, §4a):** did the real test run succeed,
 its wall-clock effort, and the failure mode if any — **per exercise (ex02/ex03/ex04)**.
 
-- [ ] Score is a documented, inspectable function; weights in a config file, not buried.
-- [ ] Emit **per-exercise** difficulty, not one number: `difficulty_ex02/03/04` +
-      `suitable_for` (which exercises this protein is actually good for).
-- [ ] Track the **predicted-vs-measured gap** as its own column — a protein that scores
-      easy but fails validation is the highest-value catch (exactly the "looks fine, breaks in
-      class" case the tool exists to prevent).
-- [ ] Emit a **spiral-curriculum tier** (`intro` / `core` / `challenge`) per exercise so
-      the same shortlist feeds ex01→ex04 at increasing difficulty.
+- [x] **Score is a documented, inspectable function; weights in a config file, not buried.**
+      Implemented in `core/difficulty.py`. This repo has no external config-file system
+      anywhere else (every other module's tunable default is a plain function/dataclass
+      argument, e.g. `simulability.py`'s `min_residues=50`) — `ScoringWeights` follows that
+      same convention rather than introducing a new one just for this. `predict_ex02_difficulty`
+      (AlphaFold low-confidence fraction — directly bounded [0,1], no weighting needed),
+      `predict_ex03_difficulty` (size + resolution + completeness, weighted average),
+      `predict_ex04_difficulty` (pocket druggability + ligand parameterizability, weighted
+      average, renormalized over whichever inputs are actually available). None of the
+      weights/ceilings are PLAN.md-mandated numbers — reasonable starting points, adjust via
+      a different `ScoringWeights` instance.
+- [x] **Emit per-exercise difficulty, not one number.** `assess_exercise` combines a
+      predicted score with the real `ValidationResult` (if the exercise has been run) into
+      one `ExerciseAssessment` per exercise; `core/report.py`'s `suitable_for` lists exactly
+      the exercises whose status is `"pass"`.
+- [x] **Predicted-vs-measured gap.** `predicted_vs_measured_gap` = measured − predicted;
+      positive means "looked easier than it actually was" (documented explicitly as the
+      highest-value catch this tool exists to prevent).
+- [x] **Spiral-curriculum tier** (`intro`/`core`/`challenge`) per exercise. `difficulty_tier`
+      buckets `effective_difficulty` (prefers measured over predicted, since it's the real
+      outcome, falling back to predicted only pre-validation).
 
 ---
 
@@ -298,6 +311,30 @@ predicted_vs_measured_gap, tier_per_exercise, rationale_json`
   for "this one is a clean intro / this one will break in class."
 - Keep an audit trail: dated snapshot + exact hard-filters query + tool/env versions, so a shortlist
   is reproducible and you can diff year-over-year.
+
+**[x] Implemented (2026-07-06)** — `core/report.py`: `build_candidate_report` (pure
+composition over already-fetched/persisted per-stage results, missing-tolerant field by
+field) and `build_report_table` (the actual join: reads every domain's `store.py`
+loaders — `structural_biology`, `docking` incl. the new `ligand_ccd_codes` table below,
+`bioinformatics`, `modeling`, plus `core.validation_store` for all three exercises — and
+never calls a network API itself). `write_report_csv`/`rows_to_dataframe` (pandas) emit
+exactly this section's column contract, with each `ExerciseAssessment` flattened to
+`ex0X_status`/`ex0X_predicted_difficulty`/`ex0X_measured_difficulty`/`ex0X_gap`/
+`ex0X_tier`/`ex0X_failure_mode`/`ex0X_notes`. **Real deviation from the `{pass, fail,
+flag}` enum stated above, not silent:** a fourth practical status, `"not_run"`, is used
+for any exercise this candidate hasn't been validated against yet — the original enum
+didn't anticipate "not yet validated," but building this report before every heavy
+conda-only validator has run against every candidate is the normal case, not an edge
+case. **A real, closed gap, not present before this work:** there was no persisted
+`pdb_id → ligand CCD code` mapping anywhere (`docking.ligands.fetch_ligand_ccd_codes`'s
+output was never cached) — added `ligand_ccd_codes` (keyed `(pdb_id, ccd_code)`) plus
+`docking.store.upsert_ligand_ccd_codes`/`load_ligand_ccd_codes` so this report stays a
+pure offline join, not one that silently needs a live RCSB call to populate the ligand
+columns. **Stated simplification, not a silent shortcut:** a candidate with multiple
+bound ligands only gets one row, describing its *first* CCD code (sorted for
+determinism) — matches this section's own singular-column schema, not invented here.
+Parquet output is not implemented (CSV only so far) — add if/when the workflow-engine
+step (§7) actually needs it.
 
 ---
 
@@ -562,8 +599,12 @@ The exercises `environment.yml` already covers much of the pipeline — reuse it
      → `FAILURE`/`COMPLETENESS`; real malformed accession → `ValueError`, not silently
      swallowed as "no entry."
    Record `{status, effort, failure_mode}` per exercise; cache per PDB.
-5. [ ] **Per-exercise difficulty score** (predicted + measured, §5); emit the §8 table
-   with `suitable_for` and the predicted-vs-measured gap.
+5. [x] **Per-exercise difficulty score** (predicted + measured, §5); emit the §8 table
+   with `suitable_for` and the predicted-vs-measured gap. Implemented: `core/difficulty.py`
+   (scoring) + `core/report.py` (the join + CSV writer) — see §5/§8 above for full detail.
+   **This closes PLAN.md's own long-standing "not yet built" marker** on the cross-stage
+   join (referenced in `core/db.py`'s and several domains' `store.py`'s docstrings since
+   this repo's persistence layer was first built).
 
 **Deferred, not part of v0:** `protein_design/` (new domain folder, future) — mutation-
 focused work (RFdiffusion/ProteinMPNN-adjacent). Explicitly out of scope until the v0

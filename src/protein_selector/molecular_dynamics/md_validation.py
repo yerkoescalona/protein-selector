@@ -42,6 +42,11 @@ from protein_selector.core.validation_result import (
     ValidationStatus,
 )
 
+EXERCISE_NAME = "ex03"  # the label callers pass to core.validation_store's
+# upsert/load_validation_results(exercise=...) -- added for consistency with
+# docking_validation.EXERCISE_NAME/modeling_validation.EXERCISE_NAME once
+# core/report.py needed one canonical string per exercise to join against.
+
 _DEFAULT_N_STEPS = 2500  # 5 ps at the 2 fs timestep below -- a quick smoke test, not a
 # production run; PLAN.md §4a wants "short test MD sized to the Colab time budget".
 _DEFAULT_TIMESTEP_FS = 2.0

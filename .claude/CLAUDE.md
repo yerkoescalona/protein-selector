@@ -18,7 +18,8 @@ This repo follows ICM: filesystem structure orchestrates the work, not a framewo
 - **Layer 3 (reference material, stable)** — `PLAN.md`'s design decisions, the verified
   field paths and API behaviors recorded under "Bugs found via live verification" below.
 - **Layer 4 (working artifacts, changes per run)** — the SQLite cache
-  (`cache/protein_selector.db`), and eventually the ranked output CSV (not yet built).
+  (`cache/protein_selector.db`), and the ranked output CSV (`core/report.py`'s
+  `write_report_csv`).
 
 ## What this repo is
 
@@ -90,7 +91,9 @@ src/protein_selector/
                                  prefix — the shared
                                  {ValidationStatus, FailureMode, ValidationResult}
                                  contract, PLAN.md §4a), validation_store.py (upsert/load
-                                 for the shared validation-results table)
+                                 for the shared validation-results table), difficulty.py
+                                 (pure per-exercise difficulty scoring, PLAN.md §5),
+                                 report.py (the cross-stage join + CSV writer, PLAN.md §8)
   structural_biology/            candidates.py (hard-filters search/fetch), composition.py
                                  (assembly/entity-level fetches: oligomeric state,
                                  non-standard residues), simulability.py (simulability checks,
@@ -317,24 +320,47 @@ a real docked complex before trusting the change.
   SQLite round-trip.
 - **Persistence (`core/db.py` + each domain's `store.py`):** SQLite, one table per stage (`candidates`,
   `simulability`, `oligomeric_state`, `entity_composition`,
-  `parameterizability`, `meeko_parameterization`, `pocket_detection`,
-  `literature`, `validation`), keyed by `pdb_id`
+  `parameterizability`, `meeko_parameterization`, `pocket_detection`, `openff_parameterization`,
+  `ligand_ccd_codes`, `alphafold_entries`, `literature`, `validation`), keyed by `pdb_id`
   (most), `(pdb_id, entity_id)` (`entity_composition` — an entry can have multiple
-  polymer entities), `ligand_id` (`parameterizability` — a ligand's
-  parameterizability doesn't depend on which entry it appears in), or `(pdb_id, exercise)`
-  (`validation` — shared across all validators, keyed by which exercise validated
-  it, persisted via `core/validation_store.py`), all upsert-based. Replaced the original
-  JSON-file cache (see `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet).
-  **Each stage keeps its own small dataclass** (`CandidateEntry`, `SimulabilityResult`,
-  `ParameterizabilityResult`, `AssemblyInfo`, `EntityCompositionInfo`, `ValidationResult`)
-  — `literature` is the one exception, a plain `dict[pdb_id, int|None]` with no
-  dataclass, since a single scalar doesn't need one. Each domain's `store.py` only
-  persists/reloads its own stage's result, it does not merge them into one growing
-  object. Joining across stages into the final §8 output row is a separate,
-  not-yet-built step; don't conflate "persist this layer's result" with "build the
-  final report."
-- **Validation (`core/validation_result.py` + `molecular_dynamics/md_validation.py`): ex03 MD
-  validator done, ex02/ex04 not started.** `core/validation_result.py` holds the shared
+  polymer entities), `ligand_id` (`parameterizability`/`meeko_parameterization`/
+  `openff_parameterization` — a ligand's chemistry doesn't depend on which entry it
+  appears in), `(pdb_id, ccd_code)` (`ligand_ccd_codes`), `uniprot_accession`
+  (`alphafold_entries` — a property of the sequence, not any one entry), or
+  `(pdb_id, exercise)` (`validation` — shared across all validators, keyed by which
+  exercise validated it, persisted via `core/validation_store.py`), all upsert-based
+  (`ligand_ccd_codes` is `INSERT OR IGNORE` instead, since a `(pdb_id, ccd_code)` pair has
+  no per-row data beyond the pair itself). Replaced the original JSON-file cache (see
+  `PLAN.md` §4b for why SQLite was chosen over DuckDB/Parquet). **Each stage keeps its own
+  small dataclass** (`CandidateEntry`, `SimulabilityResult`, `ParameterizabilityResult`,
+  `AssemblyInfo`, `EntityCompositionInfo`, `AlphaFoldEntry`, `ValidationResult`) —
+  `literature`/`ligand_ccd_codes` are the exceptions, plain dicts with no dataclass, since
+  neither bundles multiple fields per key. Each domain's `store.py` only persists/reloads
+  its own stage's result, it does not merge them into one growing object — that join now
+  lives in `core/report.py` (see "Report" below), not conflated with storage.
+- **Report (`core/difficulty.py` + `core/report.py`): implemented, live-verified
+  end-to-end (2026-07-06).** `core/difficulty.py` is pure scoring logic (no I/O):
+  `predict_ex02/03/04_difficulty` (per-exercise predicted-difficulty proxies, PLAN.md
+  §5a), `measured_difficulty`/`predicted_vs_measured_gap`/`difficulty_tier`/
+  `effective_difficulty`, composed by `assess_exercise` into one `ExerciseAssessment` per
+  exercise. `ScoringWeights` holds every tunable threshold (no external config-file system
+  exists elsewhere in this repo, so this dataclass plays that role, same convention as
+  `simulability.py`'s plain keyword defaults). `core/report.py`'s `build_candidate_report`
+  (pure composition, missing-tolerant field by field) and `build_report_table` (the actual
+  join, reading every domain's `store.py` loaders plus `core.validation_store` for all
+  three exercises — never calls a network API) produce exactly PLAN.md §8's column
+  contract; `write_report_csv`/`rows_to_dataframe` (pandas) emit it. Live end-to-end run
+  confirmed against a real populated SQLite db, producing a real CSV with every expected
+  column. **Real, stated deviation from §8's `{pass, fail, flag}` status enum:** a fourth
+  practical status, `"not_run"`, covers any exercise not yet validated for a candidate —
+  the normal case before every heavy conda-only validator has run against every candidate,
+  not an edge case. **A real gap closed by this work:** there was no persisted
+  `pdb_id → ligand CCD code` mapping anywhere before (`docking.ligands.fetch_ligand_ccd_codes`'s
+  output was never cached) — added `ligand_ccd_codes` + its store functions so this report
+  stays a pure offline join.
+- **Validation (`core/validation_result.py` + `molecular_dynamics/md_validation.py`): ex02/ex03/ex04
+  validators all done** (ex02/ex04 detailed further down; ex03 here first since it's the
+  original). `core/validation_result.py` holds the shared
   `{ValidationStatus, FailureMode, ValidationResult}` interface PLAN.md §4a calls for
   across all validators — add new `FailureMode` members here, don't invent a parallel
   enum per validator. `molecular_dynamics/md_validation.py`'s `run_test_md`: real PDBFixer repair then a real short OpenMM MD

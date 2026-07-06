@@ -1,4 +1,4 @@
-"""Persistence for the docking domain (parameterizability, Meeko, pockets).
+"""Persistence for the docking domain (parameterizability, Meeko, pockets, ligand CCD codes).
 
 See ``core.db`` for the shared connection/schema; this module only holds the
 upsert/load functions for tables this domain owns.
@@ -157,3 +157,38 @@ def load_pocket_detection(
         )
         for row in rows
     }
+
+
+def upsert_ligand_ccd_codes(
+    ligand_ccd_codes: dict[str, list[str]], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Persist ``docking.ligands.fetch_ligand_ccd_codes``'s ``{pdb_id: [ccd_code, ...]}``.
+
+    Lets ``core/report.py`` join a pdb_id to its ligands' parameterizability
+    results offline, without re-querying RCSB every time the report is
+    built. A ``(pdb_id, ccd_code)`` pair is idempotent to re-insert (no
+    per-row data beyond the pair itself), so this is a plain
+    ``INSERT OR IGNORE``, not an upsert-with-update like the other tables.
+    """
+    rows = [
+        (pdb_id, ccd_code) for pdb_id, ccd_codes in ligand_ccd_codes.items() for ccd_code in ccd_codes
+    ]
+    if not rows:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO ligand_ccd_codes (pdb_id, ccd_code) VALUES (?, ?)",
+            rows,
+        )
+
+
+def load_ligand_ccd_codes(db_path: Path = DEFAULT_DB_PATH) -> dict[str, list[str]]:
+    """Load all persisted ``{pdb_id: [ccd_code, ...]}`` ligand mappings."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute("SELECT pdb_id, ccd_code FROM ligand_ccd_codes").fetchall()
+    result: dict[str, list[str]] = {}
+    for pdb_id, ccd_code in rows:
+        result.setdefault(pdb_id, []).append(ccd_code)
+    return result

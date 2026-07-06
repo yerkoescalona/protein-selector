@@ -11,12 +11,12 @@ discipline (see the ``openff-toolkit`` exclusion note in ``pyproject.toml``).
 Every table is created here, in one place, regardless of which domain
 package's ``store.py`` reads/writes it -- ``connect()`` has to know the full
 schema up front. Each domain package (``structural_biology``,
-``bioinformatics``, ``docking``, ``molecular_dynamics``) owns its own
-upsert/load functions in its own ``store.py``, importing ``connect`` and
-``DEFAULT_DB_PATH`` from here; this module intentionally has no knowledge of
-those dataclasses, only of column shapes. Joining across tables into the
-final §8 output row is a separate, not-yet-built concern (see PLAN.md §10
-step 5) -- deliberately not conflated with storage.
+``bioinformatics``, ``docking``, ``molecular_dynamics``, ``modeling``) owns
+its own upsert/load functions in its own ``store.py``, importing ``connect``
+and ``DEFAULT_DB_PATH`` from here; this module intentionally has no
+knowledge of those dataclasses, only of column shapes. Joining across
+tables into the final §8 output row is a separate concern, deliberately not
+conflated with storage -- see ``core/report.py`` (PLAN.md §10 step 5).
 """
 
 from __future__ import annotations
@@ -161,6 +161,20 @@ CREATE TABLE IF NOT EXISTS pocket_detection (
 )
 """
 
+# Keyed by (pdb_id, ccd_code) -- an entry can have multiple bound ligands,
+# and the same CCD code can recur across many entries (same rationale as
+# entity_composition's key). This is the persisted form of
+# `docking.ligands.fetch_ligand_ccd_codes`'s live RCSB lookup -- added so
+# `core/report.py` can join a pdb_id to its ligands' parameterizability
+# results offline, without re-querying RCSB every time the report is built.
+_LIGAND_CCD_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ligand_ccd_codes (
+    pdb_id TEXT NOT NULL,
+    ccd_code TEXT NOT NULL,
+    PRIMARY KEY (pdb_id, ccd_code)
+)
+"""
+
 # Keyed by uniprot_accession, NOT pdb_id -- an AlphaFold DB entry is a
 # property of the UniProt sequence, not any particular PDB entry (the same
 # accession can back multiple PDB entries, e.g. different crystal forms of
@@ -200,6 +214,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_POCKET_TABLE_SCHEMA)
     conn.execute(_MEEKO_TABLE_SCHEMA)
     conn.execute(_OPENFF_PARAMETERIZATION_TABLE_SCHEMA)
+    conn.execute(_LIGAND_CCD_TABLE_SCHEMA)
     conn.execute(_ALPHAFOLD_ENTRY_TABLE_SCHEMA)
     conn.execute(_VALIDATION_TABLE_SCHEMA)
     try:
