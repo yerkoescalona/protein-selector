@@ -20,10 +20,26 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from rcsbapi.data import DataQuery
 from rcsbapi.search import Attr
+
+
+class ExperimentalMethod(StrEnum):
+    """``exptl.method``'s value vocabulary -- closed, but only add members you've verified.
+
+    RCSB's ``exptl.method`` field is a fixed set of strings, but this repo's
+    anti-hallucination rule (PLAN.md §11) means members get added one at a
+    time, each checked against a live ``data.rcsb.org`` response first --
+    never bulk-guessed from memory. ``X_RAY_DIFFRACTION`` is the only member
+    verified so far (it's this codebase's pre-existing default, confirmed
+    live well before this enum existed -- see ``candidates.py``'s history).
+    """
+
+    X_RAY_DIFFRACTION = "X-RAY DIFFRACTION"
+
 
 # Fields fetched per entry -- superset of what the v0 script's get_structure_details/
 # get_ligands issued one HTTP request per PDB ID for.
@@ -85,7 +101,7 @@ class CandidateEntry:
 def build_hard_filters_query(
     max_atoms: int = 50_000,
     max_resolution: float = 3.0,
-    method: str = "X-RAY DIFFRACTION",
+    methods: list[ExperimentalMethod] | None = None,
 ):
     """Build the hard-filters search query.
 
@@ -98,6 +114,13 @@ def build_hard_filters_query(
     convenience proxy: the proxy resolves fields via runtime metaprogramming
     that static type checkers (ty) cannot see through, while ``Attr`` is a
     plain, statically-checkable constructor for the same field.
+
+    ``methods`` accepts more than one value via ``Attr.in_()`` (an OR query,
+    live-verified: ``Attr(...).in_([...]).to_dict()`` produces
+    ``{"operator": "in", "value": [...]}}``) -- e.g. search for both X-ray and
+    NMR entries in one call, then narrow to just one method client-side later
+    (see ``pipeline.CandidateFilterConfig.methods``). ``None`` = only
+    ``ExperimentalMethod.X_RAY_DIFFRACTION``, this codebase's pre-existing default.
     """
     polymer_entity_count_protein = Attr(
         "rcsb_entry_info.polymer_entity_count_protein", "text"
@@ -108,12 +131,13 @@ def build_hard_filters_query(
     deposited_atom_count = Attr("rcsb_entry_info.deposited_atom_count", "text")
     exptl_method = Attr("exptl.method", "text")
     resolution_combined = Attr("rcsb_entry_info.resolution_combined", "text")
+    methods = methods if methods is not None else [ExperimentalMethod.X_RAY_DIFFRACTION]
 
     return (
         (polymer_entity_count_protein > 0)
         .and_(deposited_nonpolymer_entity_instance_count > 0)
         .and_(deposited_atom_count <= max_atoms)
-        .and_(exptl_method == method)
+        .and_(exptl_method.in_([m.value for m in methods]))
         .and_(resolution_combined <= max_resolution)
     )
 
@@ -121,7 +145,7 @@ def build_hard_filters_query(
 def search_candidate_ids(
     max_atoms: int = 50_000,
     max_resolution: float = 3.0,
-    method: str = "X-RAY DIFFRACTION",
+    methods: list[ExperimentalMethod] | None = None,
     rows: int = 10_000,
 ) -> list[str]:
     """Run the hard-filters search and return at most ``rows`` matching PDB IDs.
@@ -139,7 +163,7 @@ def search_candidate_ids(
     hard-filters promise in PLAN.md §3) to potentially hours, with no error or warning.
     """
     query = build_hard_filters_query(
-        max_atoms=max_atoms, max_resolution=max_resolution, method=method
+        max_atoms=max_atoms, max_resolution=max_resolution, methods=methods
     )
     session = query.exec(return_type="entry", rows=rows)
     return list(itertools.islice(session, rows))

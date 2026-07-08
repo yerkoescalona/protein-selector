@@ -13,6 +13,7 @@ import pytest
 
 from protein_selector.structural_biology.candidates import (
     CandidateEntry,
+    ExperimentalMethod,
     _first_or_none,
     _parse_entry,
     build_hard_filters_query,
@@ -46,9 +47,8 @@ class TestBuildHardFiltersQuery:
         [
             ({"max_atoms": 1234}, "rcsb_entry_info.deposited_atom_count", 1234),
             ({"max_resolution": 1.5}, "rcsb_entry_info.resolution_combined", 1.5),
-            ({"method": "ELECTRON MICROSCOPY"}, "exptl.method", "ELECTRON MICROSCOPY"),
         ],
-        ids=["max_atoms", "max_resolution", "method"],
+        ids=["max_atoms", "max_resolution"],
     )
     def test_custom_thresholds_are_applied(self, kwargs, attribute, expected_value):
         as_dict = build_hard_filters_query(**kwargs).to_dict()
@@ -57,6 +57,30 @@ class TestBuildHardFiltersQuery:
             for node in as_dict["nodes"]
         }
         assert params_by_attr[attribute]["value"] == expected_value
+
+    def test_methods_defaults_to_x_ray_diffraction_only(self):
+        """No members other than X_RAY_DIFFRACTION are RCSB-schema-verified yet.
+
+        The default must stay a single-element list, not an invented
+        multi-method set (PLAN.md §7a).
+        """
+        as_dict = build_hard_filters_query().to_dict()
+        params_by_attr = {
+            node["parameters"]["attribute"]: node["parameters"] for node in as_dict["nodes"]
+        }
+        assert params_by_attr["exptl.method"]["operator"] == "in"
+        assert params_by_attr["exptl.method"]["value"] == ["X-RAY DIFFRACTION"]
+
+    def test_methods_accepts_multiple_values_via_in_query(self):
+        """Attr.in_() live-verified (2026-07-08) to serialize as {"operator": "in", "value": [...]}."""
+        as_dict = build_hard_filters_query(
+            methods=[ExperimentalMethod.X_RAY_DIFFRACTION, ExperimentalMethod.X_RAY_DIFFRACTION]
+        ).to_dict()
+        params_by_attr = {
+            node["parameters"]["attribute"]: node["parameters"] for node in as_dict["nodes"]
+        }
+        assert params_by_attr["exptl.method"]["operator"] == "in"
+        assert params_by_attr["exptl.method"]["value"] == ["X-RAY DIFFRACTION", "X-RAY DIFFRACTION"]
 
 
 class TestSearchCandidateIds:

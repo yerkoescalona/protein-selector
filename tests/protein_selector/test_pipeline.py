@@ -16,6 +16,7 @@ import protein_selector.pipeline as pipeline_module
 from protein_selector.docking.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.modeling.alphafold_lookup import AlphaFoldEntry
 from protein_selector.pipeline import (
+    CandidateFilterConfig,
     MdSimulationConfig,
     ModelingLookupConfig,
     PocketDetectionConfig,
@@ -28,6 +29,8 @@ _ENTRY = CandidateEntry(
     pdb_id="4HHB",
     title="Hemoglobin",
     n_residues=141,
+    n_modeled_residues=141,  # fully modeled, no gaps -- keeps check_completeness
+    n_unmodeled_residues=0,  # passing so simulability isn't failing for an unrelated reason
     n_atoms=1200,
     resolution=1.7,
     method="X-RAY DIFFRACTION",
@@ -36,6 +39,14 @@ _ENTRY = CandidateEntry(
 )
 
 _MODELING_OFF = ModelingLookupConfig(enabled=False)
+
+# CandidateFilterConfig()'s default max_residues=50 would drop _ENTRY (141
+# residues) from the pool before any stage sees it -- see pipeline.py's
+# CandidateFilterConfig docstring / PLAN.md §7a. Tests that aren't
+# specifically exercising that filter use this permissive override so _ENTRY
+# survives, same as every test in this file did before the filter was wired
+# to actually gate anything.
+_PERMISSIVE_FILTER = CandidateFilterConfig(min_residues=0, max_residues=10_000, max_resolution=99.0)
 
 
 @pytest.fixture
@@ -49,7 +60,11 @@ def _patch_always_run_stages(monkeypatch):
     monkeypatch.setattr(pipeline_module, "search_candidate_ids", lambda **kw: ["4HHB"])
     monkeypatch.setattr(pipeline_module, "fetch_entry_metadata", lambda pdb_ids: [_ENTRY])
     monkeypatch.setattr(
-        pipeline_module, "fetch_oligomeric_state", lambda entries: {"4HHB": AssemblyInfo(pdb_id="4HHB")}
+        pipeline_module,
+        "fetch_oligomeric_state",
+        lambda entries: {
+            "4HHB": AssemblyInfo(pdb_id="4HHB", oligomeric_details="tetrameric", oligomeric_count=4)
+        },
     )
     monkeypatch.setattr(pipeline_module, "fetch_non_standard_residues", lambda entries: {})
     monkeypatch.setattr(
@@ -63,7 +78,9 @@ def _patch_always_run_stages(monkeypatch):
 
 class TestRunPipelineAlwaysOnStages:
     def test_persists_candidates_and_returns_report_rows(self, db_path):
-        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
+        rows = run_pipeline(
+            db_path=db_path, candidate_filter=_PERMISSIVE_FILTER, modeling_lookup=_MODELING_OFF
+        )
 
         assert len(rows) == 1
         assert rows[0].pdb_id == "4HHB"
@@ -75,7 +92,9 @@ class TestRunPipelineAlwaysOnStages:
             load_parameterizability,
         )
 
-        run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
+        run_pipeline(
+            db_path=db_path, candidate_filter=_PERMISSIVE_FILTER, modeling_lookup=_MODELING_OFF
+        )
 
         assert load_ligand_ccd_codes(db_path=db_path) == {"4HHB": ["HEM"]}
         assert "HEM" in load_parameterizability(db_path=db_path)
@@ -92,7 +111,9 @@ class TestRunPipelineAlwaysOnStages:
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
-        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
+        rows = run_pipeline(
+            db_path=db_path, candidate_filter=_PERMISSIVE_FILTER, modeling_lookup=_MODELING_OFF
+        )
         assert len(rows) == 1
 
     def test_meeko_skip_is_not_fatal_when_meeko_itself_is_missing(self, monkeypatch, db_path):
@@ -116,12 +137,19 @@ class TestRunPipelineAlwaysOnStages:
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
-        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
+        rows = run_pipeline(
+            db_path=db_path, candidate_filter=_PERMISSIVE_FILTER, modeling_lookup=_MODELING_OFF
+        )
         assert len(rows) == 1
 
     def test_writes_report_csv_when_path_given(self, db_path, tmp_path):
         csv_path = tmp_path / "report.csv"
-        run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF, report_csv_path=csv_path)
+        run_pipeline(
+            db_path=db_path,
+            candidate_filter=_PERMISSIVE_FILTER,
+            modeling_lookup=_MODELING_OFF,
+            report_csv_path=csv_path,
+        )
         assert csv_path.exists()
         assert "4HHB" in csv_path.read_text()
 
@@ -145,13 +173,16 @@ class TestRunPipelineModelingLookup:
         )
         monkeypatch.setattr(pipeline_module, "fetch_alphafold_entry", lambda acc: entry)
 
-        rows = run_pipeline(db_path=db_path)  # ModelingLookupConfig() default: enabled=True
+        # ModelingLookupConfig() default: enabled=True
+        rows = run_pipeline(db_path=db_path, candidate_filter=_PERMISSIVE_FILTER)
 
         assert load_alphafold_entries(db_path=db_path) == {"P69905": entry}
         assert rows[0].ex02.status == "pass"
 
     def test_skips_candidate_with_no_uniprot_id(self, monkeypatch, db_path):
-        entry_no_uniprot = CandidateEntry(pdb_id="4HHB", n_residues=141)
+        entry_no_uniprot = CandidateEntry(
+            pdb_id="4HHB", n_residues=141, n_modeled_residues=141, n_unmodeled_residues=0
+        )
         monkeypatch.setattr(
             pipeline_module, "fetch_entry_metadata", lambda pdb_ids: [entry_no_uniprot]
         )
@@ -160,7 +191,7 @@ class TestRunPipelineModelingLookup:
             pipeline_module, "fetch_alphafold_entry", lambda acc: called.append(acc)
         )
 
-        run_pipeline(db_path=db_path)
+        run_pipeline(db_path=db_path, candidate_filter=_PERMISSIVE_FILTER)
 
         assert called == []
 
@@ -170,13 +201,15 @@ class TestRunPipelineModelingLookup:
 
         monkeypatch.setattr(pipeline_module, "fetch_alphafold_entry", raise_value_error)
 
-        rows = run_pipeline(db_path=db_path)
+        rows = run_pipeline(db_path=db_path, candidate_filter=_PERMISSIVE_FILTER)
         assert len(rows) == 1
 
 
 class TestRunPipelineMdSimulation:
     def test_off_by_default(self, db_path):
-        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
+        rows = run_pipeline(
+            db_path=db_path, candidate_filter=_PERMISSIVE_FILTER, modeling_lookup=_MODELING_OFF
+        )
         assert rows[0].ex03.status == "not_run"
 
     def test_missing_conda_env_stops_gracefully(self, monkeypatch, db_path):
@@ -189,35 +222,46 @@ class TestRunPipelineMdSimulation:
 
         rows = run_pipeline(
             db_path=db_path,
+            # _PERMISSIVE_FILTER so _ENTRY's 141 residues survive the pool filter --
+            # this test wants to exercise the ImportError path in run_test_md itself,
+            # not the size gate (covered separately below).
+            candidate_filter=_PERMISSIVE_FILTER,
             modeling_lookup=_MODELING_OFF,
-            # max_residues raised above _ENTRY's 141 residues -- this test wants to
-            # exercise the ImportError path in run_test_md itself, not the size gate
-            # (covered separately by test_candidate_over_max_residues_is_skipped_...).
-            md_simulation=MdSimulationConfig(enabled=True, max_residues=200),
+            md_simulation=MdSimulationConfig(enabled=True),
         )
         assert len(rows) == 1
         assert rows[0].ex03.status == "not_run"
 
-    def test_candidate_over_max_residues_is_skipped_without_attempting_md(
+    def test_candidate_over_max_residues_is_filtered_out_before_pipeline_runs(
         self, monkeypatch, db_path
     ):
+        """CandidateFilterConfig.max_residues now gates the whole pool, not just MD.
+
+        Regression test for PLAN.md §7a's fix: simulability results used to be
+        computed and persisted but never used to drop anything -- every
+        downstream stage still ran on a candidate that had already failed the
+        size window. _ENTRY has n_residues=141; the *default*
+        CandidateFilterConfig.max_residues=50 must now drop it from the pool
+        entirely (never persisted as a `candidates` row, never reaches MD or
+        any other stage) rather than reaching MD and failing there.
+        """
         import protein_selector.molecular_dynamics.md_validation as md_validation_module
+        from protein_selector.structural_biology.store import load_candidates
 
         called = []
         monkeypatch.setattr(
             md_validation_module, "run_test_md", lambda *a, **k: called.append(1)
         )
 
-        # _ENTRY has n_residues=141; a max_residues=50 cap must skip it entirely.
         rows = run_pipeline(
             db_path=db_path,
             modeling_lookup=_MODELING_OFF,
-            md_simulation=MdSimulationConfig(enabled=True, max_residues=50),
+            md_simulation=MdSimulationConfig(enabled=True),
         )
 
         assert called == []
-        assert rows[0].ex03.status == "fail"
-        assert rows[0].ex03.failure_mode == "size_or_time"
+        assert rows == []
+        assert load_candidates(db_path=db_path) == {}
 
     def test_candidate_within_max_residues_is_attempted(self, monkeypatch, db_path):
         import protein_selector.molecular_dynamics.md_validation as md_validation_module
@@ -234,8 +278,9 @@ class TestRunPipelineMdSimulation:
 
         rows = run_pipeline(
             db_path=db_path,
+            candidate_filter=_PERMISSIVE_FILTER,
             modeling_lookup=_MODELING_OFF,
-            md_simulation=MdSimulationConfig(enabled=True, max_residues=200),
+            md_simulation=MdSimulationConfig(enabled=True),
         )
 
         assert rows[0].ex03.status == "pass"
@@ -259,9 +304,10 @@ class TestRunPipelineMdSimulation:
 
         run_pipeline(
             db_path=db_path,
+            candidate_filter=_PERMISSIVE_FILTER,
             modeling_lookup=_MODELING_OFF,
             md_simulation=MdSimulationConfig(
-                enabled=True, n_steps=50, max_minimization_iterations=100, max_residues=200
+                enabled=True, n_steps=50, max_minimization_iterations=100
             ),
         )
 
@@ -270,7 +316,9 @@ class TestRunPipelineMdSimulation:
 
 class TestRunPipelinePocketDetection:
     def test_off_by_default(self, db_path):
-        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
+        rows = run_pipeline(
+            db_path=db_path, candidate_filter=_PERMISSIVE_FILTER, modeling_lookup=_MODELING_OFF
+        )
         assert rows[0].pocket_found is None
 
     def test_persists_when_enabled(self, monkeypatch, db_path):
@@ -287,6 +335,7 @@ class TestRunPipelinePocketDetection:
 
         rows = run_pipeline(
             db_path=db_path,
+            candidate_filter=_PERMISSIVE_FILTER,
             modeling_lookup=_MODELING_OFF,
             pocket_detection=PocketDetectionConfig(enabled=True),
         )
@@ -306,6 +355,7 @@ class TestRunPipelinePocketDetection:
 
         rows = run_pipeline(
             db_path=db_path,
+            candidate_filter=_PERMISSIVE_FILTER,
             modeling_lookup=_MODELING_OFF,
             pocket_detection=PocketDetectionConfig(enabled=True),
         )
@@ -319,6 +369,7 @@ class TestRunPipelinePocketDetection:
 
         rows = run_pipeline(
             db_path=db_path,
+            candidate_filter=_PERMISSIVE_FILTER,
             modeling_lookup=_MODELING_OFF,
             pocket_detection=PocketDetectionConfig(enabled=True),
         )

@@ -3,21 +3,33 @@
 parse_fpocket_info is pure text parsing -- no mocks needed, tested against
 the verbatim documented fpocket output format (see pocket.py's header
 comment for the source). run_fpocket/check_pocket_detected shell out to a
-subprocess, so those are tested with subprocess.run mocked -- this has NOT
-been cross-checked against a real fpocket binary (unavailable in this
-sandbox); run it for real once fpocket is installed, per pocket.py's
-"Not yet live-verified end-to-end" note.
+subprocess, so those are tested with subprocess.run mocked. This module IS
+now cross-checked against a real fpocket binary too (2026-07-08, via the
+persistent micromamba env -- see pocket.py's module docstring); the mocked
+tests below still exercise the plumbing without needing that env installed.
 """
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from protein_selector.docking.pocket import (
+    _parse_vertex_centroid,
     check_pocket_detected,
     parse_fpocket_info,
     run_fpocket,
 )
+
+# Real ATOM-line format from a real pocket{N}_vert.pqr, trimmed to two atoms
+# (live-verified 2026-07-08 against a real fpocket run on 1UBQ).
+_SAMPLE_VERT_PQR = """\
+HEADER
+HEADER This is a pqr format file writen by the programm fpocket.
+ATOM      1    O STP     1      35.878  28.901   5.782    0.00     4.13
+ATOM      2    O STP     1      35.364  30.213   3.091    0.00     4.45
+"""
 
 # Verbatim from fpocket's GETTINGSTARTED.md (Discngine/fpocket, fetched
 # live 2026-07-05) -- not invented.
@@ -106,6 +118,31 @@ class TestRunFpocket:
             pockets = run_fpocket(pdb_path)
 
         assert len(pockets) == 2
+
+    def test_populates_box_center_from_vertex_files_when_present(self, tmp_path):
+        pdb_path = tmp_path / "1uyd.pdb"
+        pdb_path.write_text("ATOM ...")
+        out_dir = tmp_path / "1uyd_out"
+        out_dir.mkdir()
+        (out_dir / "1uyd_info.txt").write_text(_SAMPLE_INFO_TXT)
+        pockets_dir = out_dir / "pockets"
+        pockets_dir.mkdir()
+        (pockets_dir / "pocket1_vert.pqr").write_text(_SAMPLE_VERT_PQR)
+        # Pocket 2 has no vertex file -- box_center must stay None, not raise.
+
+        with patch("protein_selector.docking.pocket.subprocess.run", return_value=MagicMock()):
+            pockets = run_fpocket(pdb_path)
+
+        assert pockets[0].box_center == pytest.approx((35.621, 29.557, 4.4365))
+        assert pockets[1].box_center is None
+
+
+class TestParseVertexCentroid:
+    def test_averages_real_atom_line_coordinates(self):
+        assert _parse_vertex_centroid(_SAMPLE_VERT_PQR) == pytest.approx((35.621, 29.557, 4.4365))
+
+    def test_no_atom_lines_returns_none(self):
+        assert _parse_vertex_centroid("HEADER\nHEADER only\n") is None
 
 
 class TestCheckPocketDetected:

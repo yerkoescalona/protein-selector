@@ -301,6 +301,134 @@ open the source** (anti-hallucination — see §11):
 
 ---
 
+## 7a. `run_pipeline` improvement plan (2026-07-08, Phase 1 done)
+
+`pipeline.py`'s `run_pipeline` was refactored (2026-07-06, §7) from a flat parameter list
+to one dataclass per stage. Using it surfaced two real design gaps, not just naming
+issues — recorded here so the rationale survives past this session.
+
+**Gap 1 — a computed filter that filtered nothing.** `check_full_simulability` was run and
+persisted for every candidate, but its `SimulabilityResult.passed` was never used to drop
+anything from the `entries` list — every downstream stage (parameterizability, Meeko,
+literature, modeling lookup, MD, pocket detection) kept processing candidates that had
+already failed simulability. Recording-without-gating defeats the point of a "cheap gate
+before expensive stages" design (§3).
+
+**Gap 2 — search vs. filter concerns were tangled into one config.** The fix for gap 1
+required deciding, field by field, whether each knob belongs to *querying RCSB* or to
+*checking a returned candidate's metadata*. The rule that fell out of that exercise,
+stated explicitly so it doesn't need re-deriving later: **a field belongs to the search
+config iff it's sent to RCSB as a query term (shapes what comes back / how many); it
+belongs to the filter config iff it's checked client-side on metadata already fetched (or
+fetched via a necessarily-separate follow-up call, e.g. oligomeric state/non-standard
+residues, which need their own assembly-/entity-level requests no search query can
+express).** Two configs, not one:
+
+- `CandidateSearchConfig` (replaces `HardFilterConfig`): `max_candidates`, `methods:
+  list[ExperimentalMethod]` (plural — RCSB's `Attr.in_()` supports an OR-of-methods query,
+  **live-verified** via `dir(Attr(...))` showing `in_` is a real method), `sample_pool_size`,
+  `random_seed`. `max_atoms` demoted from a field to an internal module constant
+  (`_RCSB_MAX_ATOMS_CEILING`) — it's a loose technical safety ceiling (RCSB has no
+  residue-count query field to filter on directly), not a knob anyone tunes pedagogically.
+- `CandidateFilterConfig` (replaces `SimulabilityConfig`): `min_residues`, `max_residues`
+  (default lowered 300→50 — MD simulation is O(atoms²) `NoCutoff`, see
+  `MdSimulationConfig`'s docstring, so a tight default keeps an out-of-the-box run fast),
+  `max_resolution` (single value, reused for both the coarse server-side pre-filter and the
+  real client-side gate — no reason for search and filter to disagree on resolution the way
+  they legitimately can on method), `methods: list[ExperimentalMethod] | None = None`
+  (narrows a search that intentionally cast a wide net, e.g. search `[X_RAY_DIFFRACTION,
+  SOLUTION_NMR]` to compare both in the report, filter down to `[X_RAY_DIFFRACTION]` only
+  before the expensive stages, since NMR entries are typically multi-model ensembles the
+  MD/pocket stages don't handle).
+- `ExperimentalMethod(StrEnum)` replaces the raw `method: str` — RCSB's `exptl.method` is a
+  closed vocabulary, but only `X_RAY_DIFFRACTION = "X-RAY DIFFRACTION"` is
+  RCSB-schema-verified so far (it's this codebase's existing default); other members (NMR,
+  cryo-EM, ...) must be added one at a time, each verified against a live
+  `data.rcsb.org` response before being hardcoded — **do not** bulk-add the vocabulary from
+  memory (anti-hallucination rule, §11).
+
+**Phase 1 — done (2026-07-08):**
+- [x] `candidates.py`: added `ExperimentalMethod(StrEnum)`, one RCSB-verified member
+      (`X_RAY_DIFFRACTION`); `build_hard_filters_query`/`search_candidate_ids` take
+      `methods: list[ExperimentalMethod]` via `Attr.in_()` (serialization
+      `{"operator": "in", "value": [...]}` live-verified) instead of `method: str` via `==`.
+- [x] `pipeline.py`: finished the `CandidateSearchConfig`/`CandidateFilterConfig` rename;
+      after `simulability_results` is computed, non-`passed` candidates (and, when
+      `CandidateFilterConfig.methods` narrows the search, non-matching methods) are dropped
+      from `entries` — and only then is `upsert_candidates` called — before any downstream
+      stage (parameterizability, Meeko, literature, modeling lookup, MD, pocket detection)
+      runs. `max_atoms` demoted to internal `_RCSB_MAX_ATOMS_CEILING`.
+- [x] `tests/protein_selector/test_pipeline.py`: renamed config classes at every call site;
+      added `_PERMISSIVE_FILTER` (threaded into every test not specifically exercising the
+      filter) and a real gating test
+      (`test_candidate_over_max_residues_is_filtered_out_before_pipeline_runs`) asserting a
+      filter-failing candidate never reaches `rows`, `run_test_md`, or the `candidates`
+      table at all. **Two real, previously-silent bugs in the shared `_ENTRY` test fixture,
+      caught only because filtering now actually enforces something:** `_ENTRY` had no
+      `n_modeled_residues`/`n_unmodeled_residues` (so `check_completeness` always failed
+      it as "completeness unknown") and the mocked `fetch_oligomeric_state` returned an
+      `AssemblyInfo` with `oligomeric_count=None` (so `check_oligomeric_state` always
+      failed it as "oligomeric state unknown") — every test in the file had been silently
+      relying on `simulability_results` never being checked. Both fixed by giving the
+      fixture real, complete values.
+- [x] `candidates.py` tests: replaced the old single-`method`-string parametrized case
+      (which asserted an unverified `"ELECTRON MICROSCOPY"` value) with
+      `test_methods_defaults_to_x_ray_diffraction_only` and
+      `test_methods_accepts_multiple_values_via_in_query`, both asserting the real
+      `operator: "in"` shape instead.
+- [x] `notebooks/run_real_pipeline.ipynb`: cell 2 (and the cell-0 markdown, cell-1 imports)
+      updated to the new config names — source-only edit, verified no `outputs`/
+      `execution_count` changed beyond what the notebook's own live kernel had already
+      produced before this edit.
+- [x] `ruff check .` / `ty check` / `pytest -q` all clean (261 passed, 2 skipped). Not yet
+      committed — holding per `.claude/CLAUDE.md`'s standing "never commit unless asked"
+      policy.
+
+**Phase 2 — close the ex04 docking-wiring gap (2026-07-08, infrastructure done, `run_pipeline` wiring still open).**
+§10 step 4 already notes `docking.docking_validation.run_docking_validation` is real and
+live-verified but not called from `run_pipeline` at all, because two pieces were missing: a
+receptor-prep wrapper (the live verification used `obabel -xr` by hand, no module wrapped
+it) and a docking-box center (`pocket.py`'s `parse_fpocket_info` only returned
+score/druggability/volume from fpocket's `_info.txt`, not coordinates).
+
+- [x] **Receptor-prep wrapper** — `docking/receptor_prep.py`'s `prepare_receptor_pdbqt`
+      (plain PDB → Vina-ready PDBQT via `obabel -xr`). **Live-verified (2026-07-08)** via
+      the persistent `micromamba` env against a real 1UBQ: success path (real 65KB PDBQT
+      written) and failure path (missing input) both confirmed. **Real, live-discovered
+      footgun, not guessed:** `obabel` exits `0` even when it fails to read its input file
+      (prints `*** Open Babel Error` + `0 molecules converted` to stderr, but the process's
+      own return code stays success) and still writes a real, empty output file — checking
+      `returncode` alone (the pattern `pocket.py`'s `run_fpocket` uses, where fpocket's own
+      exit code IS reliable) would have silently treated this as success. Fixed by checking
+      the output file actually exists and is non-empty instead. Unit tests
+      (`test_receptor_prep.py`) encode this exact footgun as a regression test.
+- [x] **Docking-box center** — `pocket.py`'s `PocketInfo.box_center`, populated by
+      `run_fpocket` from fpocket's separate per-pocket vertex file, parsed by the new
+      `_parse_vertex_centroid`. **Live-verified (2026-07-08)** via a real `fpocket` run on
+      1UBQ. **Two real corrections to this document's/`pocket.py`'s own prior claim, not
+      guessed:** (1) per-pocket detail files live in a `<stem>_out/pockets/` *subdirectory*,
+      not flat in `<stem>_out/` as originally assumed; (2) the vertex file is
+      `pocket{N}_vert.pqr` (PQR extension, fixed-width PDB-style `ATOM` columns), not
+      `_vert.pdb`. Centroid of the vertex ("alpha sphere") coordinates is used, not the
+      *other* per-pocket file (`pocket{N}_atm.pdb`, contacted receptor atoms) — a
+      real cavity-shape center, not just nearby-residue coordinates. Confirmed against a
+      real fpocket run: 4 real pockets on 1UBQ, each with a real 3-tuple center.
+      `pocket.py`'s "not yet live-verified end-to-end" note is now resolved.
+- [ ] **Still open: wire `DockingConfig` into `run_pipeline` itself.** The two blockers
+      above are closed, but composing them into an actual ex04 stage needs more design,
+      not just plumbing: (a) `meeko_parameterization.py`'s `check_meeko_parameterizable`
+      computes a ligand PDBQT internally but discards it (only returns pass/fail) — ex04
+      needs that PDBQT persisted/reusable, not recomputed; (b) `run_docking_validation`
+      needs `reference_ligand_pdb_block` (the crystal ligand's own HETATM lines, by CCD
+      code, from the downloaded receptor PDB) — nothing here extracts that yet; (c) which
+      pocket's `box_center` to use (highest score? highest druggability?) needs a decision.
+      Deliberately not rushed in the same pass as (a)/(b) above — each is its own real
+      design decision, not mechanical wiring. `PocketDetectionConfig` (fpocket only, no
+      PDBQT prep) stays wired and separate in the meantime, since pocket detection alone is
+      useful without ever docking.
+
+---
+
 ## 8. Output contract (the deliverable — define early)
 
 One ranked table (CSV + parquet), one row per candidate PDB, columns:

@@ -32,11 +32,16 @@ not just the ones shown above) rather than hardcoding the full field list,
 since fpocket's docs do not enumerate every field it may print and a rigid
 parser would silently drop future/undocumented ones.
 
-Not yet live-verified end-to-end: this sandbox has neither conda nor the
-fpocket binary available, so the subprocess call and parser below are
-built directly from the documented format but have not been run against a
-real fpocket install. Run once against a known PDB (e.g. sample/1UYD.pdb
-from fpocket's own repo) before trusting this on real candidates.
+**Live-verified end-to-end (2026-07-08)** against a real `fpocket` (via the
+persistent `micromamba` env, `environment-validation.yml`) on a real
+downloaded 1UBQ: `run_fpocket`/`check_pocket_detected`/`parse_fpocket_info`
+all confirmed correct against real output, not just the documented format.
+**One real correction to this docstring's own original claim:** per-pocket
+detail files (needed for `box_center` -- see `_parse_vertex_centroid`) do
+NOT live flat in `<stem>_out/` alongside `_info.txt` as originally assumed
+here -- they're in a `<stem>_out/pockets/` subdirectory, and the vertex
+file is `pocket{N}_vert.pqr` (not `_vert.pdb`), confirmed by inspecting a
+real fpocket run's directory listing.
 """
 
 from __future__ import annotations
@@ -55,12 +60,21 @@ _FIELD_RE = re.compile(r"^(.+?)\s*:\s*(\S+)\s*$")
 
 @dataclass
 class PocketInfo:
-    """One fpocket-detected pocket's descriptors, parsed from ``<stem>_info.txt``."""
+    """One fpocket-detected pocket's descriptors, parsed from ``<stem>_info.txt``.
+
+    ``box_center`` is populated separately by ``run_fpocket`` (not by
+    ``parse_fpocket_info``, which only reads ``_info.txt`` and has no
+    coordinate data available) -- see ``_parse_vertex_centroid``'s docstring
+    for where it comes from and why. ``None`` if the corresponding
+    ``pocket{N}_vert.pqr`` file wasn't found (e.g. this ``PocketInfo`` was
+    built directly from ``parse_fpocket_info`` without a real fpocket run).
+    """
 
     pocket_number: int
     score: float | None = None
     druggability_score: float | None = None
     volume: float | None = None
+    box_center: tuple[float, float, float] | None = None
     fields: dict[str, str] = field(default_factory=dict)
 
 
@@ -109,8 +123,55 @@ def parse_fpocket_info(text: str) -> list[PocketInfo]:
     return pockets
 
 
+def _parse_vertex_centroid(text: str) -> tuple[float, float, float] | None:
+    """Parse an fpocket ``pocket{N}_vert.pqr`` file's ATOM lines into their centroid.
+
+    fpocket's per-pocket "vertex" file lists the Voronoi-vertex ("alpha
+    sphere") centers that define the detected cavity -- a real geometric
+    approximation of the pocket, not just the coordinates of nearby
+    receptor atoms (``pocket{N}_atm.pdb``, the *other* per-pocket file
+    fpocket writes, lists contacted receptor atoms instead -- deliberately
+    not used here, since a docking box should be centered on the cavity
+    itself). Averaging these vertex coordinates gives a real box center for
+    Vina, not a guess.
+
+    **Live-verified (2026-07-08)** against a real `fpocket` run on 1UBQ:
+    despite the ``.pqr`` extension, the file uses standard fixed-width PDB
+    ``ATOM`` columns (x/y/z at columns 31-38/39-46/47-54, 1-indexed) --
+    confirmed by inspecting real output, not guessed from the ``.pqr``
+    extension's own (different) whitespace-delimited convention. Returns
+    ``None`` if the text has no parseable ``ATOM``/``HETATM`` lines.
+    """
+    coords: list[tuple[float, float, float]] = []
+    for line in text.splitlines():
+        if not (line.startswith("ATOM") or line.startswith("HETATM")):
+            continue
+        try:
+            x, y, z = float(line[30:38]), float(line[38:46]), float(line[46:54])
+        except ValueError:
+            continue
+        coords.append((x, y, z))
+    if not coords:
+        return None
+    n = len(coords)
+    return (
+        sum(c[0] for c in coords) / n,
+        sum(c[1] for c in coords) / n,
+        sum(c[2] for c in coords) / n,
+    )
+
+
 def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
     """Run fpocket on a local PDB file and parse its pocket-info output.
+
+    Also populates each ``PocketInfo.box_center`` from fpocket's separate
+    per-pocket ``pockets/pocket{N}_vert.pqr`` output (real subdirectory
+    layout, **live-verified** 2026-07-08 -- not the flat ``<stem>_out/``
+    layout ``pocket.py``'s own module docstring previously assumed for
+    per-pocket files) -- see ``_parse_vertex_centroid``. A pocket whose
+    vertex file is missing/unparseable keeps ``box_center=None`` rather
+    than failing the whole call; not every caller needs a box center
+    (``check_pocket_detected`` doesn't).
 
     Raises ``FileNotFoundError`` (with an install hint) if the ``fpocket``
     binary isn't on PATH, and ``RuntimeError`` if fpocket exits non-zero or
@@ -141,6 +202,11 @@ def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
         )
 
     pockets = parse_fpocket_info(info_path.read_text())
+    pockets_dir = out_dir / "pockets"
+    for pocket in pockets:
+        vert_path = pockets_dir / f"pocket{pocket.pocket_number}_vert.pqr"
+        if vert_path.exists():
+            pocket.box_center = _parse_vertex_centroid(vert_path.read_text())
     logger.info("✅ fpocket on %s: found %d pocket(s)", pdb_path, len(pockets))
     return pockets
 
