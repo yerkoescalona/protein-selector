@@ -15,7 +15,12 @@ import requests
 import protein_selector.pipeline as pipeline_module
 from protein_selector.docking.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.modeling.alphafold_lookup import AlphaFoldEntry
-from protein_selector.pipeline import run_pipeline
+from protein_selector.pipeline import (
+    MdSimulationConfig,
+    ModelingLookupConfig,
+    PocketDetectionConfig,
+    run_pipeline,
+)
 from protein_selector.structural_biology.candidates import CandidateEntry
 from protein_selector.structural_biology.composition import AssemblyInfo
 
@@ -29,6 +34,8 @@ _ENTRY = CandidateEntry(
     uniprot_ids=["P69905"],
     non_polymer_entity_ids=["4HHB_3"],
 )
+
+_MODELING_OFF = ModelingLookupConfig(enabled=False)
 
 
 @pytest.fixture
@@ -56,7 +63,7 @@ def _patch_always_run_stages(monkeypatch):
 
 class TestRunPipelineAlwaysOnStages:
     def test_persists_candidates_and_returns_report_rows(self, db_path):
-        rows = run_pipeline(db_path=db_path, run_ex02=False)
+        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
 
         assert len(rows) == 1
         assert rows[0].pdb_id == "4HHB"
@@ -68,7 +75,7 @@ class TestRunPipelineAlwaysOnStages:
             load_parameterizability,
         )
 
-        run_pipeline(db_path=db_path, run_ex02=False)
+        run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
 
         assert load_ligand_ccd_codes(db_path=db_path) == {"4HHB": ["HEM"]}
         assert "HEM" in load_parameterizability(db_path=db_path)
@@ -85,7 +92,7 @@ class TestRunPipelineAlwaysOnStages:
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
-        rows = run_pipeline(db_path=db_path, run_ex02=False)
+        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
         assert len(rows) == 1
 
     def test_meeko_skip_is_not_fatal_when_meeko_itself_is_missing(self, monkeypatch, db_path):
@@ -109,18 +116,18 @@ class TestRunPipelineAlwaysOnStages:
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
-        rows = run_pipeline(db_path=db_path, run_ex02=False)
+        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
         assert len(rows) == 1
 
     def test_writes_report_csv_when_path_given(self, db_path, tmp_path):
         csv_path = tmp_path / "report.csv"
-        run_pipeline(db_path=db_path, run_ex02=False, report_csv_path=csv_path)
+        run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF, report_csv_path=csv_path)
         assert csv_path.exists()
         assert "4HHB" in csv_path.read_text()
 
 
-class TestRunPipelineEx02:
-    def test_ex02_persists_alphafold_entry_and_validation_result(self, monkeypatch, db_path):
+class TestRunPipelineModelingLookup:
+    def test_persists_alphafold_entry_and_validation_result(self, monkeypatch, db_path):
         from protein_selector.modeling.store import load_alphafold_entries
 
         entry = AlphaFoldEntry(
@@ -138,12 +145,12 @@ class TestRunPipelineEx02:
         )
         monkeypatch.setattr(pipeline_module, "fetch_alphafold_entry", lambda acc: entry)
 
-        rows = run_pipeline(db_path=db_path, run_ex02=True)
+        rows = run_pipeline(db_path=db_path)  # ModelingLookupConfig() default: enabled=True
 
         assert load_alphafold_entries(db_path=db_path) == {"P69905": entry}
         assert rows[0].ex02.status == "pass"
 
-    def test_ex02_skips_candidate_with_no_uniprot_id(self, monkeypatch, db_path):
+    def test_skips_candidate_with_no_uniprot_id(self, monkeypatch, db_path):
         entry_no_uniprot = CandidateEntry(pdb_id="4HHB", n_residues=141)
         monkeypatch.setattr(
             pipeline_module, "fetch_entry_metadata", lambda pdb_ids: [entry_no_uniprot]
@@ -153,26 +160,26 @@ class TestRunPipelineEx02:
             pipeline_module, "fetch_alphafold_entry", lambda acc: called.append(acc)
         )
 
-        run_pipeline(db_path=db_path, run_ex02=True)
+        run_pipeline(db_path=db_path)
 
         assert called == []
 
-    def test_ex02_malformed_accession_is_skipped_not_fatal(self, monkeypatch, db_path):
+    def test_malformed_accession_is_skipped_not_fatal(self, monkeypatch, db_path):
         def raise_value_error(acc):
             raise ValueError("malformed UniProt accession")
 
         monkeypatch.setattr(pipeline_module, "fetch_alphafold_entry", raise_value_error)
 
-        rows = run_pipeline(db_path=db_path, run_ex02=True)
+        rows = run_pipeline(db_path=db_path)
         assert len(rows) == 1
 
 
-class TestRunPipelineEx03:
-    def test_ex03_off_by_default(self, db_path):
-        rows = run_pipeline(db_path=db_path, run_ex02=False)
+class TestRunPipelineMdSimulation:
+    def test_off_by_default(self, db_path):
+        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
         assert rows[0].ex03.status == "not_run"
 
-    def test_ex03_missing_conda_env_stops_gracefully(self, monkeypatch, db_path):
+    def test_missing_conda_env_stops_gracefully(self, monkeypatch, db_path):
         import protein_selector.molecular_dynamics.md_validation as md_validation_module
 
         def fake_run_test_md(*args, **kwargs):
@@ -180,17 +187,93 @@ class TestRunPipelineEx03:
 
         monkeypatch.setattr(md_validation_module, "run_test_md", fake_run_test_md)
 
-        rows = run_pipeline(db_path=db_path, run_ex02=False, run_ex03=True)
+        rows = run_pipeline(
+            db_path=db_path,
+            modeling_lookup=_MODELING_OFF,
+            # max_residues raised above _ENTRY's 141 residues -- this test wants to
+            # exercise the ImportError path in run_test_md itself, not the size gate
+            # (covered separately by test_candidate_over_max_residues_is_skipped_...).
+            md_simulation=MdSimulationConfig(enabled=True, max_residues=200),
+        )
         assert len(rows) == 1
         assert rows[0].ex03.status == "not_run"
 
+    def test_candidate_over_max_residues_is_skipped_without_attempting_md(
+        self, monkeypatch, db_path
+    ):
+        import protein_selector.molecular_dynamics.md_validation as md_validation_module
+
+        called = []
+        monkeypatch.setattr(
+            md_validation_module, "run_test_md", lambda *a, **k: called.append(1)
+        )
+
+        # _ENTRY has n_residues=141; a max_residues=50 cap must skip it entirely.
+        rows = run_pipeline(
+            db_path=db_path,
+            modeling_lookup=_MODELING_OFF,
+            md_simulation=MdSimulationConfig(enabled=True, max_residues=50),
+        )
+
+        assert called == []
+        assert rows[0].ex03.status == "fail"
+        assert rows[0].ex03.failure_mode == "size_or_time"
+
+    def test_candidate_within_max_residues_is_attempted(self, monkeypatch, db_path):
+        import protein_selector.molecular_dynamics.md_validation as md_validation_module
+        from protein_selector.core.validation_result import (
+            ValidationResult,
+            ValidationStatus,
+        )
+
+        monkeypatch.setattr(
+            md_validation_module,
+            "run_test_md",
+            lambda pdb_id, **k: ValidationResult(pdb_id=pdb_id, status=ValidationStatus.SUCCESS),
+        )
+
+        rows = run_pipeline(
+            db_path=db_path,
+            modeling_lookup=_MODELING_OFF,
+            md_simulation=MdSimulationConfig(enabled=True, max_residues=200),
+        )
+
+        assert rows[0].ex03.status == "pass"
+
+    def test_n_steps_and_max_minimization_iterations_are_passed_through(
+        self, monkeypatch, db_path
+    ):
+        import protein_selector.molecular_dynamics.md_validation as md_validation_module
+        from protein_selector.core.validation_result import (
+            ValidationResult,
+            ValidationStatus,
+        )
+
+        captured_kwargs = {}
+
+        def fake_run_test_md(pdb_id, **kwargs):
+            captured_kwargs.update(kwargs)
+            return ValidationResult(pdb_id=pdb_id, status=ValidationStatus.SUCCESS)
+
+        monkeypatch.setattr(md_validation_module, "run_test_md", fake_run_test_md)
+
+        run_pipeline(
+            db_path=db_path,
+            modeling_lookup=_MODELING_OFF,
+            md_simulation=MdSimulationConfig(
+                enabled=True, n_steps=50, max_minimization_iterations=100, max_residues=200
+            ),
+        )
+
+        assert captured_kwargs == {"n_steps": 50, "max_minimization_iterations": 100}
+
 
 class TestRunPipelinePocketDetection:
-    def test_pocket_detection_off_by_default(self, db_path):
-        rows = run_pipeline(db_path=db_path, run_ex02=False)
+    def test_off_by_default(self, db_path):
+        rows = run_pipeline(db_path=db_path, modeling_lookup=_MODELING_OFF)
         assert rows[0].pocket_found is None
 
-    def test_pocket_detection_persists_when_enabled(self, monkeypatch, db_path):
+    def test_persists_when_enabled(self, monkeypatch, db_path):
         monkeypatch.setattr(
             pipeline_module, "_download_pdb_file", lambda pdb_id, dest_dir: dest_dir / f"{pdb_id}.pdb"
         )
@@ -202,7 +285,11 @@ class TestRunPipelinePocketDetection:
             ),
         )
 
-        rows = run_pipeline(db_path=db_path, run_ex02=False, run_pocket_detection=True)
+        rows = run_pipeline(
+            db_path=db_path,
+            modeling_lookup=_MODELING_OFF,
+            pocket_detection=PocketDetectionConfig(enabled=True),
+        )
 
         assert rows[0].pocket_found is True
         assert rows[0].pocket_score == 0.8
@@ -217,7 +304,11 @@ class TestRunPipelinePocketDetection:
 
         monkeypatch.setattr(pipeline_module, "check_pocket_detected", fake_check)
 
-        rows = run_pipeline(db_path=db_path, run_ex02=False, run_pocket_detection=True)
+        rows = run_pipeline(
+            db_path=db_path,
+            modeling_lookup=_MODELING_OFF,
+            pocket_detection=PocketDetectionConfig(enabled=True),
+        )
         assert rows[0].pocket_found is None
 
     def test_download_failure_for_one_candidate_is_skipped(self, monkeypatch, db_path):
@@ -226,5 +317,9 @@ class TestRunPipelinePocketDetection:
 
         monkeypatch.setattr(pipeline_module, "_download_pdb_file", fake_download)
 
-        rows = run_pipeline(db_path=db_path, run_ex02=False, run_pocket_detection=True)
+        rows = run_pipeline(
+            db_path=db_path,
+            modeling_lookup=_MODELING_OFF,
+            pocket_detection=PocketDetectionConfig(enabled=True),
+        )
         assert rows[0].pocket_found is None

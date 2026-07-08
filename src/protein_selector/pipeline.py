@@ -10,6 +10,23 @@ pdb_id/ligand_id/uniprot_accession/etc.), which is weaker motivation for a
 full workflow engine than PLAN.md's §7 argument assumed before this pipeline
 existed.
 
+**Configuration is grouped into one dataclass per stage** (``HardFilterConfig``,
+``SimulabilityConfig``, ``ModelingLookupConfig``, ``MdSimulationConfig``,
+``PocketDetectionConfig``) rather than one long flat parameter list -- each
+group is independently documented and defaulted, and it's clear at a call
+site which stage a given setting belongs to.
+
+**On "ex02"/"ex03"/"ex04" naming:** those short labels are still used
+internally as the literal string keys this project's shared ``validation``
+table and ``core/report.py``'s ``ex0X_*`` output columns are keyed by (an
+established, already-shipped contract -- renaming it would break every
+persisted db, every notebook, and the CSV column contract PLAN.md §8
+defines) -- but this module's own public API, config classes, log messages,
+and local variable names describe what each stage actually *does*
+(``ModelingLookupConfig``, "AlphaFold DB lookup"; ``MdSimulationConfig``,
+"MD simulation") instead of repeating that jargon. See each config
+dataclass's docstring for which persisted exercise label it corresponds to.
+
 **Stage coverage, stated explicitly:**
 
 - Hard filters -> simulability (incl. oligomeric-state/non-standard-residue
@@ -17,26 +34,31 @@ existed.
   -> literature counts: always run, all cheap/network-only, no conda needed.
 - Meeko real-parameterization: best-effort, needs the `validate` extra
   (rdkit/meeko); a missing extra is caught and logged as skipped, not fatal.
-- ex02 (modeling/AlphaFold DB lookup): on by default (`run_ex02=True`) --
-  cheap, fetch-only, no conda needed.
-- ex03 (MD validator): off by default (`run_ex03=False`) -- needs the
-  conda-only `environment-validation.yml` env; a missing ``openmm``/
-  ``pdbfixer`` install is caught on the *first* candidate and stops further
-  attempts for the rest of the run (there's no point retrying 20 candidates
-  against an environment that's already confirmed absent).
-- **ex04 (docking validator) and fpocket-based pocket detection are
-  deliberately NOT auto-wired here, and that's a real, stated gap, not an
-  oversight:** ``docking.docking_validation.run_docking_validation`` needs a
-  *prepared* receptor PDBQT (this repo has no receptor-preparation wrapper --
-  the live verification in this project's history used `obabel -xr`
-  manually, not a module) and a docking-box center (fpocket's `parse_fpocket_info`
-  only returns score/druggability/volume, not per-pocket 3D coordinates --
-  extracting a real box center needs parsing fpocket's separate
-  `pocket{N}_atm.pdb`/`_vert.pdb` output files, which no module here does
-  yet). Pocket *detection* itself only needs a plain downloaded PDB file
-  (fpocket operates directly on PDB, no PDBQT prep), so it's wired here as
-  `run_pocket_detection` (off by default, needs a local `fpocket` binary) --
-  but running an actual test-dock is not. Call
+- Modeling lookup (persisted as exercise "ex02", real AlphaFold DB lookup):
+  on by default (``ModelingLookupConfig.enabled=True``) -- cheap, fetch-only,
+  no conda needed.
+- MD simulation (persisted as exercise "ex03", real OpenMM test-MD): off by
+  default (``MdSimulationConfig.enabled=False``) -- needs the conda-only
+  `environment-validation.yml` env; a missing ``openmm``/``pdbfixer``
+  install is caught on the *first* candidate and stops further attempts for
+  the rest of the run (there's no point retrying 20 candidates against an
+  environment that's already confirmed absent). Candidates larger than
+  ``MdSimulationConfig.max_residues`` are skipped before ever attempting a
+  repair/minimize/step, not just capped mid-run -- see that field's
+  docstring for why residue count, not atom count.
+- **Docking (persisted as exercise "ex04") and fpocket-based pocket
+  detection are deliberately NOT auto-wired here, and that's a real, stated
+  gap, not an oversight:** ``docking.docking_validation.run_docking_validation``
+  needs a *prepared* receptor PDBQT (this repo has no receptor-preparation
+  wrapper -- the live verification in this project's history used
+  `obabel -xr` manually, not a module) and a docking-box center (fpocket's
+  `parse_fpocket_info` only returns score/druggability/volume, not
+  per-pocket 3D coordinates -- extracting a real box center needs parsing
+  fpocket's separate `pocket{N}_atm.pdb`/`_vert.pdb` output files, which no
+  module here does yet). Pocket *detection* itself only needs a plain
+  downloaded PDB file (fpocket operates directly on PDB, no PDBQT prep), so
+  it's wired here as ``PocketDetectionConfig`` (off by default, needs a
+  local `fpocket` binary) -- but running an actual test-dock is not. Call
   `docking.docking_validation.run_docking_validation` directly with your own
   prepared receptor/box until that wiring is built.
 
@@ -67,6 +89,7 @@ from __future__ import annotations
 import logging
 import random
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import requests
@@ -84,7 +107,11 @@ from protein_selector.core.report import (
     build_report_table,
     write_report_csv,
 )
-from protein_selector.core.validation_result import ValidationResult
+from protein_selector.core.validation_result import (
+    FailureMode,
+    ValidationResult,
+    ValidationStatus,
+)
 from protein_selector.core.validation_store import (
     load_validation_results,
     upsert_validation_results,
@@ -103,11 +130,13 @@ from protein_selector.docking.store import (
     upsert_pocket_detection,
 )
 from protein_selector.modeling.alphafold_lookup import fetch_alphafold_entry
-from protein_selector.modeling.modeling_validation import EXERCISE_NAME as EX02_EXERCISE
+from protein_selector.modeling.modeling_validation import (
+    EXERCISE_NAME as MODELING_LOOKUP_EXERCISE,
+)
 from protein_selector.modeling.modeling_validation import run_modeling_validation
 from protein_selector.modeling.store import upsert_alphafold_entry
 from protein_selector.molecular_dynamics.md_validation import (
-    EXERCISE_NAME as EX03_EXERCISE,
+    EXERCISE_NAME as MD_SIMULATION_EXERCISE,
 )
 from protein_selector.structural_biology.candidates import (
     fetch_entry_metadata,
@@ -131,15 +160,78 @@ _PDB_DOWNLOAD_URL = "https://files.rcsb.org/download"
 _PDB_DOWNLOAD_TIMEOUT_SECONDS = 30
 
 
+@dataclass
+class HardFilterConfig:
+    """Which candidates to pull from RCSB, and how many (PLAN.md §3's hard-filters stage)."""
+
+    max_candidates: int = 20  # how many candidates this run actually processes
+    max_atoms: int = 50_000  # RCSB search ceiling (deposited_atom_count) -- a coarse,
+    # cheap pre-filter applied server-side, NOT the same as MdSimulationConfig.max_residues
+    # below (which gates the much more expensive MD stage specifically, client-side).
+    method: str = "X-RAY DIFFRACTION"
+    max_resolution: float = 3.0
+    sample_pool_size: int | None = None  # None = max(max_candidates * 20, 200);
+    # see run_pipeline's own docstring for why a larger pool than max_candidates is
+    # fetched at all (RCSB's Search API has no random-sort option).
+    random_seed: int | None = None  # None = a genuinely different random sample each
+    # call (Python's random.Random(None) seeds from OS entropy) -- this is already the
+    # default behavior, not something you need to set. Pass a fixed int only when you
+    # specifically want a reproducible sample (e.g. in a test).
+
+
+@dataclass
+class SimulabilityConfig:
+    """Size/resolution/composition gate applied to every hard-filters survivor."""
+
+    min_residues: int = 50
+    max_residues: int = 300
+    max_resolution: float = 2.5
+
+
+@dataclass
+class ModelingLookupConfig:
+    """Fetch-only AlphaFold DB check -- persisted as exercise "ex02". Never runs a new prediction."""
+
+    enabled: bool = True  # cheap, fetch-only, no conda needed -- on by default.
+
+
+@dataclass
+class MdSimulationConfig:
+    """Real OpenMM test-MD validator -- persisted as exercise "ex03". The slow, conda-only stage."""
+
+    enabled: bool = False  # needs environment-validation.yml's conda env -- off by default.
+    n_steps: int | None = None  # None = md_validation.py's own default (a quick smoke test).
+    max_minimization_iterations: int = 0  # 0 = unbounded (OpenMM's own default) -- see
+    # md_validation.run_test_md's docstring for the real, unbounded-wall-clock risk this
+    # controls. Set a real cap here for triage runs where bounded worst-case time matters
+    # more than every candidate's minimization reaching full convergence.
+    max_residues: int = 50  # candidates with more residues than this are skipped
+    # BEFORE ever attempting MD (no PDBFixer repair, no minimize, no step) -- residue
+    # count, not atom count: it's already known from hard-filters metadata, unlike atom
+    # count, which only becomes known after a real (expensive) PDBFixer repair. This
+    # stage's real cost scales O(atoms^2) in vacuum (see md_validation.py's module
+    # docstring), so gating on size here, before the expensive part, is the point --
+    # not an arbitrary small default: 50 matches SimulabilityConfig's own
+    # `min_residues` floor, i.e. "the smallest, fastest, most tractable end of what
+    # simulability already lets through."
+
+
+@dataclass
+class PocketDetectionConfig:
+    """Real fpocket run -- needs a local `fpocket` binary. Not persisted as any exercise."""
+
+    enabled: bool = False
+
+
 def _download_pdb_file(pdb_id: str, dest_dir: Path) -> Path:
     """Download a real PDB coordinate file from RCSB -- needed only for pocket detection.
 
-    Not used by ex03 (``md_validation.run_test_md`` fetches via PDBFixer's own
-    ``pdbid=`` argument, no separate download needed) or by ex02 (fetch-only,
-    no structure file at all). fpocket, unlike Vina, operates directly on a
-    plain PDB file -- no PDBQT/receptor-prep step is needed for detection
-    itself (see this module's docstring for what IS still missing for a real
-    test-dock).
+    Not used by MD simulation (``md_validation.run_test_md`` fetches via
+    PDBFixer's own ``pdbid=`` argument, no separate download needed) or by
+    modeling lookup (fetch-only, no structure file at all). fpocket, unlike
+    Vina, operates directly on a plain PDB file -- no PDBQT/receptor-prep
+    step is needed for detection itself (see this module's docstring for
+    what IS still missing for a real test-dock).
     """
     response = requests.get(
         f"{_PDB_DOWNLOAD_URL}/{pdb_id}.pdb", timeout=_PDB_DOWNLOAD_TIMEOUT_SECONDS
@@ -152,24 +244,21 @@ def _download_pdb_file(pdb_id: str, dest_dir: Path) -> Path:
 
 def run_pipeline(
     db_path: Path = DEFAULT_DB_PATH,
-    max_candidates: int = 20,
-    max_atoms: int = 50_000,
-    hard_filter_max_resolution: float = 3.0,
-    method: str = "X-RAY DIFFRACTION",
-    min_residues: int = 50,
-    max_residues: int = 300,
-    simulability_max_resolution: float = 2.5,
-    run_ex02: bool = True,
-    run_ex03: bool = False,
-    run_pocket_detection: bool = False,
-    ex03_n_steps: int | None = None,
+    hard_filters: HardFilterConfig | None = None,
+    simulability: SimulabilityConfig | None = None,
+    modeling_lookup: ModelingLookupConfig | None = None,
+    md_simulation: MdSimulationConfig | None = None,
+    pocket_detection: PocketDetectionConfig | None = None,
     report_csv_path: Path | None = None,
     weights: ScoringWeights | None = None,
     force_refresh: bool = False,
-    sample_pool_size: int | None = None,
-    random_seed: int | None = None,
 ) -> list[CandidateReportRow]:
     """Run every wired stage over one hard-filters search, persisting as it goes.
+
+    Each optional config argument defaults to its dataclass's own defaults
+    when omitted (``HardFilterConfig()``, ``SimulabilityConfig()``, etc.) --
+    pass an instance with only the fields you want to change, e.g.
+    ``run_pipeline(md_simulation=MdSimulationConfig(enabled=True, n_steps=50))``.
 
     Incremental by default (``force_refresh=False``): each per-ligand/
     per-candidate stage below first checks what's already persisted in
@@ -179,29 +268,28 @@ def run_pipeline(
     everything regardless of what's already there (e.g. after changing a
     check's logic/thresholds).
 
-    **Candidate selection is randomly sampled, not just "the first
-    ``max_candidates`` RCSB returns."** RCSB's Search API has no random-sort
-    option (only ``"score"`` or a named attribute, confirmed via
-    ``rcsbapi.search.Sort``'s own docstring) -- with no ``sort`` specified
-    (this repo's hard-filters query doesn't set one), the API falls back to
-    a stable deterministic order (empirically: ascending PDB ID), so calling
-    this with the same ``max_candidates`` repeatedly always processed the
-    exact same entries. Fixed by fetching a larger pool
-    (``sample_pool_size``, default ``max(max_candidates * 20, 200)``) and
-    randomly sampling ``max_candidates`` IDs from it in Python. Pass
-    ``random_seed`` for a reproducible sample (e.g. in tests); leave it
-    ``None`` for a genuinely different sample each call.
-
     Returns the final joined report (also written to ``report_csv_path`` if
     given).
     """
-    pool_size = sample_pool_size if sample_pool_size is not None else max(max_candidates * 20, 200)
+    hard_filters = hard_filters or HardFilterConfig()
+    simulability = simulability or SimulabilityConfig()
+    modeling_lookup = modeling_lookup or ModelingLookupConfig()
+    md_simulation = md_simulation or MdSimulationConfig()
+    pocket_detection = pocket_detection or PocketDetectionConfig()
+
+    pool_size = (
+        hard_filters.sample_pool_size
+        if hard_filters.sample_pool_size is not None
+        else max(hard_filters.max_candidates * 20, 200)
+    )
     candidate_pool = search_candidate_ids(
-        max_atoms=max_atoms, max_resolution=hard_filter_max_resolution, method=method,
+        max_atoms=hard_filters.max_atoms,
+        max_resolution=hard_filters.max_resolution,
+        method=hard_filters.method,
         rows=pool_size,
     )
-    pdb_ids = random.Random(random_seed).sample(
-        candidate_pool, k=min(max_candidates, len(candidate_pool))
+    pdb_ids = random.Random(hard_filters.random_seed).sample(
+        candidate_pool, k=min(hard_filters.max_candidates, len(candidate_pool))
     )
     logger.info(
         "🔎 hard filters: sampled %d of %d matching candidates", len(pdb_ids), len(candidate_pool)
@@ -221,9 +309,9 @@ def run_pipeline(
             entry,
             assembly_info_by_pdb_id.get(entry.pdb_id),
             entity_infos_by_pdb_id.get(entry.pdb_id),
-            min_residues=min_residues,
-            max_residues=max_residues,
-            max_resolution=simulability_max_resolution,
+            min_residues=simulability.min_residues,
+            max_residues=simulability.max_residues,
+            max_resolution=simulability.max_resolution,
         )
         for entry in entries
     ]
@@ -309,74 +397,100 @@ def run_pipeline(
             fetch_literature_counts(new_literature_pdb_ids), db_path=db_path
         )
 
-    if run_ex02:
-        already_ex02_validated = (
-            set() if force_refresh else set(load_validation_results(EX02_EXERCISE, db_path).keys())
+    if modeling_lookup.enabled:
+        already_modeling_validated = (
+            set() if force_refresh else set(load_validation_results(MODELING_LOOKUP_EXERCISE, db_path).keys())
         )
-        ex02_results: list[ValidationResult] = []
-        for entry in tqdm(entries, desc="🧠 ex02 modeling", unit="candidate"):
-            if entry.pdb_id in already_ex02_validated:
-                logger.debug("ex02 %s: already validated, skipping", entry.pdb_id)
+        modeling_results: list[ValidationResult] = []
+        for entry in tqdm(entries, desc="🧠 AlphaFold DB lookup", unit="candidate"):
+            if entry.pdb_id in already_modeling_validated:
+                logger.debug("modeling lookup %s: already validated, skipping", entry.pdb_id)
                 continue
             uniprot_accession = entry.uniprot_ids[0] if entry.uniprot_ids else None
             if uniprot_accession is None:
-                logger.debug("ex02 %s: no UniProt accession, skipping", entry.pdb_id)
+                logger.debug("modeling lookup %s: no UniProt accession, skipping", entry.pdb_id)
                 continue
-            logger.debug("ex02 %s: fetching AlphaFold DB entry for %s", entry.pdb_id, uniprot_accession)
+            logger.debug(
+                "modeling lookup %s: fetching AlphaFold DB entry for %s", entry.pdb_id, uniprot_accession
+            )
             try:
                 alphafold_entry = fetch_alphafold_entry(uniprot_accession)
             except ValueError as exc:
-                logger.warning("⏭️ ex02 skipped for %s: %s", entry.pdb_id, exc)
+                logger.warning("⏭️ modeling lookup skipped for %s: %s", entry.pdb_id, exc)
                 continue
             if alphafold_entry is not None:
                 upsert_alphafold_entry(alphafold_entry, db_path=db_path)
             result = run_modeling_validation(entry.pdb_id, uniprot_accession)
-            logger.debug("ex02 %s: %s", entry.pdb_id, result.status.value)
-            ex02_results.append(result)
-        if ex02_results:
-            upsert_validation_results(EX02_EXERCISE, ex02_results, db_path=db_path)
-        already_ex02_in_batch = sum(1 for e in entries if e.pdb_id in already_ex02_validated)
+            logger.debug("modeling lookup %s: %s", entry.pdb_id, result.status.value)
+            modeling_results.append(result)
+        if modeling_results:
+            upsert_validation_results(MODELING_LOOKUP_EXERCISE, modeling_results, db_path=db_path)
+        already_modeling_in_batch = sum(1 for e in entries if e.pdb_id in already_modeling_validated)
         logger.info(
-            "🧠 ex02 modeling: %d/%d already validated (⏭️), %d newly validated",
-            already_ex02_in_batch, len(entries), len(ex02_results),
+            "🧠 AlphaFold DB lookup: %d/%d already validated (⏭️), %d newly validated",
+            already_modeling_in_batch, len(entries), len(modeling_results),
         )
 
-    if run_ex03:
+    if md_simulation.enabled:
         from protein_selector.molecular_dynamics.md_validation import run_test_md
 
-        already_ex03_validated = (
-            set() if force_refresh else set(load_validation_results(EX03_EXERCISE, db_path).keys())
+        already_md_validated = (
+            set() if force_refresh else set(load_validation_results(MD_SIMULATION_EXERCISE, db_path).keys())
         )
-        ex03_results: list[ValidationResult] = []
-        for entry in tqdm(entries, desc="🧪 ex03 MD", unit="candidate"):
-            if entry.pdb_id in already_ex03_validated:
-                logger.debug("ex03 %s: already validated, skipping", entry.pdb_id)
+        md_results: list[ValidationResult] = []
+        for entry in tqdm(entries, desc="🧪 MD simulation", unit="candidate"):
+            if entry.pdb_id in already_md_validated:
+                logger.debug("MD simulation %s: already validated, skipping", entry.pdb_id)
                 continue
-            logger.info("ex03 %s: starting PDBFixer repair + short test MD", entry.pdb_id)
+            if entry.n_residues is not None and entry.n_residues > md_simulation.max_residues:
+                logger.info(
+                    "⏭️ MD simulation %s: %d residues exceeds max_residues=%d, skipping",
+                    entry.pdb_id, entry.n_residues, md_simulation.max_residues,
+                )
+                md_results.append(
+                    ValidationResult(
+                        pdb_id=entry.pdb_id,
+                        status=ValidationStatus.FAILURE,
+                        failure_mode=FailureMode.SIZE_OR_TIME,
+                        notes=[
+                            f"{entry.n_residues} residues exceeds MdSimulationConfig.max_residues="
+                            f"{md_simulation.max_residues} -- skipped before attempting repair/minimize"
+                        ],
+                    )
+                )
+                continue
+            logger.info("🧪 MD simulation %s: starting PDBFixer repair + short test MD", entry.pdb_id)
             try:
-                if ex03_n_steps is None:
-                    result = run_test_md(entry.pdb_id)
+                if md_simulation.n_steps is None:
+                    result = run_test_md(
+                        entry.pdb_id,
+                        max_minimization_iterations=md_simulation.max_minimization_iterations,
+                    )
                 else:
-                    result = run_test_md(entry.pdb_id, n_steps=ex03_n_steps)
+                    result = run_test_md(
+                        entry.pdb_id,
+                        n_steps=md_simulation.n_steps,
+                        max_minimization_iterations=md_simulation.max_minimization_iterations,
+                    )
             except ImportError:
                 logger.warning(
-                    "⚠️ ex03 MD validation stopped: validation conda env not installed "
+                    "⚠️ MD simulation stopped: validation conda env not installed "
                     "(see environment-validation.yml)"
                 )
                 break
             logger.debug(
-                "ex03 %s: %s (%.1fs)", entry.pdb_id, result.status.value, result.effort_seconds or 0.0
+                "MD simulation %s: %s (%.1fs)", entry.pdb_id, result.status.value, result.effort_seconds or 0.0
             )
-            ex03_results.append(result)
-        if ex03_results:
-            upsert_validation_results(EX03_EXERCISE, ex03_results, db_path=db_path)
-        already_ex03_in_batch = sum(1 for e in entries if e.pdb_id in already_ex03_validated)
+            md_results.append(result)
+        if md_results:
+            upsert_validation_results(MD_SIMULATION_EXERCISE, md_results, db_path=db_path)
+        already_md_in_batch = sum(1 for e in entries if e.pdb_id in already_md_validated)
         logger.info(
-            "🧪 ex03 MD: %d/%d already validated (⏭️), %d newly validated",
-            already_ex03_in_batch, len(entries), len(ex03_results),
+            "🧪 MD simulation: %d/%d already validated (⏭️), %d newly validated",
+            already_md_in_batch, len(entries), len(md_results),
         )
 
-    if run_pocket_detection:
+    if pocket_detection.enabled:
         already_pocket_checked = (
             set() if force_refresh else set(load_pocket_detection(db_path).keys())
         )

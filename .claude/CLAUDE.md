@@ -398,7 +398,20 @@ a real docked complex before trusting the change.
   stays a pure offline join.
 - **Validation (`core/validation_result.py` + `molecular_dynamics/md_validation.py`): ex02/ex03/ex04
   validators all done** (ex02/ex04 detailed further down; ex03 here first since it's the
-  original). `core/validation_result.py` holds the shared
+  original). **Real correction (2026-07-06):** an earlier revision of this file wrongly
+  assumed OpenMM's `minimizeEnergy()` had no per-iteration progress hook (same category
+  as Vina's `dock()`) — it does: a documented `reporter=` argument
+  (`openmm.MinimizationReporter`, live-confirmed with 850+ real callbacks carrying real
+  energy values). `run_test_md` now shows a real tqdm bar during minimization, not just
+  during stepping, and accepts `max_minimization_iterations` (default 0 = unbounded,
+  OpenMM's own default) wired straight into OpenMM's real `maxIterations` argument —
+  live-verified: capping at 20 iterations cut a real 1UBQ run from ~33–51s to 5.7s, with
+  an honest "may not have fully converged" note when the cap is hit. One real OpenMM
+  binding quirk found along the way: the base `MinimizationReporter.report`'s own
+  declared Python signature is missing the `args` parameter its real C++ director calls
+  overrides with — a genuine SWIG stub gap, not a bug in this override, same class of
+  issue as this file's other `RDLogger.DisableLog`/`EmbedMolecule` type-checker
+  suppressions. `core/validation_result.py` holds the shared
   `{ValidationStatus, FailureMode, ValidationResult}` interface PLAN.md §4a calls for
   across all validators — add new `FailureMode` members here, don't invent a parallel
   enum per validator. `molecular_dynamics/md_validation.py`'s `run_test_md`: real PDBFixer repair then a real short OpenMM MD
@@ -466,14 +479,31 @@ a real docked complex before trusting the change.
   once `candidates.py`'s UniProt cofactor-lookup path is confirmed no longer wanted
   (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10
   step 1.
-- **Pipeline orchestration (`pipeline.py`): implemented.** `run_pipeline()` wires hard
-  filters → simulability → ligand CCD/SMILES → RDKit parameterizability (+ best-effort
-  Meeko) → literature → ex02 modeling → the joined report/CSV, script-first per PLAN.md
-  §7's decision (not Snakemake). `run_ex03`/`run_pocket_detection` are optional,
-  off-by-default flags (need the conda env / a local `fpocket` binary respectively;
-  missing either is caught and logged, not fatal). **ex04 docking is deliberately NOT
-  auto-wired** — no receptor-PDBQT-prep wrapper or pocket-center-extraction exists yet;
-  call `docking_validation.run_docking_validation` directly with prepared inputs. See the
+- **Pipeline orchestration (`pipeline.py`): implemented, config grouped into dataclasses
+  (2026-07-06).** `run_pipeline()` wires hard filters → simulability → ligand CCD/SMILES
+  → RDKit parameterizability (+ best-effort Meeko) → literature → AlphaFold DB lookup →
+  the joined report/CSV, script-first per PLAN.md §7's decision (not Snakemake).
+  **Real refactor, not just a rename:** the old flat parameter list (`run_ex02`,
+  `run_ex03`, `ex03_n_steps`, ...) is now five per-stage dataclasses —
+  `HardFilterConfig`, `SimulabilityConfig`, `ModelingLookupConfig`, `MdSimulationConfig`,
+  `PocketDetectionConfig` — each independently documented/defaulted, passed as
+  `run_pipeline(md_simulation=MdSimulationConfig(enabled=True, n_steps=50), ...)`. The
+  `"ex02"`/`"ex03"`/`"ex04"` labels stay internal (they're the literal persisted
+  `validation` table / `core/report.py` column keys — an established contract, not
+  renameable without breaking every existing db/notebook/CSV) but the public API,
+  log messages, and local variable names now describe what each stage does
+  (`ModelingLookupConfig`/"AlphaFold DB lookup", `MdSimulationConfig`/"MD simulation")
+  instead of repeating that jargon. `MdSimulationConfig.max_residues` (default 50, not
+  an atom count) skips oversized candidates *before* ever attempting PDBFixer
+  repair/minimize — residue count is known from hard-filters metadata pre-repair, unlike
+  atom count. `MdSimulationConfig.max_minimization_iterations` (default 0 = unbounded)
+  plugs into OpenMM's own real `maxIterations` argument to `minimizeEnergy()` — see
+  `md_validation.py`'s status entry below for why that's a real cap, not a guessed one.
+  `MdSimulationConfig`/`PocketDetectionConfig` are optional, off-by-default (need the
+  conda env / a local `fpocket` binary respectively; missing either is caught and
+  logged, not fatal). **ex04 docking is deliberately NOT auto-wired** — no
+  receptor-PDBQT-prep wrapper or pocket-center-extraction exists yet; call
+  `docking_validation.run_docking_validation` directly with prepared inputs. See the
   module's own docstring for the full stage-by-stage breakdown.
 - **DB exploration (`notebooks/db_explorer.ipynb` + `notebooks/build_demo_db.ipynb`):
   implemented.** A static notebook (not a live dashboard) for browsing
