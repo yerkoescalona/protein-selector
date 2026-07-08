@@ -96,6 +96,48 @@ def run_test_md(
         # project's pip/uv-managed venv, not a stub gap -- ty can't resolve
         # it here by design.
         from pdbfixer import PDBFixer  # ty: ignore[unresolved-import]
+        class _TqdmMinimizationReporter(openmm.MinimizationReporter):
+            """Real per-L-BFGS-iteration tqdm bar for ``simulation.minimizeEnergy()``.
+
+            **Correction to an earlier, wrong assumption in this module:**
+            `minimizeEnergy()` was previously treated as one opaque call with
+            "no incremental progress available" (same category as Vina's
+            `dock()`) -- that was wrong. OpenMM's real API accepts a
+            ``reporter=`` argument (an ``openmm.MinimizationReporter``
+            subclass, confirmed live by inspecting
+            ``Simulation.minimizeEnergy``'s actual signature/docstring, not
+            guessed), invoked after every L-BFGS iteration with the current
+            system energy. No fixed ``total`` is used -- the real iteration
+            count is unbounded (``maxIterations=0`` by default here, i.e.
+            "until convergence") and can even reset mid-run if OpenMM
+            increases constraint-restraint strength and starts over (see
+            ``MinimizationReporter``'s own docstring) -- so this is an
+            indeterminate/count-up bar, not a percentage.
+            """
+
+            def __init__(self, pdb_id: str) -> None:
+                super().__init__()
+                self._bar = tqdm(desc=f"{pdb_id} minimizing", unit="iter", leave=False)
+
+            # `MinimizationReporter.report`'s *base* Python method is declared
+            # as `report(self, iteration, x, grad)` (verified in the real
+            # installed openmm.py source, no `args`) -- but the real C++
+            # director calls an override with 4 arguments regardless (live
+            # -confirmed: this exact override, run for real, receives a real
+            # `args` dict with working `args["system energy"]` values). A
+            # SWIG-generated stub/binding gap, not a bug in this override --
+            # same class of issue as this repo's other type-checker
+            # suppression comments for RDLogger.DisableLog/EmbedMolecule.
+            def report(  # ty: ignore[invalid-method-override]
+                self, iteration, x, grad, args
+            ) -> bool:
+                self._bar.set_postfix_str(f"energy={args['system energy']:.1f} kJ/mol")
+                self._bar.update(1)
+                return False  # never stop minimization early
+
+            def close(self) -> None:
+                self._bar.close()
+
     except ImportError as exc:
         raise ImportError(
             "run_test_md requires openmm and pdbfixer; "
@@ -104,11 +146,13 @@ def run_test_md(
         ) from exc
 
     # A coarse stage bar over the whole run, not just the step loop below --
-    # PDBFixer repair, ForceField.createSystem, and minimizeEnergy are each one
-    # opaque blocking call with no per-iteration hook (same reason
-    # vina_docking.dock_top_pose has no progress bar, see its docstring), so
-    # without this the run looks stuck for however long those take (which, in
-    # practice, was most of the wall-clock time -- the step loop itself is fast).
+    # PDBFixer repair and ForceField.createSystem are still one opaque
+    # blocking call each with no per-iteration hook (same reason
+    # vina_docking.dock_top_pose has no progress bar, see its docstring);
+    # minimizeEnergy is NOT (see _TqdmMinimizationReporter above -- an
+    # earlier revision of this module wrongly assumed it was, before actually
+    # checking OpenMM's real API). Without this stage bar the run still looks
+    # stuck during repair/build, which in practice was real wall-clock time.
     stages = tqdm(total=4, desc=f"{pdb_id} ex03", unit="stage", bar_format="{desc}: {n_fmt}/{total_fmt} [{elapsed}] {postfix}")
     stages.set_postfix_str("🔧 repairing (PDBFixer)")
     logger.info("🔧 %s: PDBFixer repair starting (source=%s)", pdb_id, pdb_path or "RCSB fetch")
@@ -179,12 +223,14 @@ def run_test_md(
     simulation = app.Simulation(fixer.topology, system, integrator, platform)
     simulation.context.setPositions(fixer.positions)
 
-    stages.set_postfix_str("🧊 minimizing energy (no incremental progress available)")
+    stages.set_postfix_str("🧊 minimizing energy")
     logger.info("🧊 %s: minimizing energy", pdb_id)
     start = time.monotonic()
+    minimization_reporter = _TqdmMinimizationReporter(pdb_id)
     try:
-        simulation.minimizeEnergy()
+        simulation.minimizeEnergy(reporter=minimization_reporter)
     except Exception as exc:
+        minimization_reporter.close()
         stages.close()
         logger.warning("❌ %s: energy minimization failed: %s", pdb_id, exc)
         return ValidationResult(
@@ -193,6 +239,7 @@ def run_test_md(
             failure_mode=FailureMode.STABILITY,
             notes=[f"energy minimization failed: {exc}"],
         )
+    minimization_reporter.close()
     stages.update(1)
 
     stages.set_postfix_str(f"🏃 running {n_steps} MD steps at {timestep_fs} fs")
