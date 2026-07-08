@@ -205,10 +205,10 @@ def filter_meeko_parameterizable(
     ``parameterizability.filter_parameterizable``'s shape.
     """
     results = []
-    for ligand_id, smiles in tqdm(ligands.items(), desc="Meeko parameterization", unit="ligand"):
-        logger.debug("meeko %s: starting real 3D-embed + PDBQT check", ligand_id)
+    for ligand_id, smiles in tqdm(ligands.items(), desc="💊 Meeko parameterization", unit="ligand"):
+        logger.debug("💊 meeko %s: starting real 3D-embed + PDBQT check", ligand_id)
         result = _check_meeko_parameterizable_with_timeout(ligand_id, smiles, timeout_seconds)
-        logger.debug("meeko %s: passed=%s", ligand_id, result.passed)
+        logger.debug("%s meeko %s: passed=%s", "✅" if result.passed else "❌", ligand_id, result.passed)
         results.append(result)
     passed = [result.ligand_id for result in results if result.passed]
     return passed, results

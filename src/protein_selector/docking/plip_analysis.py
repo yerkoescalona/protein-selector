@@ -87,12 +87,12 @@ def run_plip_analysis(pdb_id: str, complex_pdb_path: Path) -> PlipAnalysisResult
             "(its build tries to pip-install openbabel, which needs system libs)."
         ) from exc
 
-    logger.info("%s: running PLIP on %s", pdb_id, complex_pdb_path)
+    logger.info("🔬 %s: running PLIP on %s", pdb_id, complex_pdb_path)
     complex_ = plip_prep.PDBComplex()
     complex_.load_pdb(str(complex_pdb_path))
 
     if not complex_.ligands:
-        logger.warning("%s: PLIP found no ligand in the complex", pdb_id)
+        logger.warning("⚠️ %s: PLIP found no ligand in the complex", pdb_id)
         return PlipAnalysisResult(
             pdb_id=pdb_id,
             passed=False,
@@ -118,7 +118,7 @@ def run_plip_analysis(pdb_id: str, complex_pdb_path: Path) -> PlipAnalysisResult
     }
     total = sum(counts.values())
     if total == 0:
-        logger.info("%s: PLIP found no interpretable interactions", pdb_id)
+        logger.info("⚠️ %s: PLIP found no interpretable interactions", pdb_id)
         return PlipAnalysisResult(
             pdb_id=pdb_id,
             passed=False,
@@ -126,5 +126,5 @@ def run_plip_analysis(pdb_id: str, complex_pdb_path: Path) -> PlipAnalysisResult
             interaction_counts=counts,
         )
 
-    logger.info("%s: PLIP interactions: %s", pdb_id, counts)
+    logger.info("✅ %s: PLIP interactions: %s", pdb_id, counts)
     return PlipAnalysisResult(pdb_id=pdb_id, passed=True, reasons=[], interaction_counts=counts)

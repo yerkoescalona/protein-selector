@@ -116,7 +116,7 @@ def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
     binary isn't on PATH, and ``RuntimeError`` if fpocket exits non-zero or
     doesn't produce the expected ``_info.txt`` file.
     """
-    logger.info("running fpocket on %s", pdb_path)
+    logger.info("🕳️ running fpocket on %s", pdb_path)
     try:
         subprocess.run(
             ["fpocket", "-f", str(pdb_path)],
@@ -130,7 +130,7 @@ def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
             "`conda install -c conda-forge fpocket` (no JVM required)."
         ) from exc
     except subprocess.CalledProcessError as exc:
-        logger.warning("fpocket failed on %s: %s", pdb_path, exc.stderr)
+        logger.warning("❌ fpocket failed on %s: %s", pdb_path, exc.stderr)
         raise RuntimeError(f"fpocket failed on {pdb_path}: {exc.stderr}") from exc
 
     out_dir = pdb_path.parent / f"{pdb_path.stem}_out"
@@ -141,7 +141,7 @@ def run_fpocket(pdb_path: Path) -> list[PocketInfo]:
         )
 
     pockets = parse_fpocket_info(info_path.read_text())
-    logger.info("fpocket on %s: found %d pocket(s)", pdb_path, len(pockets))
+    logger.info("✅ fpocket on %s: found %d pocket(s)", pdb_path, len(pockets))
     return pockets
 
 

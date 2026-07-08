@@ -103,7 +103,15 @@ def run_test_md(
             "(`micromamba env create -f environment-validation.yml`), not pip."
         ) from exc
 
-    logger.info("%s: PDBFixer repair starting (source=%s)", pdb_id, pdb_path or "RCSB fetch")
+    # A coarse stage bar over the whole run, not just the step loop below --
+    # PDBFixer repair, ForceField.createSystem, and minimizeEnergy are each one
+    # opaque blocking call with no per-iteration hook (same reason
+    # vina_docking.dock_top_pose has no progress bar, see its docstring), so
+    # without this the run looks stuck for however long those take (which, in
+    # practice, was most of the wall-clock time -- the step loop itself is fast).
+    stages = tqdm(total=4, desc=f"{pdb_id} ex03", unit="stage", bar_format="{desc}: {n_fmt}/{total_fmt} [{elapsed}] {postfix}")
+    stages.set_postfix_str("🔧 repairing (PDBFixer)")
+    logger.info("🔧 %s: PDBFixer repair starting (source=%s)", pdb_id, pdb_path or "RCSB fetch")
     try:
         fixer = PDBFixer(filename=str(pdb_path)) if pdb_path is not None else PDBFixer(pdbid=pdb_id)
         fixer.findMissingResidues()
@@ -114,18 +122,21 @@ def run_test_md(
         fixer.addMissingAtoms()
         fixer.addMissingHydrogens(_DEFAULT_PADDING_NM)
     except Exception as exc:  # PDBFixer/OpenMM don't document a narrow exception set here
-        logger.warning("%s: PDBFixer repair failed: %s", pdb_id, exc)
+        stages.close()
+        logger.warning("❌ %s: PDBFixer repair failed: %s", pdb_id, exc)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.COMPLETENESS,
             notes=[f"PDBFixer repair failed: {exc}"],
         )
+    stages.update(1)
 
     n_atoms = fixer.topology.getNumAtoms()
-    logger.info("%s: repaired structure has %d atoms", pdb_id, n_atoms)
+    logger.info("🧬 %s: repaired structure has %d atoms", pdb_id, n_atoms)
     if max_atoms is not None and n_atoms > max_atoms:
-        logger.warning("%s: %d atoms exceeds max_atoms=%d, skipping MD", pdb_id, n_atoms, max_atoms)
+        stages.close()
+        logger.warning("⚠️ %s: %d atoms exceeds max_atoms=%d, skipping MD", pdb_id, n_atoms, max_atoms)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -133,6 +144,7 @@ def run_test_md(
             notes=[f"repaired structure has {n_atoms} atoms, over max_atoms={max_atoms}"],
         )
 
+    stages.set_postfix_str("⚛️ building ForceField system")
     try:
         forcefield = app.ForceField("amber14-all.xml", "amber14/tip3pfb.xml")
         system = forcefield.createSystem(
@@ -142,13 +154,15 @@ def run_test_md(
         # Real, live-verified message shape: 'No template found for residue
         # N (XXX). ...' -- raised when a residue/heterogen the force field
         # doesn't know how to parameterize survives PDBFixer's cleanup.
-        logger.warning("%s: force field could not parameterize structure: %s", pdb_id, exc)
+        stages.close()
+        logger.warning("❌ %s: force field could not parameterize structure: %s", pdb_id, exc)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.PARAMETERIZATION,
             notes=[f"ForceField could not parameterize repaired structure: {exc}"],
         )
+    stages.update(1)
 
     # unit.kelvin/picosecond/femtoseconds are real Quantity/Unit instances
     # generated dynamically by openmm.unit at import time (verified live
@@ -165,14 +179,29 @@ def run_test_md(
     simulation = app.Simulation(fixer.topology, system, integrator, platform)
     simulation.context.setPositions(fixer.positions)
 
-    logger.info("%s: minimizing then running %d MD steps at %.1f fs", pdb_id, n_steps, timestep_fs)
+    stages.set_postfix_str("🧊 minimizing energy (no incremental progress available)")
+    logger.info("🧊 %s: minimizing energy", pdb_id)
     start = time.monotonic()
     try:
         simulation.minimizeEnergy()
+    except Exception as exc:
+        stages.close()
+        logger.warning("❌ %s: energy minimization failed: %s", pdb_id, exc)
+        return ValidationResult(
+            pdb_id=pdb_id,
+            status=ValidationStatus.FAILURE,
+            failure_mode=FailureMode.STABILITY,
+            notes=[f"energy minimization failed: {exc}"],
+        )
+    stages.update(1)
+
+    stages.set_postfix_str(f"🏃 running {n_steps} MD steps at {timestep_fs} fs")
+    logger.info("🏃 %s: running %d MD steps at %.1f fs", pdb_id, n_steps, timestep_fs)
+    try:
         # Chunked, not simulation.step(n_steps) in one call -- see _PROGRESS_CHUNKS'
-        # comment: gives a real tqdm bar for what can be a minutes-long run.
+        # comment: gives a real, accurate tqdm bar for what can be a minutes-long run.
         chunk_size = max(1, n_steps // _PROGRESS_CHUNKS)
-        with tqdm(total=n_steps, desc=f"{pdb_id} MD", unit="step") as progress:
+        with tqdm(total=n_steps, desc=f"{pdb_id} MD steps", unit="step", leave=False) as progress:
             steps_done = 0
             while steps_done < n_steps:
                 this_chunk = min(chunk_size, n_steps - steps_done)
@@ -180,19 +209,23 @@ def run_test_md(
                 steps_done += this_chunk
                 progress.update(this_chunk)
     except Exception as exc:
-        logger.warning("%s: simulation failed to complete: %s", pdb_id, exc)
+        stages.close()
+        logger.warning("❌ %s: simulation failed to complete: %s", pdb_id, exc)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.STABILITY,
             notes=[f"simulation failed to complete: {exc}"],
         )
+    stages.update(1)
+    stages.set_postfix_str("✅ done")
+    stages.close()
     elapsed = time.monotonic() - start
 
     state = simulation.context.getState(getEnergy=True)
     potential_energy = state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
     if potential_energy != potential_energy:  # NaN check -- NaN is never equal to itself
-        logger.warning("%s: potential energy is NaN after %.1fs -- simulation blew up", pdb_id, elapsed)
+        logger.warning("❌ %s: potential energy is NaN after %.1fs -- simulation blew up", pdb_id, elapsed)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -201,7 +234,7 @@ def run_test_md(
             notes=["potential energy is NaN after the test run -- simulation blew up"],
         )
 
-    logger.info("%s: MD completed in %.1fs, final PE %.1f kJ/mol", pdb_id, elapsed, potential_energy)
+    logger.info("✅ %s: MD completed in %.1fs, final PE %.1f kJ/mol", pdb_id, elapsed, potential_energy)
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,

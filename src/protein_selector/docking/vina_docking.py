@@ -133,7 +133,7 @@ def dock_top_pose(
         ) from exc
 
     logger.info(
-        "docking %s + %s: exhaustiveness=%d, n_poses=%d, box_center=%s",
+        "🎯 docking %s + %s: exhaustiveness=%d, n_poses=%d, box_center=%s",
         receptor_pdbqt_path.name, ligand_pdbqt_path.name, exhaustiveness, n_poses, box_center,
     )
     try:
@@ -143,13 +143,13 @@ def dock_top_pose(
         v.compute_vina_maps(center=list(box_center), box_size=list(box_size))
         v.dock(exhaustiveness=exhaustiveness, n_poses=n_poses)
     except Exception as exc:  # vina's Python bindings don't document a narrow exception set
-        logger.warning("docking %s failed: %s", receptor_pdbqt_path.name, exc)
+        logger.warning("❌ docking %s failed: %s", receptor_pdbqt_path.name, exc)
         raise RuntimeError(f"Vina docking run failed: {exc}") from exc
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         pose_path = Path(tmp_dir) / "top_pose.pdbqt"
         v.write_poses(str(pose_path), n_poses=1, overwrite=True)
-        logger.info("docking %s: completed, top pose written", receptor_pdbqt_path.name)
+        logger.info("✅ docking %s: completed, top pose written", receptor_pdbqt_path.name)
         return pose_path.read_text()
 
 
@@ -209,7 +209,7 @@ def run_self_dock(
 
     rmsd = _rmsd(docked_coords, reference_coords)
     if rmsd > rmsd_threshold_angstrom:
-        logger.info("%s: self-dock RMSD %.2f Å exceeds threshold %.2f Å", pdb_id, rmsd, rmsd_threshold_angstrom)
+        logger.info("❌ %s: self-dock RMSD %.2f Å exceeds threshold %.2f Å", pdb_id, rmsd, rmsd_threshold_angstrom)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
@@ -220,7 +220,7 @@ def run_self_dock(
             ],
         )
 
-    logger.info("%s: self-dock RMSD %.2f Å, within threshold", pdb_id, rmsd)
+    logger.info("✅ %s: self-dock RMSD %.2f Å, within threshold", pdb_id, rmsd)
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,

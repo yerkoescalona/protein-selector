@@ -204,11 +204,11 @@ def run_pipeline(
         candidate_pool, k=min(max_candidates, len(candidate_pool))
     )
     logger.info(
-        "hard filters: sampled %d of %d matching candidates", len(pdb_ids), len(candidate_pool)
+        "🔎 hard filters: sampled %d of %d matching candidates", len(pdb_ids), len(candidate_pool)
     )
     entries = fetch_entry_metadata(pdb_ids)
     upsert_candidates(entries, db_path=db_path)
-    logger.info("hard filters: %d candidates", len(entries))
+    logger.info("🔎 hard filters: %d candidates", len(entries))
 
     assembly_info_by_pdb_id = fetch_oligomeric_state(entries)
     entity_infos_by_pdb_id = fetch_non_standard_residues(entries)
@@ -229,7 +229,7 @@ def run_pipeline(
     ]
     upsert_simulability(simulability_results, db_path=db_path)
     logger.info(
-        "simulability: %d/%d passed",
+        "🧬 simulability: %d/%d passed",
         sum(r.passed for r in simulability_results),
         len(simulability_results),
     )
@@ -247,7 +247,7 @@ def run_pipeline(
     )
     new_ccd_codes = [c for c in all_ccd_codes if c not in already_parameterizability_checked]
     logger.info(
-        "parameterizability: %d/%d ligands already checked, %d new",
+        "💊 parameterizability: %d/%d ligands already checked (⏭️), %d new",
         len(all_ccd_codes) - len(new_ccd_codes), len(all_ccd_codes), len(new_ccd_codes),
     )
     smiles_by_ccd_code = fetch_smiles_for_ccd_codes(new_ccd_codes)
@@ -264,14 +264,14 @@ def run_pipeline(
             upsert_meeko_parameterization,
         )
     except ImportError:
-        logger.info("meeko parameterization skipped: `validate` extra not installed")
+        logger.info("⏭️ meeko parameterization skipped: `validate` extra not installed")
     else:
         already_meeko_checked = (
             set() if force_refresh else set(load_meeko_parameterization(db_path).keys())
         )
         new_meeko_codes = [c for c in all_ccd_codes if c not in already_meeko_checked]
         logger.info(
-            "meeko: %d/%d ligands already checked, %d new",
+            "💊 meeko: %d/%d ligands already checked (⏭️), %d new",
             len(all_ccd_codes) - len(new_meeko_codes), len(all_ccd_codes), len(new_meeko_codes),
         )
         if new_meeko_codes:
@@ -292,7 +292,7 @@ def run_pipeline(
     )
     new_literature_pdb_ids = [p for p in pdb_ids if p not in already_literature_fetched]
     logger.info(
-        "literature: %d/%d already fetched, %d new",
+        "📚 literature: %d/%d already fetched (⏭️), %d new",
         len(pdb_ids) - len(new_literature_pdb_ids), len(pdb_ids), len(new_literature_pdb_ids),
     )
     if new_literature_pdb_ids:
@@ -305,7 +305,7 @@ def run_pipeline(
             set() if force_refresh else set(load_validation_results(EX02_EXERCISE, db_path).keys())
         )
         ex02_results: list[ValidationResult] = []
-        for entry in tqdm(entries, desc="ex02 modeling", unit="candidate"):
+        for entry in tqdm(entries, desc="🧠 ex02 modeling", unit="candidate"):
             if entry.pdb_id in already_ex02_validated:
                 logger.debug("ex02 %s: already validated, skipping", entry.pdb_id)
                 continue
@@ -317,7 +317,7 @@ def run_pipeline(
             try:
                 alphafold_entry = fetch_alphafold_entry(uniprot_accession)
             except ValueError as exc:
-                logger.warning("ex02 skipped for %s: %s", entry.pdb_id, exc)
+                logger.warning("⏭️ ex02 skipped for %s: %s", entry.pdb_id, exc)
                 continue
             if alphafold_entry is not None:
                 upsert_alphafold_entry(alphafold_entry, db_path=db_path)
@@ -328,7 +328,7 @@ def run_pipeline(
             upsert_validation_results(EX02_EXERCISE, ex02_results, db_path=db_path)
         already_ex02_in_batch = sum(1 for e in entries if e.pdb_id in already_ex02_validated)
         logger.info(
-            "ex02 modeling: %d/%d already validated, %d newly validated",
+            "🧠 ex02 modeling: %d/%d already validated (⏭️), %d newly validated",
             already_ex02_in_batch, len(entries), len(ex02_results),
         )
 
@@ -339,7 +339,7 @@ def run_pipeline(
             set() if force_refresh else set(load_validation_results(EX03_EXERCISE, db_path).keys())
         )
         ex03_results: list[ValidationResult] = []
-        for entry in tqdm(entries, desc="ex03 MD", unit="candidate"):
+        for entry in tqdm(entries, desc="🧪 ex03 MD", unit="candidate"):
             if entry.pdb_id in already_ex03_validated:
                 logger.debug("ex03 %s: already validated, skipping", entry.pdb_id)
                 continue
@@ -351,7 +351,7 @@ def run_pipeline(
                     result = run_test_md(entry.pdb_id, n_steps=ex03_n_steps)
             except ImportError:
                 logger.warning(
-                    "ex03 MD validation stopped: validation conda env not installed "
+                    "⚠️ ex03 MD validation stopped: validation conda env not installed "
                     "(see environment-validation.yml)"
                 )
                 break
@@ -363,7 +363,7 @@ def run_pipeline(
             upsert_validation_results(EX03_EXERCISE, ex03_results, db_path=db_path)
         already_ex03_in_batch = sum(1 for e in entries if e.pdb_id in already_ex03_validated)
         logger.info(
-            "ex03 MD: %d/%d already validated, %d newly validated",
+            "🧪 ex03 MD: %d/%d already validated (⏭️), %d newly validated",
             already_ex03_in_batch, len(entries), len(ex03_results),
         )
 
@@ -373,7 +373,7 @@ def run_pipeline(
         )
         pocket_results = []
         with tempfile.TemporaryDirectory() as tmp_dir:
-            for entry in tqdm(entries, desc="pocket detection", unit="candidate"):
+            for entry in tqdm(entries, desc="🕳️ pocket detection", unit="candidate"):
                 if entry.pdb_id in already_pocket_checked:
                     logger.debug("pocket detection %s: already checked, skipping", entry.pdb_id)
                     continue
@@ -386,20 +386,20 @@ def run_pipeline(
                     )
                     pocket_results.append(result)
                 except FileNotFoundError as exc:
-                    logger.warning("pocket detection stopped: %s", exc)
+                    logger.warning("⚠️ pocket detection stopped: %s", exc)
                     break
                 except requests.RequestException as exc:
-                    logger.warning("pocket detection skipped for %s: %s", entry.pdb_id, exc)
+                    logger.warning("⏭️ pocket detection skipped for %s: %s", entry.pdb_id, exc)
         if pocket_results:
             upsert_pocket_detection(pocket_results, db_path=db_path)
         already_pocket_in_batch = sum(1 for e in entries if e.pdb_id in already_pocket_checked)
         logger.info(
-            "pocket detection: %d/%d already checked, %d newly checked",
+            "🕳️ pocket detection: %d/%d already checked (⏭️), %d newly checked",
             already_pocket_in_batch, len(entries), len(pocket_results),
         )
 
     rows = build_report_table(db_path=db_path, weights=weights)
     if report_csv_path is not None:
         write_report_csv(rows, report_csv_path)
-        logger.info("report written to %s (%d rows)", report_csv_path, len(rows))
+        logger.info("✅ report written to %s (%d rows)", report_csv_path, len(rows))
     return rows
