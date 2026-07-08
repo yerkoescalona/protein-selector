@@ -62,6 +62,15 @@ _PROGRESS_CHUNKS = 100  # simulation.step(n_steps) is one opaque OpenMM call wit
 # during a run, since "big simulations" (large n_steps) can take minutes with zero
 # visibility otherwise. Chunking adds a small per-chunk Python/OpenMM call overhead;
 # negligible next to the real cost of the dynamics themselves.
+_DEFAULT_MAX_MINIMIZATION_ITERATIONS = 0  # 0 = OpenMM's own default: run until
+# convergence, however many iterations that takes. This is a REAL, unbounded-wall
+# -clock risk, not a guessed one -- minimizeEnergy() has no time limit of its own,
+# and the O(N^2) NoCutoff force evaluation (see this module's docstring) makes each
+# iteration's cost scale badly with atom count, so one large/badly-behaved candidate
+# can dominate an entire pipeline run. Kept at 0 (unbounded) by default to preserve
+# prior behavior and not silently trade convergence for an arbitrary guessed cap --
+# pass a real value via `max_minimization_iterations` for triage runs where a bounded
+# worst-case wall-clock matters more than every candidate reaching full convergence.
 
 
 def run_test_md(
@@ -71,6 +80,7 @@ def run_test_md(
     timestep_fs: float = _DEFAULT_TIMESTEP_FS,
     temperature_kelvin: float = _DEFAULT_TEMPERATURE_KELVIN,
     max_atoms: int | None = None,
+    max_minimization_iterations: int = _DEFAULT_MAX_MINIMIZATION_ITERATIONS,
 ) -> ValidationResult:
     """Fetch/read, repair, and run a short OpenMM MD test on one structure.
 
@@ -83,6 +93,13 @@ def run_test_md(
     configurable gate, not a guessed default, since "too large" depends on
     the actual Colab wall-clock budget (PLAN.md §9), which this module
     doesn't hardcode.
+
+    ``max_minimization_iterations`` is OpenMM's own real ``maxIterations``
+    parameter to ``minimizeEnergy()`` (0 = unbounded, the default here --
+    see ``_DEFAULT_MAX_MINIMIZATION_ITERATIONS``'s comment for why this
+    isn't capped by default). If minimization is cut off before converging,
+    that's reflected honestly in ``notes``, not silently treated the same
+    as a fully-converged run.
 
     Requires the validation conda environment (`openmm`, `pdbfixer`); raises
     ``ImportError`` with an install hint if unavailable.
@@ -118,6 +135,8 @@ def run_test_md(
             def __init__(self, pdb_id: str) -> None:
                 super().__init__()
                 self._bar = tqdm(desc=f"{pdb_id} minimizing", unit="iter", leave=False)
+                self.total_calls = 0  # tracked so the caller can tell whether
+                # max_minimization_iterations was actually hit, for an honest note.
 
             # `MinimizationReporter.report`'s *base* Python method is declared
             # as `report(self, iteration, x, grad)` (verified in the real
@@ -131,6 +150,7 @@ def run_test_md(
             def report(  # ty: ignore[invalid-method-override]
                 self, iteration, x, grad, args
             ) -> bool:
+                self.total_calls += 1
                 self._bar.set_postfix_str(f"energy={args['system energy']:.1f} kJ/mol")
                 self._bar.update(1)
                 return False  # never stop minimization early
@@ -228,7 +248,9 @@ def run_test_md(
     start = time.monotonic()
     minimization_reporter = _TqdmMinimizationReporter(pdb_id)
     try:
-        simulation.minimizeEnergy(reporter=minimization_reporter)
+        simulation.minimizeEnergy(
+            maxIterations=max_minimization_iterations, reporter=minimization_reporter
+        )
     except Exception as exc:
         minimization_reporter.close()
         stages.close()
@@ -240,6 +262,20 @@ def run_test_md(
             notes=[f"energy minimization failed: {exc}"],
         )
     minimization_reporter.close()
+    # Approximate, not a precise "did we hit the cap" signal -- OpenMM's own
+    # iteration index can reset mid-run (see _TqdmMinimizationReporter's
+    # docstring), so this is an honest heuristic (total callback count vs.
+    # the requested cap), not a claim of exact convergence detection.
+    minimization_possibly_cut_off = (
+        max_minimization_iterations > 0
+        and minimization_reporter.total_calls >= max_minimization_iterations
+    )
+    if minimization_possibly_cut_off:
+        logger.info(
+            "⚠️ %s: minimization stopped at max_minimization_iterations=%d "
+            "(%d callbacks seen) -- may not have fully converged",
+            pdb_id, max_minimization_iterations, minimization_reporter.total_calls,
+        )
     stages.update(1)
 
     stages.set_postfix_str(f"🏃 running {n_steps} MD steps at {timestep_fs} fs")
@@ -282,12 +318,18 @@ def run_test_md(
         )
 
     logger.info("✅ %s: MD completed in %.1fs, final PE %.1f kJ/mol", pdb_id, elapsed, potential_energy)
+    notes = [
+        f"{n_atoms} atoms, {n_steps} steps at {timestep_fs} fs completed cleanly, "
+        f"final PE {potential_energy:.1f} kJ/mol"
+    ]
+    if minimization_possibly_cut_off:
+        notes.append(
+            f"minimization may not have fully converged: stopped at "
+            f"max_minimization_iterations={max_minimization_iterations}"
+        )
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,
         effort_seconds=elapsed,
-        notes=[
-            f"{n_atoms} atoms, {n_steps} steps at {timestep_fs} fs completed cleanly, "
-            f"final PE {potential_energy:.1f} kJ/mol"
-        ],
+        notes=notes,
     )
