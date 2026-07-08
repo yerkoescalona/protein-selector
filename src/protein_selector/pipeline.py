@@ -255,6 +255,15 @@ def run_pipeline(
         _, parameterizability_results = filter_parameterizable(smiles_by_ccd_code)
         upsert_parameterizability(parameterizability_results, db_path=db_path)
 
+    # Real, live-discovered bug, fixed here (2026-07-06): filter_meeko_parameterizable
+    # lazily imports rdkit/meeko itself (inside a subprocess, not this module), so
+    # meeko_parameterization.py's own top-level `import` statement always succeeds
+    # regardless of whether the `validate` extra is installed -- wrapping just that
+    # import statement in try/except ImportError (the old code) never actually
+    # caught the real "meeko/rdkit not installed" case; it was dead code. The whole
+    # call must be inside the try, since that's where the real ImportError can now
+    # be raised (meeko_parameterization.py's own pre-flight check, added for the
+    # same reason -- see its docstring).
     try:
         from protein_selector.docking.meeko_parameterization import (
             filter_meeko_parameterizable,
@@ -263,9 +272,7 @@ def run_pipeline(
             load_meeko_parameterization,
             upsert_meeko_parameterization,
         )
-    except ImportError:
-        logger.info("⏭️ meeko parameterization skipped: `validate` extra not installed")
-    else:
+
         already_meeko_checked = (
             set() if force_refresh else set(load_meeko_parameterization(db_path).keys())
         )
@@ -286,6 +293,8 @@ def run_pipeline(
                 {c: smiles_by_ccd_code.get(c) for c in new_meeko_codes}
             )
             upsert_meeko_parameterization(meeko_results, db_path=db_path)
+    except ImportError as exc:
+        logger.info("⏭️ meeko parameterization skipped: %s", exc)
 
     already_literature_fetched = (
         set() if force_refresh else set(load_literature_counts(db_path).keys())

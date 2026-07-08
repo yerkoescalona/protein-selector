@@ -73,7 +73,7 @@ class TestRunPipelineAlwaysOnStages:
         assert load_ligand_ccd_codes(db_path=db_path) == {"4HHB": ["HEM"]}
         assert "HEM" in load_parameterizability(db_path=db_path)
 
-    def test_meeko_skip_is_not_fatal_when_validate_extra_missing(self, monkeypatch, db_path):
+    def test_meeko_skip_is_not_fatal_when_module_import_itself_fails(self, monkeypatch, db_path):
         import builtins
 
         real_import = builtins.__import__
@@ -81,6 +81,30 @@ class TestRunPipelineAlwaysOnStages:
         def fake_import(name, *args, **kwargs):
             if name == "protein_selector.docking.meeko_parameterization":
                 raise ImportError("simulated missing rdkit/meeko")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        rows = run_pipeline(db_path=db_path, run_ex02=False)
+        assert len(rows) == 1
+
+    def test_meeko_skip_is_not_fatal_when_meeko_itself_is_missing(self, monkeypatch, db_path):
+        # Regression test for a live-discovered bug (2026-07-06): a user hit
+        # this exact case -- rdkit installed, meeko not. meeko_parameterization.py's
+        # own module import always succeeds (it has no top-level rdkit/meeko
+        # import), so the *module* import never raises; only the real
+        # `import meeko` inside filter_meeko_parameterizable's pre-flight
+        # check does. The old pipeline.py code wrapped only the module
+        # import statement in try/except, so this case used to propagate
+        # uncaught (or, before the pre-flight check existed, hang -- see
+        # test_meeko_parameterization.py's TestInterpretProcessResult).
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "meeko":
+                raise ImportError("simulated missing meeko")
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)

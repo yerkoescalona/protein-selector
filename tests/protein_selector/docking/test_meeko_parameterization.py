@@ -7,9 +7,13 @@ network (same rationale as test_parameterizability.py). Requires the
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from protein_selector.docking.meeko_parameterization import (
+    MeekoParameterizationResult,
+    _interpret_process_result,
     check_meeko_parameterizable,
     filter_meeko_parameterizable,
 )
@@ -86,3 +90,74 @@ class TestFilterMeekoParameterizable:
         assert results[0].ligand_id == "ETH"
         assert results[0].passed is False
         assert "timed out" in results[0].reasons[0]
+
+    def test_missing_meeko_or_rdkit_raises_import_error_before_spawning_anything(
+        self, monkeypatch
+    ):
+        # Regression test for a live-discovered bug (2026-07-06): a user ran
+        # the real pipeline in an environment with rdkit but not meeko
+        # installed. filter_meeko_parameterizable used to have no pre-flight
+        # check at all -- it would spawn one subprocess per ligand, each of
+        # which crashed on `import meeko` with a raw traceback dumped to
+        # stderr (not a catchable exception in this process), and
+        # pipeline.py's `try/except ImportError` around the *module import
+        # statement* never actually caught it (that module has no top-level
+        # rdkit/meeko import -- see the module docstring). Now it must fail
+        # once, fast, with a clean ImportError, before spawning anything.
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "meeko":
+                raise ImportError("simulated missing meeko")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        with pytest.raises(ImportError, match="uv sync --extra validate"):
+            filter_meeko_parameterizable({"ETH": "CCO"})
+
+
+class TestInterpretProcessResult:
+    """_interpret_process_result in isolation -- no real subprocess needed."""
+
+    def test_alive_process_is_terminated_and_reported_as_timeout(self):
+        process = MagicMock()
+        process.is_alive.return_value = True
+        queue = MagicMock()
+
+        result = _interpret_process_result("ETH", process, queue, timeout_seconds=5.0)
+
+        process.terminate.assert_called_once()
+        assert result.passed is False
+        assert "timed out" in result.reasons[0]
+
+    def test_dead_process_with_a_result_returns_it(self):
+        process = MagicMock()
+        process.is_alive.return_value = False
+        expected = MeekoParameterizationResult(ligand_id="ETH", passed=True, reasons=[])
+        queue = MagicMock()
+        queue.empty.return_value = False
+        queue.get.return_value = expected
+
+        result = _interpret_process_result("ETH", process, queue, timeout_seconds=5.0)
+
+        assert result is expected
+
+    def test_dead_process_with_no_result_does_not_hang_or_raise(self):
+        # The actual live-discovered bug: a crashed child (not a timeout)
+        # that never called queue.put(...) -- must return a real failure,
+        # not block on queue.get() forever.
+        process = MagicMock()
+        process.is_alive.return_value = False
+        process.exitcode = 1
+        queue = MagicMock()
+        queue.empty.return_value = True
+
+        result = _interpret_process_result("ETH", process, queue, timeout_seconds=5.0)
+
+        assert result.ligand_id == "ETH"
+        assert result.passed is False
+        assert "exited" in result.reasons[0]
+        queue.get.assert_not_called()

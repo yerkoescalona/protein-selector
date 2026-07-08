@@ -23,6 +23,20 @@
 # Create with: micromamba env create -f environment-validation.yml
 # Run validation modules with: micromamba run -n protein-selector-validation <command>
 #
+# meeko (docking/meeko_parameterization.py, real Meeko/AutoDock
+# parameterization stage-2 check) is a REAL, live-discovered omission, fixed
+# 2026-07-06: this env was missing it entirely, even though it's a hard
+# dependency of an already-live-verified module. It had only ever been
+# `pip install`ed into this project's base pip/uv venv (via the `validate`
+# extra), never into this conda env -- so any code path routed through this
+# conda env's own Python (as filter_meeko_parameterizable's subprocess
+# workers are, when this env is what's running the pipeline) hit a real
+# `ModuleNotFoundError: No module named 'meeko'`, not a hang or a silent
+# skip. conda-forge has it (`meeko` package) -- and resolved to 0.7.1 here,
+# the exact same version this project's pip `validate` extra installs,
+# verified live (`micromamba install` + `import meeko; meeko.__version__`),
+# so no API drift concern between the two installation paths.
+#
 # Per .claude/CLAUDE.md's "Boundary with the course repo": this environment
 # is instructor-tool-only. Never let it leak into the student course repo's
 # own environment.yml -- students don't need openff-toolkit/pdbfixer/vina/plip
@@ -41,3 +55,4 @@ dependencies:
   - plip
   - openbabel
   - fpocket
+  - meeko

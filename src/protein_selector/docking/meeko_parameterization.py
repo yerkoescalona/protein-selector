@@ -156,6 +156,57 @@ def _run_check_into_queue(
     queue.put(check_meeko_parameterizable(ligand_id, smiles))
 
 
+def _interpret_process_result(
+    ligand_id: str,
+    process: multiprocessing.process.BaseProcess,
+    queue: multiprocessing.Queue[MeekoParameterizationResult],
+    timeout_seconds: float,
+) -> MeekoParameterizationResult:
+    """Turn a joined subprocess's outcome into a result -- never blocks, never raises.
+
+    Split out from ``_check_meeko_parameterizable_with_timeout`` so the two
+    real failure modes below are independently unit-testable without needing
+    to reproduce a real hang or a real crash in an actual subprocess.
+
+    **Real, live-discovered bug, fixed here (2026-07-06):** a joined process
+    can be *not alive* for two different reasons -- it timed out and was
+    terminated (handled below), or it exited on its own WITHOUT ever putting
+    anything on the queue (e.g. an unhandled exception inside
+    ``check_meeko_parameterizable`` that ``_run_check_into_queue`` doesn't
+    catch -- concretely, an ``ImportError`` if meeko/rdkit somehow aren't
+    importable in the child's own environment). The original code called
+    ``queue.get()`` unconditionally once ``process.is_alive()`` was ``False``,
+    silently assuming that meant "finished normally with a result" -- for the
+    crash case it actually blocks forever with no exception and no timeout,
+    indistinguishable from a hang. Guarded with ``queue.empty()`` instead of
+    trusting exit implies a result.
+    """
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        return MeekoParameterizationResult(
+            ligand_id=ligand_id,
+            passed=False,
+            reasons=[
+                f"Meeko/RDKit check timed out after {timeout_seconds}s -- likely a hung "
+                "3D embed (known real limitation for some organometallic/coordination "
+                "ligands, e.g. HEM)"
+            ],
+        )
+
+    if queue.empty():
+        return MeekoParameterizationResult(
+            ligand_id=ligand_id,
+            passed=False,
+            reasons=[
+                f"Meeko/RDKit check subprocess exited (code {process.exitcode}) without a "
+                "result -- see stderr for the real traceback (multiprocessing prints "
+                "unhandled child exceptions there, not to this process' exception chain)"
+            ],
+        )
+    return queue.get()
+
+
 def _check_meeko_parameterizable_with_timeout(
     ligand_id: str, smiles: str | None, timeout_seconds: float
 ) -> MeekoParameterizationResult:
@@ -172,19 +223,7 @@ def _check_meeko_parameterizable_with_timeout(
     process = ctx.Process(target=_run_check_into_queue, args=(ligand_id, smiles, queue))
     process.start()
     process.join(timeout_seconds)
-    if process.is_alive():
-        process.terminate()
-        process.join()
-        return MeekoParameterizationResult(
-            ligand_id=ligand_id,
-            passed=False,
-            reasons=[
-                f"Meeko/RDKit check timed out after {timeout_seconds}s -- likely a hung "
-                "3D embed (known real limitation for some organometallic/coordination "
-                "ligands, e.g. HEM)"
-            ],
-        )
-    return queue.get()
+    return _interpret_process_result(ligand_id, process, queue, timeout_seconds)
 
 
 def filter_meeko_parameterizable(
@@ -201,9 +240,33 @@ def filter_meeko_parameterizable(
     ``timeout_seconds`` -- see ``_check_meeko_parameterizable_with_timeout``'s
     docstring for why (a live-confirmed hang on HEM, not a guessed risk).
 
+    **Real, live-discovered bug, fixed here (2026-07-06):** ``rdkit``/``meeko``
+    are only imported lazily *inside the subprocess* (``check_meeko_parameterizable``),
+    which means a missing install used to only surface as a raw traceback
+    dumped to stderr by ``multiprocessing`` from inside a doomed child
+    process -- once per ligand in the batch, and NOT as a catchable
+    ``ImportError`` in this process, so callers like
+    ``pipeline.py``'s ``try: ... except ImportError`` (which wraps the
+    module *import statement*, not a call into it) never actually caught
+    this case; that guard was effectively dead code for "meeko/rdkit not
+    installed." Fixed by checking importability once, here, in the parent
+    process before spawning anything -- fails fast with the same clean
+    ``ImportError`` message ``check_meeko_parameterizable`` raises when
+    called directly (single-item, no subprocess), instead of N slow,
+    doomed subprocesses each producing scary but uninformative output.
+
     Returns (ligand IDs that passed, results for every ligand) -- mirrors
     ``parameterizability.filter_parameterizable``'s shape.
     """
+    try:
+        import meeko  # noqa: F401
+        import rdkit  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "filter_meeko_parameterizable requires rdkit and meeko; "
+            "install them via `uv sync --extra validate`."
+        ) from exc
+
     results = []
     for ligand_id, smiles in tqdm(ligands.items(), desc="💊 Meeko parameterization", unit="ligand"):
         logger.debug("💊 meeko %s: starting real 3D-embed + PDBQT check", ligand_id)
