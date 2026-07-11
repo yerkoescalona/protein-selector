@@ -3,12 +3,10 @@
 Dense agent-facing brief. Decisions are explicit; assumptions are surfaced. The
 instructor-vs-student fork is **resolved in §2**: this is an instructor validation tool.
 
-> **Status:** now its **own standalone git repo** (promoted out of the course
-> `exercises/scripts/`). `find_small_proteins_with_ligands.py` is the v0 seed — a partial
-> hard-filters stage (UniProt enzyme search → RCSB size/resolution/method filter →
-> per-entry ligand check → CSV). Everything below extends *from* it. Working repo name:
-> `protein-selector` (rename freely). The course depends on this tool's **output** (a
-> vendored CSV), never on its toolchain — see §12.
+> **Status:** own standalone git repo (promoted out of the course `exercises/scripts/`).
+> `legacy/find_small_proteins_with_ligands.py` is the superseded v0 seed — reference only.
+> The course depends on this tool's **output** (a vendored CSV), never on its toolchain —
+> see §12.
 
 > **ICM framing:** this repo follows the Interpretable Context Methodology (see
 > `CONTEXT.md`), whose context hierarchy is called "Layers" (0 identity, 1 routing,
@@ -30,26 +28,17 @@ protein"; the rationale is itself teaching material.
 
 ## 2. RESOLVED: this is an instructor validation tool
 
-**Decided.** This is a tool **the instructor runs** to find and vet proteins *before*
-handing them to students. It is **not** a student-facing artifact. Consequences that ripple
-through the whole plan:
+**Decided.** The instructor runs this to find and vet proteins *before* handing them to
+students — not a student-facing artifact.
 
-- The deliverable is a **curated shortlist the instructor trusts**, not a public table.
-- **A-priori validation is the core function, not an add-on.** The whole reason the tool
-  exists: some candidate proteins are trivially easy for the exercises and some *break in
-  class* (won't parameterize, box too big for the Colab time budget, no dockable pocket,
-  AlphaFold hedges on a floppy domain). You cannot know which from metadata alone — you
-  have to **actually attempt the exercise pipeline** on the shortlist and observe.
-- Therefore the "test-MD / test-dock / test-AlphaFold" runs that a student-facing design
-  would defer are here **promoted to the heart of the tool** (§4a, §5). They run only on
-  the hard-filters/simulability/parameterizability survivors (still cheap→expensive), but
-  they are the point.
-- The difficulty score is **two-part**: *predicted* difficulty (cheap proxies) plus
-  *measured* difficulty (did the actual test run succeed, and how painful was it). The
-  gap between the two is itself informative — a protein that looks easy but fails the
-  test-dock is exactly what this tool must catch.
+- [x] Deliverable is a curated shortlist the instructor trusts, not a public table.
+- [x] **A-priori validation is the core function, not an add-on** — metadata alone can't
+      tell "trivially easy" from "breaks in class"; the tool actually attempts the
+      exercise pipeline on the shortlist and observes (§4a, §5).
+- [x] Difficulty score is **two-part**: predicted (cheap proxies) + measured (did the real
+      test run succeed, how painful). The gap between the two is itself informative.
 
-There is no longer a fork; §10 is a single instructor-tool path.
+No fork remains; §10 is a single instructor-tool path.
 
 ---
 
@@ -61,735 +50,545 @@ the ~20–50 survivors. **Never run an LLM over thousands of entries.**
 | Stage | What | Cost | On how many |
 |-------|------|------|-------------|
 | **Hard filters** | residue count, resolution, method, polymer-entity count, organism, specific ligand | free, instant (1 RCSB query) | whole PDB |
-| **Simulability** | resolution <~2.5 Å, missing-loop/gap check (PDBe completeness), oligomeric state, non-standard residues, size window ~100–300 aa | cheap API calls | hundreds |
-| **Parameterizability** | RDKit/Meeko/OpenFF can sanitize+parameterize the ligand; fpocket finds a pocket | seconds/protein, local | hundreds |
-| **Literature** | literature richness (Europe PMC counts — no LLM), then LLM only for "does this make pedagogical sense" | rate-limited / paid | 20–50 survivors |
+| **Simulability** | resolution, completeness, oligomeric state, non-standard residues, size window | cheap API calls | hundreds |
+| **Parameterizability** | RDKit/Meeko/OpenFF ligand sanitize+parameterize; fpocket pocket | seconds/protein, local | hundreds |
+| **Literature** | Europe PMC counts (no LLM), then optional LLM pedagogical read | rate-limited / paid | 20–50 survivors |
+| **Validation (a-priori)** | actually run each exercise's real pipeline and record success/failure + effort | minutes–hours/protein | ~20–50 shortlist only |
 
-Then a fifth stage, which is the reason the tool exists for an instructor:
-
-| Stage | What | Cost | On how many |
-|-------|------|------|-------------|
-| **Validation (a-priori)** | actually run each exercise's real pipeline (short test-MD, real test-dock, AlphaFold predict) and record success/failure + effort | minutes–hours/protein | ~20–50 shortlist only |
-
-Design rule: **cheap gates live in hard filters through parameterizability; empirical
-difficulty is measured in validation.** fpocket pocket existence and the
-ligand-parameterization *attempt* are cheap parameterizability gates. The *full
-test-docking run*, a *short real MD*, and an *AlphaFold prediction* are the validation
-stage — they run only on the hard-filters/simulability/parameterizability survivors, but
-they are **not optional**: they are how the tool distinguishes "looks fine" from
-"actually teachable." See §4a.
+Design rule: cheap gates live in hard filters through parameterizability; empirical
+difficulty is measured only in validation, which is **not optional** — it's how the tool
+distinguishes "looks fine" from "actually teachable" (§4a).
 
 ---
 
-## 4. Gap from v0 script → target (concrete deltas)
+## 4. Gap from v0 script → target
 
-The current script is hard-filters-ish but has issues to fix as it's refactored:
-- [ ] **No caching / resume** — every run re-hits the API. Add per-PDB JSON cache keyed by
-      PDB ID (this is what makes "+20 proteins next year" cheap; see §7).
-- [ ] **UniProt-first path is lossy** — it truncates to 5 PDBs/protein and stops at 50.
-      Prefer a single RCSB structured query as the hard-filters spine (the `RCSBLigandFinder` query
-      is closer to right); keep UniProt only for cofactor annotation enrichment.
-- [ ] **Ligand filter is a hardcoded set + name heuristics** — replace with the CCD-based
-      exclusion + a real parameterizability check, not string length.
-- [ ] **`num_residues` computation is fragile** (multiplies molecules × a possibly-zero
-      count) — verify against `rcsb_entry_info.deposited_polymer_monomer_count`.
-- [x] **Sequential per-entry REST + `time.sleep` — VERIFIED FIX AVAILABLE (RCSB Data API
-      docs, data.rcsb.org, official source, 2024–25).** Replace `get_structure_details` /
-      `get_ligands`'s one-call-per-PDB-ID loop with **batched GraphQL** via the
-      `entries(entry_ids: [...])` root query — RCSB's own "Usage Guidelines" state the
-      batch endpoints accept **up to 1000 IDs per request**. Use the official, maintained
-      **`rcsb-api` Python package** (`rcsbapi.search` for the hard-filters candidate-ID search,
-      `rcsbapi.data` for the batched metadata fetch) instead of hand-rolled `requests`
-      calls — cites Rose et al., *J. Mol. Biol.* 2020, DOI 10.1016/j.jmb.2020.11.003.
-      This alone is likely a >10x wall-clock win with **zero local storage**.
-- [ ] **No difficulty score, no rationale** — the actual novel contribution (§5).
+- [x] Batched GraphQL via official `rcsb-api` (up to 1000 IDs/request) replaces sequential
+      per-entry REST + `time.sleep` — implemented in `structural_biology/candidates.py`.
+- [ ] UniProt-first path is lossy (truncates to 5 PDBs/protein, stops at 50) — prefer the
+      RCSB structured query as the hard-filters spine; keep UniProt only for cofactor
+      enrichment.
+- [ ] Ligand filter is a hardcoded set + name heuristics — replace with CCD-based exclusion
+      + real parameterizability check.
+- [ ] `num_residues` computation is fragile — verify against
+      `rcsb_entry_info.deposited_polymer_monomer_count`.
+- [x] Difficulty score + rationale — the actual novel contribution (§5), done.
 
-### 4b. Local metadata table (do NOT mirror full PDB structure files)
+### 4b. Local metadata table (do NOT mirror full PDB structure files) — RESOLVED
 
-Considered downloading a full local PDB mirror to speed up queries — **rejected, and now
-empirically confirmed unnecessary, not just theoretically rejected.** Almost everything
-hard filters/simulability need is metadata (resolution, method, ligand composition,
-residue counts), not atomic coordinates; downloading full structure files to filter on
-metadata is the exact anti-pattern the layered design (§3) argues against. Full atomic
-files are only needed for the parameterizability/validation shortlist (~20–50 proteins),
-fetched on demand.
-
-**Empirical confirmation (2026-07-04, `scripts/benchmark_pipeline.py`, live RCSB API):**
-the full hard-filters + simulability pipeline (search + entry-metadata fetch +
-oligomeric-state fetch + non-standard-residue fetch) processes **~500 real candidates
-in under 3 seconds**, and barely slows down at 2000 candidates — round-trip latency
-dominates, not data volume, because the RCSB Data API batches up to 1000 IDs/request
-(`rcsbapi.const.const.DATA_API_MAX_BATCH_ID_SIZE`) and the hard-filters search itself runs
-server-side (never scans the whole archive locally). At this tool's actual scale
-(~hundreds of candidates, annual cadence — §13), **an archive-wide local metadata table
-is not needed.** Re-run `scripts/benchmark_pipeline.py` if this conclusion ever needs
-re-checking (e.g. after an RCSB API change, or if scale assumptions change).
-
-Given that, the originally-planned **archive-wide** local table (fetching the full
-Holdings list of ~250k+ current PDB IDs and their metadata, ahead of any specific
-hard-filters filter) is **not being built** — it would solve a performance problem that measurement
-shows doesn't exist at this tool's scale:
-1. [~] Fetching the full **Repository Holdings Service REST API** "current entries" list
-   — **superseded by the benchmark result; not needed.** The hard filters' server-side search already
-   returns candidate IDs fast for any realistic filter; there's no need to also hold a
-   local copy of the entire archive's ID list.
-2. [~] Batch-querying metadata for that full archive-wide ID list — **also superseded**;
-   `candidates.fetch_entry_metadata` already does this per-search-result, which is what's
-   actually needed.
-3. [x] **Persist the result as one local SQLite table — DECIDED, implemented
-   (`store.py`).** One table per pipeline stage (`candidates`, `simulability`,
-   ...), each keyed by `pdb_id`, upserted so a re-run only touches changed rows.
-   Chose SQLite over DuckDB/Parquet: zero new dependency (stdlib `sqlite3`, matching
-   this repo's "add a dep only when needed" discipline), natural keyed-upsert
-   semantics (a JSON/Parquet blob needs a full read-merge-rewrite per update), and
-   the right scale for "~hundreds of candidates, annual cadence" (§13) — DuckDB/Parquet
-   are built for large-scale analytics this tool doesn't need. **Deliberate design
-   choice: each stage keeps its own small dataclass (`CandidateEntry`, `SimulabilityResult`,
-   ...) rather than one growing shared object — `store.py` only persists/reloads them;
-   joining across stages into the final §8 output row is a separate, not-yet-built step.**
-   This local cache is **per-search-result** (built from whatever hard-filters candidates a run
-   actually fetched), not an archive-wide mirror — that distinction is exactly what the
-   benchmark confirmed is the right scope.
-4. [ ] Fetch full structure files only for the parameterizability/validation shortlist,
-   individually, on demand.
-
-- [x] ~~Verify the exact Holdings API "current entries" endpoint~~ — moot, per above;
-      not being built.
+- [x] **Rejected an archive-wide local mirror, confirmed unnecessary by benchmark.**
+      `scripts/benchmark_pipeline.py` (live RCSB API, 2026-07-04): full hard-filters +
+      simulability pipeline processes ~500 real candidates in <3s, barely slows at 2000 —
+      round-trip latency dominates, not data volume (server-side search + up to
+      1000-ID batched fetch). At this tool's scale (~hundreds, annual cadence, §13) no
+      archive-wide table is needed. Re-run the benchmark if this ever needs re-checking.
+- [x] **Persist per-search-result state in local SQLite** (`core/db.py` + each domain's
+      `store.py`) — one table per pipeline stage, keyed by `pdb_id` (mostly), upserted so
+      re-runs only touch changed rows. Chosen over DuckDB/Parquet: zero new dependency
+      (stdlib `sqlite3`), natural keyed-upsert semantics, right scale for this tool.
+- [ ] Fetch full structure files only for the parameterizability/validation shortlist,
+      individually, on demand.
 
 ---
 
 ## 4a. Validation harness — the a-priori "does this actually work" test
 
-For each shortlist protein, run the **real exercise pipelines** the students will run, in
-the **same Colab-equivalent environment**, and record what happens. This is the empirical
-core. Each exercise gets a validator that returns `{status, effort, failure_mode, notes}`.
+For each shortlist protein, run the **real exercise pipelines** students will run, in the
+same Colab-equivalent environment, and record what happens. Each validator returns
+`{status, effort, failure_mode, notes}`.
 
-**ex02 / modeling validator** (Block B, lives in `modeling/`)
-- **Scope is deliberately narrow: fetch-only, never fold.** Pull the AlphaFold DB entry
-  for the candidate if one exists; record its pLDDT distribution and inter-domain PAE.
-  Do **not** run a new AlphaFold prediction — that's expensive, and this validator's job
-  is just "is there already a well-known, trusted structure for this protein," not
-  structure prediction itself.
-- Failure/difficulty modes: no AlphaFold DB entry at all, large low-pLDDT stretches
-  (floppy → hard to reason about), high inter-domain PAE (ill-defined domain).
-- Easy-signal: DB entry exists, crisp single domain, high pLDDT, low PAE → good intro
-  example.
-- **Mutation-focused work is explicitly out of scope here** and belongs in a separate,
-  future `protein_design/` domain (RFdiffusion/ProteinMPNN-adjacent — matches the parent
-  course repo's lecture 12 territory). Don't fold mutation logic into `modeling/`; the two
-  are different pedagogical purposes (extracting a known structure vs. designing/mutating
-  one) and should stay in separate folders even though both touch "AlphaFold."
+**ex02 / modeling validator** (`modeling/`) — fetch-only, never folds: pulls the AlphaFold
+DB entry if one exists, records pLDDT/PAE. Failure modes: no DB entry, low-pLDDT stretches,
+high inter-domain PAE. Mutation-focused work is out of scope here (future `protein_design/`).
 
-**ex03 / MD validator** (Block C)
-- Run the real prep (PDBFixer: caps, missing atoms/loops) then a **short test MD** in
-  OpenMM sized to the Colab time budget.
-- Failure/difficulty modes: won't fixup (large gaps), non-standard residues the force
-  field rejects, box/atom count blows the Colab wall-clock, instability/blow-up at
-  minimization, requires a ligand that must be parameterized first.
-- Easy-signal: clean fixup, small box, stable short run.
-- **The apo-protein-only version is done; the actual pedagogical goal is a protein +
-  relevant-ligand complex simulation**, which needs the ligand parameterized for the MD
-  force field first (OpenFF, not Meeko/PDBQT — that's the docking toolchain, a different
-  concern). See the reordered step list in §10: OpenFF parameterization is now sequenced
-  *before* the ex04 docking validator for this reason.
+**ex03 / MD validator** (`molecular_dynamics/`) — real PDBFixer repair + short OpenMM test
+MD sized to the Colab time budget. Failure modes: won't fixup, rejected residues, box/time
+blowup, instability, ligand needs parameterizing first.
 
-**ex04 / docking validator** (Block D)
-- Parameterize the ligand (Meeko/OpenFF), detect the pocket (fpocket), run a **real
-  test-dock** (Vina), analyze interactions (PLIP).
-- Failure/difficulty modes: ligand won't sanitize/parameterize, no clear pocket (fpocket
-  low druggability score), covalent/metal-coordinated ligand (special handling), self-dock RMSD far
-  from crystal (poor teachable validation), PLIP shows no interpretable interactions.
-- Easy-signal: parameterizes cleanly, one obvious pocket, self-dock reproduces the
-  crystal pose, interactions make biological sense.
+**ex04 / docking validator** (`docking/`) — Meeko/OpenFF parameterize, fpocket pocket, real
+Vina test-dock, PLIP interaction analysis. Failure modes: won't parameterize, no clear
+pocket, covalent/metal ligand, poor self-dock RMSD, no interpretable interactions.
 
-**Record, don't just pass/fail.** Persist for every protein: which exercise it's suitable
-for, *why* it's easy or hard, the wall-clock it took, and the exact failure mode if any.
-That record IS the pedagogical value and the input to §5. Cache validation results per PDB — they
-are the expensive part; never recompute an unchanged protein.
+**Record, don't just pass/fail** — persist per protein which exercise it's suitable for,
+why, wall-clock, exact failure mode. Cache per PDB; never recompute an unchanged protein.
 
-- [ ] Build one validator per exercise behind a common `{status, effort, failure_mode,
-      notes}` interface.
-- [ ] Run validation in the student-equivalent env (§9) so measured effort reflects *their*
-      constraints, not a beefy workstation.
-- [ ] Define a **failure taxonomy** enum shared across validators (parameterization,
-      completeness, size/time, pocket, stability, confidence, special-chemistry).
+- [x] One validator per exercise behind a common `{status, effort, failure_mode, notes}`
+      interface — `core/validation_result.py`'s `{ValidationStatus, FailureMode,
+      ValidationResult}`, shared across all three (§10 step 4 for implementation detail).
+- [x] Shared failure taxonomy enum (`FailureMode`: parameterization, completeness,
+      size/time, pocket, stability, confidence, docking quality, special-chemistry).
+- [ ] Confirm validation actually runs in the student-equivalent Colab env, not just a
+      workstation (§9) — measured effort must reflect real student constraints.
 
 ## 5. The novel piece: pedagogical difficulty score
 
-Nobody combines automated selection with an **explicit difficulty/pedagogical score**.
-This is the original contribution; everything else is reused (§6). For an instructor tool
-the score is **two-part and per-exercise** — a protein easy for ex04 docking can be brutal
-for ex03 MD, so there is no single scalar.
+Two-part and **per-exercise** — a protein easy for ex04 docking can be brutal for ex03 MD,
+so there is no single scalar.
 
-**(a) Predicted difficulty (cheap, hard-filters/simulability/parameterizability proxies):**
-- **Size** (residues/atoms) → compute-time difficulty for Colab MD.
-- **Functional clarity** (has EC number, clear cofactor, single dominant domain).
-- **Literature richness** (Europe PMC count) → is the case rich enough for discussion.
-- **Docking suitability** (fpocket druggability score, ligand druglikeness/Lipinski).
-- **Structural cleanliness** (resolution, completeness, no weird residues).
-- **Domain definition** (AlphaFold PAE off-diagonal / pLDDT) → well-defined domain = easier.
+**(a) Predicted (cheap proxies):** size, functional clarity, literature richness, docking
+suitability (fpocket score, Lipinski), structural cleanliness, AlphaFold domain definition.
 
-**(b) Measured difficulty (from the validation-stage validators, §4a):** did the real test run succeed,
-its wall-clock effort, and the failure mode if any — **per exercise (ex02/ex03/ex04)**.
+**(b) Measured (from validators, §4a):** did the real test succeed, wall-clock effort,
+failure mode — per exercise.
 
-- [x] **Score is a documented, inspectable function; weights in a config file, not buried.**
-      Implemented in `core/difficulty.py`. This repo has no external config-file system
-      anywhere else (every other module's tunable default is a plain function/dataclass
-      argument, e.g. `simulability.py`'s `min_residues=50`) — `ScoringWeights` follows that
-      same convention rather than introducing a new one just for this. `predict_ex02_difficulty`
-      (AlphaFold low-confidence fraction — directly bounded [0,1], no weighting needed),
-      `predict_ex03_difficulty` (size + resolution + completeness, weighted average),
-      `predict_ex04_difficulty` (pocket druggability + ligand parameterizability, weighted
-      average, renormalized over whichever inputs are actually available). None of the
-      weights/ceilings are PLAN.md-mandated numbers — reasonable starting points, adjust via
-      a different `ScoringWeights` instance.
-- [x] **Emit per-exercise difficulty, not one number.** `assess_exercise` combines a
-      predicted score with the real `ValidationResult` (if the exercise has been run) into
-      one `ExerciseAssessment` per exercise; `core/report.py`'s `suitable_for` lists exactly
-      the exercises whose status is `"pass"`.
-- [x] **Predicted-vs-measured gap.** `predicted_vs_measured_gap` = measured − predicted;
-      positive means "looked easier than it actually was" (documented explicitly as the
-      highest-value catch this tool exists to prevent).
-- [x] **Spiral-curriculum tier** (`intro`/`core`/`challenge`) per exercise. `difficulty_tier`
-      buckets `effective_difficulty` (prefers measured over predicted, since it's the real
-      outcome, falling back to predicted only pre-validation).
+- [x] Score is a documented, inspectable function; weights in `core/difficulty.py`'s
+      `ScoringWeights` dataclass (this repo's standing convention for tunables — no
+      external config-file system elsewhere). `predict_ex02/03/04_difficulty` implemented.
+- [x] Per-exercise difficulty, not one number — `assess_exercise` → `ExerciseAssessment`;
+      `core/report.py`'s `suitable_for` lists exercises with status `"pass"`.
+- [x] Predicted-vs-measured gap — `predicted_vs_measured_gap` (measured − predicted;
+      positive = "looked easier than it was," the highest-value catch this tool exists for).
+- [x] Spiral-curriculum tier (`intro`/`core`/`challenge`) per exercise —
+      `difficulty_tier`/`effective_difficulty` (prefers measured, falls back to predicted).
 
 ---
 
 ## 6. Reuse, don't reinvent (verify each before depending on it)
 
-The brief cites these as settled; treat citations/thresholds as **⚠ candidate until you
-open the source** (anti-hallucination — see §11):
-- ⚠ Published filtering thresholds: ProteinFlow, Proteina, protein-ligand
-  benchmark-construction paper (arXiv 2105.06222). Reuse their cutoffs; verify numbers.
-- ⚠ Curated MD datasets to *source* dynamics/examples instead of simulating: ATLAS
-  (~1390 proteins, 3×100 ns) and mdCATH (multi-temperature). Verify counts/licences.
-- ⚠ DynaMate — existing LLM agent for protein-ligand MD prep (fetch→clean→cap→ligand
-  extract/protonate→parameterize→box). Heavy overlap with parameterizability prep; evaluate before
-  rebuilding that flow.
+Treat citations/thresholds as **⚠ candidate until you open the source** (§11):
+- ⚠ Published filtering thresholds: ProteinFlow, Proteina, arXiv 2105.06222. Verify numbers.
+- ⚠ Curated MD datasets (ATLAS, mdCATH) as discussion supplements, not validation substitutes.
+- ⚠ DynaMate — existing LLM MD-prep agent; evaluate before rebuilding that flow.
 
 ---
 
-## 7. Workflow engine: Snakemake vs. plain script (honest tradeoff)
+## 7. Workflow engine: Snakemake vs. plain script
 
-- **Justified because:** per-protein fan-out (scatter), and **caching/resume** so adding
-  20 proteins next year doesn't re-run the previous 300 — real given expensive docking/MD.
-  The reproducible pipeline doubles as course content.
-- **Against:** the literature/judgment stage (API/LLM calls) is not file-based-natural; it's
-  wrappable (each call writes JSON) but the DAG's judgment half will have uglier wrappers
-  than its clean half.
-- **Now stronger:** confirming this as an instructor validation tool means the expensive,
-  per-protein, **cacheable validation runs** (test-dock / test-MD / AlphaFold) are central — which
-  is precisely Snakemake's sweet spot (scatter + resume). Re-running next year's +20
-  proteins without redoing last year's 300 validation runs is a real, recurring win.
-- **Honest caveat:** hard filters through parameterizability over a few hundred proteins is
-  still fine as a plain script with parquet checkpoints. The workflow engine earns its keep
-  specifically at the validation stage.
-  **Nextflow is overkill** unless HPC/cloud or nf-core conventions become goals.
-
-- [x] **Decision implemented (2026-07-06):** `pipeline.py`'s `run_pipeline()` is the
-      script-first orchestrator this decision calls for — wires hard filters through
-      literature/AlphaFold-DB-lookup always-on, `MdSimulationConfig`/`PocketDetectionConfig`
-      as optional off-by-default dataclass configs. **Still not Snakemake** — validation
-      landing (ex02/ex03/ex04 all exist now) hasn't yet made per-protein caching/resume a
-      real pain point in practice, since every stage's SQLite upsert already gives most of
-      that benefit for free (re-running the pipeline just refreshes rows, doesn't
-      duplicate work) — and `run_pipeline` now also skips already-persisted work
-      explicitly (§10 step 4's "incremental" note). Revisit this decision if/when a real
-      multi-year, many-candidate run makes the lack of a cached DAG actually hurt — not
-      preemptively.
+- [x] **Decided: script-first, not Snakemake.** `pipeline.py`'s `run_pipeline()` wires
+      every stage; each stage's SQLite upsert already gives most of the caching/resume
+      benefit Snakemake would add (re-runs refresh rows, don't duplicate work), and
+      `run_pipeline` skips already-persisted work explicitly. Revisit only if a real
+      multi-year, many-candidate run makes the lack of a cached DAG actually hurt.
+      Nextflow is overkill unless HPC/cloud becomes a goal.
 
 ---
 
-## 7a. `run_pipeline` improvement plan (2026-07-08, Phase 1 done)
+## 7a. `run_pipeline` config/gating cleanup (2026-07-08)
 
-`pipeline.py`'s `run_pipeline` was refactored (2026-07-06, §7) from a flat parameter list
-to one dataclass per stage. Using it surfaced two real design gaps, not just naming
-issues — recorded here so the rationale survives past this session.
+- [x] **Fixed a real gap: simulability was computed but never used to drop candidates**
+      before expensive downstream stages ran — defeated the point of §3's layered design.
+      Now `entries` is filtered on `SimulabilityResult.passed` before any downstream stage.
+- [x] **Split one tangled config into two**, by a stated rule (search-config iff sent to
+      RCSB as a query term; filter-config iff checked client-side on already-fetched
+      metadata): `CandidateSearchConfig` (was `HardFilterConfig`) and
+      `CandidateFilterConfig` (was `SimulabilityConfig`). `ExperimentalMethod(StrEnum)`
+      replaces a raw `method: str` — only `X_RAY_DIFFRACTION` is RCSB-schema-verified so
+      far; add other members one at a time, live-verified, never bulk-added from memory.
+- [x] Full gate clean (261 passed, 2 skipped) after the rename; notebooks updated.
 
-**Gap 1 — a computed filter that filtered nothing.** `check_full_simulability` was run and
-persisted for every candidate, but its `SimulabilityResult.passed` was never used to drop
-anything from the `entries` list — every downstream stage (parameterizability, Meeko,
-literature, modeling lookup, MD, pocket detection) kept processing candidates that had
-already failed simulability. Recording-without-gating defeats the point of a "cheap gate
-before expensive stages" design (§3).
-
-**Gap 2 — search vs. filter concerns were tangled into one config.** The fix for gap 1
-required deciding, field by field, whether each knob belongs to *querying RCSB* or to
-*checking a returned candidate's metadata*. The rule that fell out of that exercise,
-stated explicitly so it doesn't need re-deriving later: **a field belongs to the search
-config iff it's sent to RCSB as a query term (shapes what comes back / how many); it
-belongs to the filter config iff it's checked client-side on metadata already fetched (or
-fetched via a necessarily-separate follow-up call, e.g. oligomeric state/non-standard
-residues, which need their own assembly-/entity-level requests no search query can
-express).** Two configs, not one:
-
-- `CandidateSearchConfig` (replaces `HardFilterConfig`): `max_candidates`, `methods:
-  list[ExperimentalMethod]` (plural — RCSB's `Attr.in_()` supports an OR-of-methods query,
-  **live-verified** via `dir(Attr(...))` showing `in_` is a real method), `sample_pool_size`,
-  `random_seed`. `max_atoms` demoted from a field to an internal module constant
-  (`_RCSB_MAX_ATOMS_CEILING`) — it's a loose technical safety ceiling (RCSB has no
-  residue-count query field to filter on directly), not a knob anyone tunes pedagogically.
-- `CandidateFilterConfig` (replaces `SimulabilityConfig`): `min_residues`, `max_residues`
-  (default lowered 300→50 — MD simulation is O(atoms²) `NoCutoff`, see
-  `MdSimulationConfig`'s docstring, so a tight default keeps an out-of-the-box run fast),
-  `max_resolution` (single value, reused for both the coarse server-side pre-filter and the
-  real client-side gate — no reason for search and filter to disagree on resolution the way
-  they legitimately can on method), `methods: list[ExperimentalMethod] | None = None`
-  (narrows a search that intentionally cast a wide net, e.g. search `[X_RAY_DIFFRACTION,
-  SOLUTION_NMR]` to compare both in the report, filter down to `[X_RAY_DIFFRACTION]` only
-  before the expensive stages, since NMR entries are typically multi-model ensembles the
-  MD/pocket stages don't handle).
-- `ExperimentalMethod(StrEnum)` replaces the raw `method: str` — RCSB's `exptl.method` is a
-  closed vocabulary, but only `X_RAY_DIFFRACTION = "X-RAY DIFFRACTION"` is
-  RCSB-schema-verified so far (it's this codebase's existing default); other members (NMR,
-  cryo-EM, ...) must be added one at a time, each verified against a live
-  `data.rcsb.org` response before being hardcoded — **do not** bulk-add the vocabulary from
-  memory (anti-hallucination rule, §11).
-
-**Phase 1 — done (2026-07-08):**
-- [x] `candidates.py`: added `ExperimentalMethod(StrEnum)`, one RCSB-verified member
-      (`X_RAY_DIFFRACTION`); `build_hard_filters_query`/`search_candidate_ids` take
-      `methods: list[ExperimentalMethod]` via `Attr.in_()` (serialization
-      `{"operator": "in", "value": [...]}` live-verified) instead of `method: str` via `==`.
-- [x] `pipeline.py`: finished the `CandidateSearchConfig`/`CandidateFilterConfig` rename;
-      after `simulability_results` is computed, non-`passed` candidates (and, when
-      `CandidateFilterConfig.methods` narrows the search, non-matching methods) are dropped
-      from `entries` — and only then is `upsert_candidates` called — before any downstream
-      stage (parameterizability, Meeko, literature, modeling lookup, MD, pocket detection)
-      runs. `max_atoms` demoted to internal `_RCSB_MAX_ATOMS_CEILING`.
-- [x] `tests/protein_selector/test_pipeline.py`: renamed config classes at every call site;
-      added `_PERMISSIVE_FILTER` (threaded into every test not specifically exercising the
-      filter) and a real gating test
-      (`test_candidate_over_max_residues_is_filtered_out_before_pipeline_runs`) asserting a
-      filter-failing candidate never reaches `rows`, `run_test_md`, or the `candidates`
-      table at all. **Two real, previously-silent bugs in the shared `_ENTRY` test fixture,
-      caught only because filtering now actually enforces something:** `_ENTRY` had no
-      `n_modeled_residues`/`n_unmodeled_residues` (so `check_completeness` always failed
-      it as "completeness unknown") and the mocked `fetch_oligomeric_state` returned an
-      `AssemblyInfo` with `oligomeric_count=None` (so `check_oligomeric_state` always
-      failed it as "oligomeric state unknown") — every test in the file had been silently
-      relying on `simulability_results` never being checked. Both fixed by giving the
-      fixture real, complete values.
-- [x] `candidates.py` tests: replaced the old single-`method`-string parametrized case
-      (which asserted an unverified `"ELECTRON MICROSCOPY"` value) with
-      `test_methods_defaults_to_x_ray_diffraction_only` and
-      `test_methods_accepts_multiple_values_via_in_query`, both asserting the real
-      `operator: "in"` shape instead.
-- [x] `notebooks/run_real_pipeline.ipynb`: cell 2 (and the cell-0 markdown, cell-1 imports)
-      updated to the new config names — source-only edit, verified no `outputs`/
-      `execution_count` changed beyond what the notebook's own live kernel had already
-      produced before this edit.
-- [x] `ruff check .` / `ty check` / `pytest -q` all clean (261 passed, 2 skipped). Not yet
-      committed — holding per `.claude/CLAUDE.md`'s standing "never commit unless asked"
-      policy.
-
-**Phase 2 — close the ex04 docking-wiring gap (2026-07-08, infrastructure done, `run_pipeline` wiring still open).**
-§10 step 4 already notes `docking.docking_validation.run_docking_validation` is real and
-live-verified but not called from `run_pipeline` at all, because two pieces were missing: a
-receptor-prep wrapper (the live verification used `obabel -xr` by hand, no module wrapped
-it) and a docking-box center (`pocket.py`'s `parse_fpocket_info` only returned
-score/druggability/volume from fpocket's `_info.txt`, not coordinates).
-
-- [x] **Receptor-prep wrapper** — `docking/receptor_prep.py`'s `prepare_receptor_pdbqt`
-      (plain PDB → Vina-ready PDBQT via `obabel -xr`). **Live-verified (2026-07-08)** via
-      the persistent `micromamba` env against a real 1UBQ: success path (real 65KB PDBQT
-      written) and failure path (missing input) both confirmed. **Real, live-discovered
-      footgun, not guessed:** `obabel` exits `0` even when it fails to read its input file
-      (prints `*** Open Babel Error` + `0 molecules converted` to stderr, but the process's
-      own return code stays success) and still writes a real, empty output file — checking
-      `returncode` alone (the pattern `pocket.py`'s `run_fpocket` uses, where fpocket's own
-      exit code IS reliable) would have silently treated this as success. Fixed by checking
-      the output file actually exists and is non-empty instead. Unit tests
-      (`test_receptor_prep.py`) encode this exact footgun as a regression test.
-- [x] **Docking-box center** — `pocket.py`'s `PocketInfo.box_center`, populated by
-      `run_fpocket` from fpocket's separate per-pocket vertex file, parsed by the new
-      `_parse_vertex_centroid`. **Live-verified (2026-07-08)** via a real `fpocket` run on
-      1UBQ. **Two real corrections to this document's/`pocket.py`'s own prior claim, not
-      guessed:** (1) per-pocket detail files live in a `<stem>_out/pockets/` *subdirectory*,
-      not flat in `<stem>_out/` as originally assumed; (2) the vertex file is
-      `pocket{N}_vert.pqr` (PQR extension, fixed-width PDB-style `ATOM` columns), not
-      `_vert.pdb`. Centroid of the vertex ("alpha sphere") coordinates is used, not the
-      *other* per-pocket file (`pocket{N}_atm.pdb`, contacted receptor atoms) — a
-      real cavity-shape center, not just nearby-residue coordinates. Confirmed against a
-      real fpocket run: 4 real pockets on 1UBQ, each with a real 3-tuple center.
-      `pocket.py`'s "not yet live-verified end-to-end" note is now resolved.
-- [ ] **Still open: wire `DockingConfig` into `run_pipeline` itself.** The two blockers
-      above are closed, but composing them into an actual ex04 stage needs more design,
-      not just plumbing: (a) `meeko_parameterization.py`'s `check_meeko_parameterizable`
-      computes a ligand PDBQT internally but discards it (only returns pass/fail) — ex04
-      needs that PDBQT persisted/reusable, not recomputed; (b) `run_docking_validation`
-      needs `reference_ligand_pdb_block` (the crystal ligand's own HETATM lines, by CCD
-      code, from the downloaded receptor PDB) — nothing here extracts that yet; (c) which
-      pocket's `box_center` to use (highest score? highest druggability?) needs a decision.
-      Deliberately not rushed in the same pass as (a)/(b) above — each is its own real
-      design decision, not mechanical wiring. `PocketDetectionConfig` (fpocket only, no
-      PDBQT prep) stays wired and separate in the meantime, since pocket detection alone is
-      useful without ever docking.
+**Phase 2 — ex04 docking wiring:**
+- [x] **Receptor-prep wrapper** (`docking/receptor_prep.py`, `obabel -xr`) — live-verified.
+      Footgun found: `obabel` exits 0 even on a failed read; check output file
+      exists+non-empty, not just `returncode`.
+- [x] **Docking-box center** (`pocket.py`'s `PocketInfo.box_center`, parsed from fpocket's
+      per-pocket vertex file) — live-verified against a real fpocket run (1UBQ, 4 pockets).
+      Corrected two prior assumptions: detail files live in a `pockets/` subdirectory, and
+      the file is `.pqr` not `.pdb`.
+- [ ] **Still open: wire `DockingConfig` into `run_pipeline` itself.** Needs: (a) persisting
+      the ligand PDBQT Meeko already computes internally but discards, (b) extracting the
+      crystal ligand's reference HETATM block for RMSD comparison, (c) deciding which
+      pocket's `box_center` to use (highest score vs. druggability). Each is a real design
+      decision, not mechanical wiring — deliberately not rushed.
 
 ---
 
-## 8. Output contract (the deliverable — define early)
+## 7b. Output-naming audit: producer-owned names, one schema, drift-checked (2026-07-09)
 
-One ranked table (CSV + parquet), one row per candidate PDB, columns:
-`pdb_id, uniprot_id, title, organism, n_residues, n_atoms, resolution, method,
-n_protein_entities, ligand_ccd, ligand_smiles, ligand_parameterizable(bool),
-pocket_found(bool), pocket_score, completeness, nonstd_residues, litref_count,`
-plus the **per-exercise validation + difficulty** block (the point of the tool):
-`suitable_for (list of ex02/ex03/ex04),
-ex02_status, ex02_difficulty, ex02_failure_mode,
-ex03_status, ex03_difficulty, ex03_failure_mode,
-ex04_status, ex04_difficulty, ex04_failure_mode,
-predicted_vs_measured_gap, tier_per_exercise, rationale_json`
+**Problem:** column names were decided independently in three places (validator
+`EXERCISE_NAME` constants, `CandidateReportRow` fields, `_flatten_row` string logic) and
+drifted — a real semantic-drift failure mode, not hypothetical.
 
-- `*_status` ∈ {pass, fail, flag}; `*_failure_mode` from the shared taxonomy (§4a).
-- `rationale_json` holds the per-metric reasons + the validation notes — the instructor's evidence
-  for "this one is a clean intro / this one will break in class."
-- Keep an audit trail: dated snapshot + exact hard-filters query + tool/env versions, so a shortlist
-  is reproducible and you can diff year-over-year.
+**Fix (standard data-contract pattern, deliberately not over-built — no schema-registry
+service, no codegen):** producer-owned naming (the module computing a value owns its name);
+one SSOT (`core/report_schema.py`) the CSV/dataclass/serialization all derive from; a
+drift-detection test, not a one-time cleanup.
 
-**[x] Implemented (2026-07-06)** — `core/report.py`: `build_candidate_report` (pure
-composition over already-fetched/persisted per-stage results, missing-tolerant field by
-field) and `build_report_table` (the actual join: reads every domain's `store.py`
-loaders — `structural_biology`, `docking` incl. the new `ligand_ccd_codes` table below,
-`bioinformatics`, `modeling`, plus `core.validation_store` for all three exercises — and
-never calls a network API itself). `write_report_csv`/`rows_to_dataframe` (pandas) emit
-exactly this section's column contract, with each `ExerciseAssessment` flattened to
-`ex0X_status`/`ex0X_predicted_difficulty`/`ex0X_measured_difficulty`/`ex0X_gap`/
-`ex0X_tier`/`ex0X_failure_mode`/`ex0X_notes`. **Real deviation from the `{pass, fail,
-flag}` enum stated above, not silent:** a fourth practical status, `"not_run"`, is used
-for any exercise this candidate hasn't been validated against yet — the original enum
-didn't anticipate "not yet validated," but building this report before every heavy
-conda-only validator has run against every candidate is the normal case, not an edge
-case. **A real, closed gap, not present before this work:** there was no persisted
-`pdb_id → ligand CCD code` mapping anywhere (`docking.ligands.fetch_ligand_ccd_codes`'s
-output was never cached) — added `ligand_ccd_codes` (keyed `(pdb_id, ccd_code)`) plus
-`docking.store.upsert_ligand_ccd_codes`/`load_ligand_ccd_codes` so this report stays a
-pure offline join, not one that silently needs a live RCSB call to populate the ligand
-columns. **Stated simplification, not a silent shortcut:** a candidate with multiple
-bound ligands only gets one row, describing its *first* CCD code (sorted for
-determinism) — matches this section's own singular-column schema, not invented here.
-Parquet output is not implemented (CSV only so far) — add if/when the workflow-engine
-step (§7) actually needs it.
+- [x] Killed `ex02`/`ex03`/`ex04` at the source → `"modeling"`/`"md_simulation"`/`"docking"`
+      (later amended `"modeling_lookup"` → `"modeling"`, 2026-07-10 — the exercise *slot*
+      isn't permanently a lookup-only implementation).
+- [x] `core/report_schema.py` built (`ColumnSpec`/`REPORT_COLUMNS`). Fixed two real bugs
+      found during the restructure, not just renames: `nonstd_residues` was reading "did
+      simulability fail for *any* reason" instead of the actual non-standard-residue flag
+      (was wrong for ~69% of real candidates, fixed to 5); `ex0X_notes` wasn't JSON-encoded
+      before CSV export. Renamed for traceability: `litref_count`→`literature_count`,
+      `ligand_parameterizable`→`ligand_rdkit_parameterizable`,
+      `pocket_score`→`pocket_druggability_score`, `pocket_found`→`pocket_druggable`.
+- [x] Drift-detection test added (`tests/protein_selector/core/test_report_schema.py`) —
+      asserts schema, dataclass fields, and a real CSV header all agree.
+- [x] Live db migrated in place (`UPDATE validation SET exercise = ...`), all three
+      notebooks updated and live-executed to confirm the new schema actually works.
+      **Lesson recorded:** an exercise-string rename needs either a real `UPDATE` migration
+      (persisted db) or a full delete-and-rebuild (disposable db) — never just re-running an
+      upsert-based seed script against old state, since a changed key value adds a new row
+      rather than overwriting the old one.
+
+Full gate clean: 276 passed, 2 skipped.
 
 ---
 
-## 9. Environment complementarity (what the course env already gives you)
+## 8. Output contract (the deliverable)
 
-**No JVM anywhere in this stack — decided.** p2rank was the one Java dependency ever
-considered here (pocket detection, parameterizability stage), and it's rejected: a JVM adds a second runtime to
-install/maintain for one narrow check, when a native-binary alternative exists that fits
-the same "external tool invoked via subprocess" pattern already accepted for AutoDock
-Vina. **Replaced with `fpocket`** (verified real, actively maintained, conda-forge:
-`fpocket-4.2.3`, pure C, depends only on `libgcc`/`libnetcdf` — no JVM, no pip package,
-install via conda/mamba). Every reference to p2rank elsewhere in this document is
-superseded by fpocket; if you see "p2rank" anywhere else, it's stale — replace it.
+One ranked table (CSV), one row per candidate PDB — full column list is the SSOT in
+`core/report_schema.py`, not duplicated here. Core shape: candidate metadata + ligand
+columns + per-exercise `{status, predicted_difficulty, measured_difficulty, gap, tier,
+failure_mode, notes}` blocks + `suitable_for` + `rationale_json`.
 
-The exercises `environment.yml` already covers much of the pipeline — reuse it:
-- **Have:** `pypdb`, `biopandas`, `biopython` (fetch/parse), `rdkit` (ligand sanitize,
-  Lipinski, SMILES), `openmm`+`pdbfixer` (MD prep / test), `mdanalysis`, `py3dmol`/`nglview`.
-- **Env deltas to add** (keep them in a *separate* selector env if this becomes its own
-  repo, to not bloat the student env):
-  - [x] `requests` — declared dep in `pyproject.toml`.
-  - [x] `meeko` (+ `scipy`/`numpy`/`gemmi` it needs transitively but doesn't declare) —
-        parameterizability ligand parameterization, done (`meeko_parameterization.py`).
-  - [x] `openff-toolkit` + `openmmforcefields` + `pdbfixer` — validation-stage ex03 MD validator, done
-        (`md_validation.py`). Confirmed live: these three cannot be pip-installed
-        (`openff-toolkit`'s only PyPI release is yanked; `pdbfixer` has no real pip
-        release either) — they live in the new `environment-validation.yml` conda env, kept
-        separate from this project's pip/uv base env exactly as this line originally
-        called for. `openmmforcefields`'s `SystemGenerator`/template generators
-        genuinely require a real `openff.toolkit.Molecule` internally (confirmed by
-        reading their source, not their docstring, which misleadingly implies raw
-        RDKit `Mol` support) — there's no lighter subset of "the openforcefield API"
-        that avoids this.
-  - [ ] `fpocket` — pocket detection (**conda/mamba only, no pip package** — a native C
-        binary, no JVM; verify install path when parameterizability pocket detection is built).
-  - [ ] `plip` — interaction analysis (teaching: *which* interactions, not just Vina score).
-  - [ ] AutoDock Vina + the CCSB/Forli Colab env (Meeko, Molscrub, ProDy, reduce2) — only
-        for the shortlist test-dock, deferred.
-  - [ ] `snakemake` — only when §7 flips to workflow mode.
-  - Europe PMC / RCSB / PDBe are plain REST via `requests` — no client library needed.
+- [x] **Implemented** — `core/report.py`'s `build_candidate_report` (pure composition) +
+      `build_report_table` (the real cross-stage join, reads every domain's `store.py`,
+      never calls a network API) + `write_report_csv`/`rows_to_dataframe`.
+- [x] **Stated deviation from the `{pass, fail, flag}` enum:** a fourth practical status,
+      `"not_run"`, covers any exercise not yet validated — the normal case, not an edge case.
+- [ ] Parquet output not implemented (CSV only) — add if/when §7 ever needs it.
+
+### 8a. Ligand multiplicity: protein-grain canonical, NO row-per-ligand explosion — RESOLVED 2026-07-11
+
+**Decision: the report stays one row per candidate protein.** A protein can bind several
+ligands; §8's row carries only the *first* CCD (sorted, deterministic). Rejected exploding
+to one row per (protein, ligand):
+- The pedagogical unit is the protein — 149 candidates must stay countable as 149.
+- Difficulty/validation are per-protein-per-exercise (`validation` keyed `(pdb_id,
+  exercise)`); exploding would duplicate ~30 protein-level columns per ligand row and
+  falsely imply a per-ligand docking difficulty the pipeline never computed.
+- No data is actually lost at the source — `ligand_ccd_codes`/`parameterizability`/
+  `meeko_parameterization` are all keyed per-ligand and intact (297 rows in the real DB).
+  Only the report *projection* collapses to the primary.
+
+**How multiplicity is surfaced instead** (all read per-ligand tables directly, bypassing
+the primary-only collapse): the connections graph (§14, N ligand nodes per protein), a
+master–detail ligand sub-table, and an optional derived (never persisted) exploded
+protein–ligand pairs table for ligand-property filtering.
+
+- [ ] Follow-up, not a blocker: a nested `ligands: list[LigandReport]` field on
+      `CandidateReportRow` would let the main table show richer per-ligand columns without
+      changing the row grain.
 
 ---
 
-## 10. Minimal path to v0 (single instructor-tool path)
+## 9. Environment complementarity
 
-1. [~] **Hard filters:** switch to `rcsb-api` for the candidate-ID search and batched metadata
-   fetch (§4, §4b) — **`src/protein_selector/candidates.py` implements this**:
-   `search_candidate_ids()` builds the same five hard filters the v0 script used
-   (protein-entity present, non-polymer present, atom-count ceiling, method,
-   resolution ceiling) via `rcsbapi.search`'s typed `Attr`/`AttributeQuery`
-   (confirmed identical filter structure to the v0 dict via local `to_dict()`
-   inspection — no network needed for that check); `fetch_entry_metadata()` batches
-   the metadata fetch via `rcsbapi.data.DataQuery` in one call (the package chunks
-   internally per `config.DATA_API_INPUT_ID_LIMIT`, no manual pagination loop).
-   Persistence lives in `store.py` (SQLite, see §4b) — `upsert_candidates()`/
-   `load_candidates()`, keyed by PDB ID.
-   **Note on `Attr` vs. the `search_attributes` proxy:** used `Attr(name, "text")`
-   directly rather than the dotted `search_attributes.rcsb_entry_info.foo` proxy —
-   the proxy resolves fields via runtime metaprogramming that `ty` cannot see
-   through; `Attr` is the equivalent, statically-checkable constructor for the
-   same fields (confirmed via the pre-built attrs' own `repr()`, which shows
-   `type='text'` for all fields used here).
-   **⚠ Not yet verified against a live network call** — this sandbox's outbound
-   network access to `search.rcsb.org`/`data.rcsb.org` appears blocked (a test
-   query hung indefinitely and was killed); the module was built from verified
-   local introspection of the installed `rcsb-api` package (constructor
-   signatures, config values, source of `_process_input_ids`) but the actual
-   HTTP round trip, response shape, and rate-limit behavior are unconfirmed.
-   **Run `search_candidate_ids()` and `fetch_entry_metadata()` end-to-end in an
-   environment with real network access before trusting this as the sole hard-filters
-   path** — treat it as implemented-but-unverified, not done.
-   Still open: drop the lossy UniProt-first loop and old per-entry `requests`
-   calls from `find_small_proteins_with_ligands.py` once the new module is
-   verified (keep UniProt only for cofactor enrichment); upgrade the JSON cache
-   to the SQLite/DuckDB/Parquet table described in §4b once the entry-count
-   scale (whole-PDB Holdings list) makes JSON impractical.
-2. **Simulability and parameterizability cheap checks** with SQLite persistence →
-   pass/flag. Cut to a ~20–50 shortlist.
-   - [x] **Simulability FULLY IMPLEMENTED (2026-07-04)** — all four checks, all field
-     paths **live-verified against data.rcsb.org**, not guessed:
-     - `check_size_and_resolution` — residue-count window (~50–300 aa) +
-       tightened resolution ceiling, pure logic on fields the hard filters already fetch.
-     - `check_completeness` — unmodeled-residue fraction, using
-       `n_modeled_residues`/`n_unmodeled_residues` (verified fields
-       `deposited_modeled_polymer_monomer_count`/`deposited_unmodeled_polymer_monomer_count`,
-       added to the hard filters' entry-level fetch for free — same query, no new round trip).
-     - `check_oligomeric_state` — needs `composition.py`'s new assembly-level
-       fetch (verified: `pdbx_struct_assembly.oligomeric_details`/`oligomeric_count`).
-     - `check_non_standard_residues` — needs `composition.py`'s new polymer-entity
-       -level fetch (verified: `entity_poly.nstd_monomer` "yes"/"no" string,
-       `entity_poly.rcsb_non_std_monomer_count`).
-     `check_full_simulability` composes all four into one `SimulabilityResult`;
-     oligomeric-state/non-standard-residue checks are informational by default
-     (no ceiling / allowed) since PLAN.md never mandated a hard rule for either —
-     set `max_oligomeric_count`/`allow_non_standard_residues` to actually gate.
-     All persisted via `store.py`'s new `oligomeric_state`/`entity_composition`
-     tables. Full pipeline (hard-filters fetch → composition fetch → combined check)
-     verified end-to-end against the real live API for 4HHB, not just mocked.
-   - [x] **Two real, significant bugs caught via live verification — see
-     `.claude/CLAUDE.md` "Bugs found via live verification" for full detail:**
-     1. `rcsb_entry_container_identifiers.uniprot_ids` and unqualified
-        `rcsb_entity_source_organism...` were **not valid entry-level paths at
-        all** — both are polymer-entity-level fields reached only via a nested
-        `polymer_entities` list. Silently shipped broken for several commits
-        because mocked test fixtures encoded the same wrong assumption the code
-        made. Fixed in `candidates.py`; fixture rebuilt from a real verified
-        response.
-     2. `search_candidate_ids`'s `list(session)` auto-paginates through **every**
-        matching result when materialized — `rows` is a page size, not a total
-        cap. A broad hard-filters filter (tens of thousands of matches) would silently
-        take from many minutes to hours instead of being "instant" (the hard-filters
-        promise, §3). Fixed with `itertools.islice(session, rows)`; regression
-        test added (`test_caps_results_at_rows_even_if_session_yields_more`).
-     **Lesson reinforced:** mocked tests validate internal logic, not
-     assumptions about an external API's actual shape/behavior — periodically
-     re-verify live, don't just trust that mocks match reality once and forever.
-   - [x] **Parameterizability (RDKit sanitization)** —
-     `parameterizability.py`: `check_ligand_parameterizable`/`filter_parameterizable`,
-     a fast necessary-but-not-sufficient pre-filter (can RDKit even parse/sanitize
-     the ligand's SMILES?). Tested with **real RDKit calls, not mocked** — pure
-     local library logic, no network. Requires the `validate` extra
-     (`uv sync --extra validate`); `rdkit` is imported lazily inside the check
-     function specifically so `store.py` (which every stage needs) stays
-     importable without the `validate` extra installed — see `.claude/CLAUDE.md`
-     for the real bug this caught.
-   - [x] **Parameterizability SMILES wiring** — `ligands.py`: `fetch_ligand_ccd_codes`
-     (non-polymer entity ID → CCD code, e.g. "HEM") then
-     `fetch_smiles_for_ccd_codes` (CCD code → SMILES), two batched RCSB Data
-     API calls, both **live-verified (2026-07-05)** against real 4HHB data
-     (`nonpolymer_entity`/`pdbx_entity_nonpoly.comp_id` and
-     `chem_comp`/`rcsb_chem_comp_descriptor.SMILES`; compound ID format
-     `"{pdb_id}_{entity_id}"`, same convention as `composition.py`'s
-     polymer-entity fetch). Now the full CCD-code→SMILES→sanitization path
-     can run end-to-end on real hard-filters survivors.
-   - [x] **Parameterizability Meeko parameterization (docking side)** —
-     `meeko_parameterization.py`: `check_meeko_parameterizable`/
-     `filter_meeko_parameterizable`, the real check Vina docking depends on:
-     SMILES → RDKit 3D embed → Meeko `MoleculePreparation` → PDBQT. Tested
-     with **real rdkit + meeko calls, not mocked**, including a real bound-
-     ligand SMILES (PO4). **Live-discovered blocker fixed:** `meeko` (already
-     in the `validate` extra) failed to import — it transitively needs
-     `scipy`, `numpy`, and `gemmi`, none of which it declares as
-     dependencies; all three pinned explicitly in `pyproject.toml`'s
-     `validate` extra now (confirmed via repeated live import attempts, not
-     guessed in one shot). `rdkit`'s `AllChem.EmbedMolecule` needed the same
-     `# ty: ignore[unresolved-attribute]` stub-gap treatment as
-     `RDLogger.DisableLog`.
-   - [ ] **Parameterizability OpenFF parameterization (MD side)** — not started, **but now
-     sequenced ahead of the ex04 docking validator below** (see step 4). `openmm`
-     (real PyPI package, verified — `openmm==8.5.2` installs cleanly) is now
-     in the `validate` extra for this, but no wrapper code has been written;
-     `openff-toolkit` itself remains excluded from pip deps entirely (its
-     only PyPI release is yanked — conda-forge-first, see pyproject.toml
-     note) and would need a conda-side install when this work starts. Lives in
-     `molecular_dynamics/`, next to `md_validation.py`, not in `docking/` — it preps a
-     ligand for the *OpenMM* force field for a protein+ligand MD run, a different
-     toolchain from Meeko/PDBQT (which is Vina/docking-specific).
-   - [x] **Parameterizability fpocket pocket detection** — `pocket.py`: `run_fpocket`/
-     `check_pocket_detected`, plus a standalone `parse_fpocket_info` (pure
-     text parsing, no subprocess, tested directly against the verbatim
-     documented output format). **Decided against p2rank** (rejected the
-     Java/JVM dependency — see §9) **in favor of `fpocket`**, a native C
-     binary (verified real and maintained: `fpocket-4.2.3` on conda-forge).
-     CLI invocation (`fpocket -f x.pdb`) and `<stem>_out/<stem>_info.txt`
-     output format transcribed verbatim from fpocket's own
-     `GETTINGSTARTED.md` (Discngine/fpocket, fetched live 2026-07-05) — not
-     guessed. **Caveat: not yet run against a real fpocket binary** — this
-     sandbox has neither conda nor fpocket installed, so the subprocess
-     wrapper is built from documentation, not cross-checked against a live
-     run. Run it once for real (e.g. on fpocket's own `sample/1UYD.pdb`)
-     before trusting it on real candidates.
-3. [x] **Literature count** via Europe PMC → integer. **Implemented, live-verified
-   (2026-07-05).** `literature.py`: `fetch_literature_count`/`fetch_literature_counts`,
-   using the officially documented `ACCESSION_ID`/`ACCESSION_TYPE:pdb` search fields
-   (Europe PMC Web Service Reference Guide — verified against the real docs, not
-   guessed). Returns `int | None` (`None` = fetch failed/unknown, never silently `0`
-   — 0 is a real, meaningful answer here: "no papers found" is different from
-   "couldn't ask the question"). No batch endpoint exists (unlike RCSB's Data API) —
-   one HTTP request per PDB ID, sharing one `requests.Session` for connection pooling.
-   Persisted via `store.py`'s new `literature` table (plain `pdb_id → int|None`,
-   no dataclass — a single scalar doesn't need one). Verified live end-to-end:
-   candidates → literature counts → SQLite round-trip, all matching.
-4. **Validation harness (the core):**
-   - [x] **ex03 MD validator** — `validation_result.py` (shared `ValidationStatus`/`FailureMode`/
-     `ValidationResult` across all validation-stage validators, per §4a) + `md_validation.py`'s
-     `run_test_md`: real PDBFixer repair (fill missing atoms/loops, strip heterogens,
-     protonate) then a real short OpenMM MD run (vacuum, `NoCutoff` — see
-     `md_validation.py`'s docstring for why not explicit solvent). **Live-verified
-     end-to-end (2026-07-05)** in a throwaway conda env (this sandbox has no conda by
-     default; bootstrapped via `micromamba`, see `environment-validation.yml`): both the
-     success path (1UBQ, 1231 atoms, ~23s for 5ps→10ps-scale runs on CPU) and the real
-     `FailureMode.PARAMETERIZATION` path (4HHB with HEM left in — `ValueError: No
-     template found for residue 574 (HEM)...`, verified message, not guessed) work.
-     Requires the `environment-validation.yml` conda env (`openmm`, `pdbfixer`) — **not** pip;
-     `pdbfixer` has no meaningful pip release. Persisted via `store.py`'s
-     `validation` table, keyed by `(pdb_id, exercise)` so ex02/ex04 can share it.
-     Real per-ns wall-clock, measured live: ~2370s/ns for a 1231-atom apo protein in
-     vacuum on CPU (no GPU in this sandbox) — a real protein-ligand complex in
-     explicit water will be substantially slower; budget accordingly for "a couple ns."
-   - [x] **OpenFF parameterization (MD side, `molecular_dynamics/openff_parameterization.py`)**
-     — implemented: `check_ligand_openff_parameterizable`/`filter_openff_parameterizable`,
-     mirroring `docking/meeko_parameterization.py`'s shape (SMILES → `Molecule.from_smiles`
-     → conformer → SMIRNOFF `ForceField.create_openmm_system`). Persisted via the new
-     `molecular_dynamics/store.py` (`openff_parameterization` table, keyed by `ligand_id`,
-     separate from `parameterizability`/`meeko_parameterization` since it's a different
-     toolchain — a ligand can pass one and fail the other). `openff.toolkit` is lazily
-     imported inside the check function, same pattern as `md_validation.py`'s
-     `pdbfixer`/`openmm` imports, so `store.py` stays importable without the conda env.
-     **Live-verified (2026-07-06)** in a throwaway `micromamba` env bootstrapped from
-     `environment-validation.yml` (same approach as `md_validation.py`'s own live
-     verification): run for real against glucose's SMILES — parses, embeds a conformer,
-     and the SMIRNOFF `openff-2.1.0.offxml` force field builds a real OpenMM `System`
-     with no errors. The `Molecule.from_smiles`/`generate_conformers`/
-     `ForceField.create_openmm_system` API is confirmed correct as written, not guessed.
-   - [x] **ex04 docking validator** (`docking/vina_docking.py` + `docking/plip_analysis.py`
-     + `docking/docking_validation.py`) — implemented. `vina_docking.dock_top_pose`/
-     `run_self_dock` run a real Vina self-dock and compute the top pose's RMSD to the
-     crystal ligand pose (heavy atoms, index-order comparison — see the module's
-     documented atom-order-correspondence caveat); `plip_analysis.run_plip_analysis`
-     counts real PLIP-detected interaction types (H-bonds, hydrophobic contacts,
-     pi-stacking, salt bridges, halogen bonds, water bridges) on the docked complex;
-     `docking_validation.run_docking_validation` composes both into one `ValidationResult`
-     for `exercise="ex04"`. New `FailureMode.DOCKING_QUALITY` added to
-     `core/validation_result.py` for "ligand parameterized and a pocket exists, but the
-     dock itself is poor" (bad self-dock RMSD or no interpretable interactions) — distinct
-     from `POCKET`/`PARAMETERIZATION`. **`vina` and `plip` are both conda-only, same as
-     `pdbfixer`/`openff-toolkit`**: verified live (2026-07-05) that neither has a usable
-     pip wheel/build on this platform (`vina` needs Boost at build time; `plip`'s build
-     shells out to `pip install openbabel`, which fails the same way) — both added to
-     `environment-validation.yml` (plus `openbabel`, needed by plip). **Live-verified
-     end-to-end (2026-07-06)** in a throwaway `micromamba` env: a real receptor (1UBQ,
-     prepped via `obabel -xr`), a real ligand (ethanol, via `meeko_parameterization.py`'s
-     own pipeline), a real Vina dock, and real PLIP analysis, run through
-     `run_docking_validation` end to end — returned `ValidationStatus.SUCCESS` with a
-     0.04 Å self-dock RMSD and one real PLIP water-bridge interaction. **Two real,
-     silent bugs were caught and fixed by this verification** (see
-     `docking_validation.py`'s module docstring for full detail): (1) Meeko's PDBQT
-     output leaves the ligand's chain-ID column blank, which made PLIP's ligand finder
-     silently return zero ligands — fixed by forcing a real chain ID in
-     `_pdbqt_pose_to_pdb_hetatm_block`; (2) naively appending the ligand's HETATM lines
-     after a real receptor PDB's own trailing `END`/`MASTER` records produced invalid
-     "atom records after END" PDB, which also silently zeroed out PLIP's ligand
-     detection — fixed by `_assemble_complex_pdb`, which strips those trailing records
-     first. Both are exactly the kind of bug this repo's testing discipline warns about:
-     a monkeypatched unit test encoding the same wrong assumption never would have caught
-     either. Regression tests added for both.
-   - [x] **ex02 modeling validator** (`modeling/alphafold_lookup.py` + `modeling/modeling_validation.py`
-     + `modeling/store.py`) — implemented. Fetch-only, as scoped: `alphafold_lookup.fetch_alphafold_entry`
-     calls `GET https://alphafold.ebi.ac.uk/api/prediction/{uniprot_accession}` (real API,
-     **live-verified 2026-07-06** against P69905/hemoglobin-alpha for a real entry, P0DTD8
-     for a real 404 "no entry", and a malformed accession for a real 400) and parses the
-     summary JSON's confidence fields (`globalMetricValue`/`fractionPlddtVeryLow`/`Low`/
-     `Confident`/`VeryHigh`) — deliberately does **not** run a new AlphaFold prediction, and
-     deliberately does **not** attempt full PAE-matrix/domain analysis (see the module's
-     docstring for why the coarser fraction-based confidence signal was used instead).
-     `modeling_validation.run_modeling_validation` composes this into one `ValidationResult`
-     for `exercise="ex02"`: no entry → `FailureMode.COMPLETENESS` (reusing the same semantic
-     as `simulability.py`'s missing-data checks), too much low-confidence structure →
-     `FailureMode.CONFIDENCE`. Persisted via the new `modeling/store.py`'s `alphafold_entries`
-     table, keyed by `uniprot_accession` (not `pdb_id` — same rationale as ligand-keyed
-     tables: the AlphaFold entry is a property of the UniProt sequence, not any one PDB
-     entry). Live end-to-end run confirmed: real entry → `SUCCESS`; real no-entry accession
-     → `FAILURE`/`COMPLETENESS`; real malformed accession → `ValueError`, not silently
-     swallowed as "no entry."
-   Record `{status, effort, failure_mode}` per exercise; cache per PDB.
-5. [x] **Per-exercise difficulty score** (predicted + measured, §5); emit the §8 table
-   with `suitable_for` and the predicted-vs-measured gap. Implemented: `core/difficulty.py`
-   (scoring) + `core/report.py` (the join + CSV writer) — see §5/§8 above for full detail.
-   **This closes PLAN.md's own long-standing "not yet built" marker** on the cross-stage
-   join (referenced in `core/db.py`'s and several domains' `store.py`'s docstrings since
-   this repo's persistence layer was first built).
+- [x] **No JVM anywhere — decided.** p2rank rejected (Java dependency); replaced with
+      `fpocket` (verified conda-forge, pure C, no JVM). Every other reference to p2rank in
+      this doc is stale.
+- [x] `requests`, `meeko` (+ undeclared transitive `scipy`/`numpy`/`gemmi`, pinned
+      explicitly), `openff-toolkit`+`openmmforcefields`+`pdbfixer` (conda-only — verified
+      no usable pip release for the latter two) — all resolved, see §10 for detail.
+- [ ] `fpocket` — conda/mamba only, no pip package; verify install path.
+- [ ] `plip` — interaction analysis (teaching: *which* interactions, not just Vina score).
+- [ ] AutoDock Vina + CCSB/Forli Colab env — shortlist test-dock, deferred.
+- [ ] `snakemake` — only if §7's decision is ever revisited.
 
-**Deferred, not part of v0:** `protein_design/` (new domain folder, future) — mutation-
-focused work (RFdiffusion/ProteinMPNN-adjacent). Explicitly out of scope until the v0
-validation harness above ships; don't fold mutation logic into `modeling/`'s AlphaFold-DB
-fetch, the two are different pedagogical purposes.
+---
 
-**v0 slicing:** the priority order above (OpenFF → ex04 docking → ex02 modeling) reflects
-the actual end goal — a protein+ligand MD simulation — over shipping the narrowest
-"catches the most common breaks-in-class case" slice first. If time is tight, OpenFF +
-ex04 docking together still catch the two most common "breaks in class" cases (ligand
-won't parameterize for either force field; no dockable pocket); ex02 modeling can trail
-since it's the cheapest of the three (a DB fetch, not a real validation run) and least
-likely to be the blocker. Sourcing dynamics from ATLAS/mdCATH is a *supplement* for
-discussion material, **not** a substitute for validation — the instructor still needs to
-know the exercise itself runs.
+## 10. Minimal path to v0 (single instructor-tool path) — SHIPPED
+
+All five steps below are implemented and live-verified end-to-end against the real DB
+(149 candidates). Kept as a checklist for what to re-verify if any upstream API changes.
+
+1. [x] **Hard filters** (`structural_biology/candidates.py`) — `rcsb-api`-based
+       `search_candidate_ids()` (typed `Attr`/`AttributeQuery`, `Attr` used directly over
+       the dotted proxy since `ty` can statically check it) + `fetch_entry_metadata()`
+       (batched via `rcsbapi.data.DataQuery`). **Two real bugs caught by live verification,
+       not by mocks** (see `.claude/CLAUDE.md`): (a) `uniprot_ids`/`organism` are
+       polymer-entity-level fields, not entry-level — must be reached via the nested
+       `polymer_entities` list; (b) `search_candidate_ids`'s `list(session)` silently
+       auto-paginates through *every* match (`rows` is a page size, not a cap) — fixed with
+       `itertools.islice`, regression test locks it in.
+2. [x] **Simulability** (`structural_biology/simulability.py` + `composition.py`) — all
+       four checks (size/resolution, completeness, oligomeric state, non-standard
+       residues), all field paths live-verified against `data.rcsb.org`.
+   [x] **Parameterizability** — RDKit sanitization (`docking/parameterizability.py`),
+       SMILES wiring (`docking/ligands.py`, CCD code → SMILES), Meeko/PDBQT parameterization
+       (`docking/meeko_parameterization.py`), fpocket pocket detection (`docking/pocket.py`,
+       CLI/output format transcribed from fpocket's own docs, later live-verified in §7a).
+       All requires the `validate` extra; heavy deps (`rdkit`/`meeko`) lazily imported so
+       `store.py` stays importable without it.
+   [ ] OpenFF parameterization (MD side) sequencing note is now moot — done, see step 4.
+3. [x] **Literature count** (`bioinformatics/literature.py`) — Europe PMC
+       `ACCESSION_ID`/`ACCESSION_TYPE:pdb` fields, live-verified. Returns `int | None`
+       (`None` = fetch failed, distinct from a real `0` "no papers" answer). No batch
+       endpoint — one request per PDB ID, shared `requests.Session`.
+4. [x] **Validation harness** — all three validators implemented and live-verified in a
+       `micromamba` env bootstrapped from `environment-validation.yml`:
+   - **ex03 MD** (`molecular_dynamics/md_validation.py`) — real PDBFixer + short OpenMM run
+     (vacuum, `NoCutoff`). Measured ~2370s/ns for a 1231-atom apo protein on CPU — budget
+     explicit-solvent protein+ligand runs accordingly.
+   - **OpenFF parameterization** (`molecular_dynamics/openff_parameterization.py`) —
+     SMILES → conformer → SMIRNOFF `openff-2.1.0.offxml` system build, live-verified.
+   - **ex04 docking** (`docking/vina_docking.py` + `plip_analysis.py` +
+     `docking_validation.py`) — real Vina self-dock + PLIP interactions, composed into
+     `FailureMode.DOCKING_QUALITY`. **Two real silent bugs caught by live verification**
+     (see `docking_validation.py` docstring): Meeko's blank ligand chain-ID column made
+     PLIP silently detect zero ligands; appending ligand HETATM after a receptor's own
+     trailing `END`/`MASTER` produced invalid PDB with the same silent-zero symptom. Both
+     fixed, both regression-tested.
+   - **ex02 modeling** (`modeling/alphafold_lookup.py` + `modeling_validation.py`) —
+     fetch-only AlphaFold DB lookup, live-verified against a real entry, a real 404, and a
+     real malformed-accession 400.
+5. [x] **Per-exercise difficulty score + §8 report** — `core/difficulty.py` +
+       `core/report.py`, closing the long-standing cross-stage join gap.
+
+**Deferred, not part of v0:** `protein_design/` (mutation-focused, RFdiffusion/
+ProteinMPNN-adjacent) — out of scope until the v0 validation harness above shipped (it now
+has); don't fold mutation logic into `modeling/`'s AlphaFold-DB fetch.
 
 ---
 
 ## 11. Anti-hallucination / verification gate
 
-- [ ] Every external citation, threshold, dataset size, and tool claim in §6 stays
-      `⚠ candidate` until opened at source. Do not inherit the brief's numbers blindly.
-- [ ] Never emit an invented PDB ID, CCD ligand code, or EC number into the table — all
-      must trace to an API response.
+- [ ] Every external citation, threshold, dataset size, tool claim in §6 stays `⚠
+      candidate` until opened at source.
+- [ ] Never emit an invented PDB ID, CCD ligand code, or EC number — all must trace to an
+      API response.
 - [ ] Verify tool liveness each term (Vina Colab notebooks, fpocket, DynaMate) — these move.
 
 ---
 
 ## 12. If this becomes its own repo
 
-- [ ] Own git repo + own env (don't couple the student `environment.yml` to fpocket's
-      conda-only install, or any other selector-only dependency).
-- [ ] Keep a thin published-artifact export (the ranked CSV) that the course submodule can
-      vendor, so exercises depend on *output*, not on the selector's toolchain.
-- [ ] Snakemake pipeline + frozen snapshots make it citable for the teaching-resource paper
-      (positioning option 2/3 in the brief).
+- [x] Own git repo + own env — done.
+- [x] Thin published-artifact export (ranked CSV) vendored by the course submodule,
+      exercises depend on output only, never on this tool's toolchain.
+- [ ] Snakemake pipeline + frozen snapshots for citability (only if §7 is revisited).
 
 ---
 
 ## 13. Explicit assumptions (correct any that are wrong)
 
-- OpenMM-centric course (2026 edition, confirmed). pygromos = optional dogfooding layer,
-  **not** pedagogically required. **graphode is OUT of scope** — do not integrate.
+- OpenMM-centric course (2026 edition, confirmed). pygromos optional, not required.
+  graphode is OUT of scope.
 - Scale ~hundreds of candidates, not millions. Cadence: annual re-curation.
 - Colab compute budget bounds protein size (~100–300 aa).
-- Docking = Vina in Colab; fpocket (not p2rank — no JVM, decided) removes the manual
-  grid-box failure point; PLIP for interaction reasoning.
-- **Instructor tool, confirmed (§2).** Its core job is *a-priori validation*: attempt the
-  real exercises on candidates to grade actual difficulty, because metadata cannot tell
-  "easy" from "breaks in class." Validation (§4a) is therefore mandatory, not deferred.
-- The validation-stage validators must run in the **student-equivalent Colab environment** so measured
-  effort reflects what students will hit, not a workstation.
+- Docking = Vina in Colab; fpocket (not p2rank) removes the manual grid-box failure point;
+  PLIP for interaction reasoning.
+- Instructor tool, confirmed (§2) — a-priori validation is mandatory, not deferred.
+- Validators must run in the student-equivalent Colab environment, not a workstation.
+
+---
+
+## 14. Interactive view layer (Dash) — v0 SHIPPED (2026-07-11)
+
+An interactive, **local single-user** web app for browsing the DB, seeing candidate
+*connections*, and visualizing the difficulty results — a live counterpart to the static
+`notebooks/db_explorer.ipynb`, not a replacement for the vendored CSV (§12 unchanged).
+
+**Stack decision: Dash** (Plotly) — chosen over Streamlit (perceived as a data toy),
+Flask/Django (real frameworks but all interactive viz is DIY; Django's ORM would duplicate
+`core/db.py`'s hand-rolled schema as a second source of truth), and Hugo (static — can't
+query a live-updating DB). Dash *is* Flask underneath — deploys like any Flask app, reads
+the existing SQLite untouched, ships the interactive-chart + callback layer raw Flask makes
+you hand-write. Pure Python, minimal: `dash` + `dash-cytoscape` + `dash-bootstrap-components`,
+all in a lazily-imported `webapp` dependency group (same discipline as `validate`/`notebook`).
+
+**Reads the DB, never the CSV** — `core.report.build_report_table(db_path)` is already a
+read-only, no-network join; the app calls it directly.
+
+**Architecture (as built):**
+- [x] `src/protein_selector/webapp/data.py` — the only code with logic, therefore the only
+      tested code (`tests/protein_selector/webapp/test_data.py`, 6 tests): `load_report_df(db)`
+      (wraps `build_report_table` + `rows_to_dataframe`) and `candidate_graph(db, pdb_id)`
+      (reads `ligand_ccd_codes`/`meeko_parameterization`/`pocket_detection`/
+      `alphafold_entries`/`validation` directly, per §8a — shows every ligand, not just the
+      primary). Returns typed `GraphNode`/`GraphEdge`/`CandidateGraph`, view-library-agnostic.
+- [x] `app/app.py` (parallel to `notebooks/`, excluded from ruff/ty per `pyproject.toml` —
+      thin Dash script, no business logic): three tabs (Proteins DataTable · Results charts
+      · Explore graph + ligand detail), a `explore-pdb-id` dropdown driving one
+      master-detail callback (`connections-graph` + `ligand-detail-table`), plus a
+      results-chart callback (predicted-vs-measured scatter + per-exercise status bars).
+      DB path resolved via the same cwd-fallback pattern as `db_explorer.ipynb`
+      (prefers `notebooks/cache/protein_selector_real.db` if present).
+
+**v0 scope — all shipped:**
+- [x] Proteins table (native filter/sort/CSV-export via `dash_table.DataTable`).
+- [x] Predicted-vs-measured difficulty scatter (faceted by exercise, colored by tier) +
+      per-exercise status stacked bars.
+- [x] Cytoscape connections graph for a selected protein (protein → AlphaFold node,
+      per-ligand nodes colored by Meeko pass/fail, best-druggability pocket node, one node
+      per validated exercise) + ligand detail sub-table.
+
+**Deferred past v0 (see the dash-bio discussion below for how these get added later):** 3D
+structure/pocket viewer, ligand 2D/3D viewer, MSA viewer, pipeline-survivorship funnel, the
+optional exploded protein–ligand pairs table (§8a), deployment (local
+`uv run python app/app.py` is the v0 delivery).
+
+**Verification gate — passed (2026-07-11):**
+- [x] `dash`/`dash-cytoscape`/`dash-bootstrap-components` resolved cleanly via `uv add
+      --group webapp` (20 packages, no conflicts).
+- [x] Live-ran the app (`uv run --extra validate --group webapp python app/app.py`),
+      confirmed via real HTTP requests against the running server (not just import-checked):
+      index page 200 OK; results-chart callback returns both figures; connections-graph
+      callback for a real multi-ligand candidate (1C1D, 6 bound ligands: IPA/K/NA/NAI/
+      PHE/PO4) returns one node per ligand plus AlphaFold + validation nodes — confirms
+      §8a's decision (view re-expands per-ligand data the report row collapses) actually
+      works, not just compiles. Full gate after: `ruff check .` / `ty check` / `pytest -q`
+      → 282 passed, 2 skipped (up from 276 — the 6 new `webapp/data.py` tests).
+
+### 14a. Next: `dash-bio`, added the same way as `dash-cytoscape` (not a stack change)
+
+`dash-bio` is a Dash component library, same category as `dash-cytoscape`/
+`dash-bootstrap-components` already wired above — adding it is `uv add --group webapp
+dash-bio` + a new component in an existing tab's layout + one more `@app.callback`, not a
+new server or a different architecture. Three real use cases were considered, with real
+different data-readiness:
+
+- **Ligand viewer (`Molecule2dViewer`/`Speck`) — cheapest, do first.** Fully offline: the
+  report's `ligand_smiles` column (`docking/ligands.py`'s `fetch_smiles_for_ccd_codes`,
+  already persisted) is enough for RDKit to produce 2D coords or a 3D embed locally. No new
+  fetch, no new pipeline stage.
+- **Protein + pocket viewer (`Molecule3dViewer`/`NglMoleculeViewer`) — needs one new,
+  explicit exception to §4b.** §4b deliberately never caches full structure files; this
+  view would fetch a PDB/mmCIF on demand at view-time for whichever row is selected (RCSB
+  gives a direct download URL from a `pdb_id`) — a real, stated exception, not a silent
+  reintroduction of the archive-wide mirror §4b rejected. Pocket overlay additionally needs
+  a decision on how to select/highlight pocket residues from fpocket's existing
+  `box_center`/`druggability_score` output (no per-atom pocket membership is stored today).
+- **MSA viewer (`AlignmentChart`) — NOT in scope, no data source decided.** Grepped: no
+  MSA fetch/store exists anywhere in this repo or PLAN.md. The course's MSA-in-the-
+  AlphaFold-era material lives in the *lecture* repo (lec02) — a separate repo, never to be
+  mixed in (`.claude/CLAUDE.md`). If MSA support is wanted here, it needs its own PLAN.md
+  decision (where does alignment data come from — UniProt? AlphaFold DB?) before any
+  `dash-bio` wiring, not folded silently into this section.
+
+- [ ] Ligand viewer — add when picked up; smallest, offline-only addition.
+- [ ] Protein + pocket viewer — add when picked up; requires the stated §4b on-demand-fetch
+      exception plus a pocket-residue-selection decision.
+- [ ] MSA viewer — deliberately not planned until a data source is decided.
+
+---
+
+## 14b. Proteins table follow-up: external links + splitting bundled columns — IMPLEMENTED (2026-07-11)
+
+Raised while using v0's Proteins tab. Two different kinds of change — link-out columns
+(pure presentation, no schema change) and splitting a currently-bundled free-text column
+into structured ones (a `core/report.py` schema change) — kept separate below since they
+have different implementation cost and different verification status. Both implemented
+and live-verified end-to-end against the real 149-candidate DB.
+
+### Link-out columns (presentation only, `app/app.py`, no `core/report_schema.py` change)
+
+Each becomes a clickable link rendered from an existing column value — no new data fetched,
+no new stored column, purely `app/app.py`'s DataTable cell formatting (Dash's
+`dash_table` supports `presentation: "markdown"` columns for this).
+
+- [x] **`pdb_id` → RCSB entry page.** `https://www.rcsb.org/structure/{pdb_id}` —
+      well-known, canonical RCSB URL pattern; not separately re-verified here (same
+      domain/pattern this repo's `rcsb-api` calls already depend on being real).
+- [x] **`uniprot_id` → UniProtKB entry page.** `https://www.uniprot.org/uniprotkb/{uniprot_id}`
+      — well-known, canonical UniProt URL pattern.
+- [x] **`ligand_ccd` → RCSB ligand (Chemical Component Dictionary) page.**
+      `https://www.rcsb.org/ligand/{ccd_code}` — **live-verified 2026-07-11** (`WebFetch`
+      against `.../ligand/HEM`): real page, correct heading "HEM — PROTOPORPHYRIN IX
+      CONTAINING FE", molecular formula/weight, SMILES/InChI, and a DrugBank cross-ref.
+      Answers the "can I find ligands easily in a DB" question — yes, one URL per CCD code,
+      no new fetch/stage needed, the CCD code is already a persisted column.
+- [x] **Implemented in `app/app.py`.** `proteins_table_df` is a display-only copy of
+      `load_report_df`'s output with `pdb_id`/`uniprot_id`/`ligand_ccd` rewritten to
+      `[value](url)` markdown via `_markdown_link` (empty string for `None`/`NaN`, not the
+      literal text "None"); the DataTable's column defs mark those three
+      `presentation: "markdown"`. **Stated tradeoff, not silent:** the DataTable's own CSV
+      export button writes the raw markdown-link cell values, not bare ids — the
+      instructor-facing published artifact stays `core.report.write_report_csv` (§8/§12)
+      unaffected, this button is just a browser convenience for whatever's filtered.
+      **Live-verified (2026-07-11):** ran the app against the real DB, confirmed real rows
+      render as e.g. `[101M](https://www.rcsb.org/structure/101M)` /
+      `[P02185](https://www.uniprot.org/uniprotkb/P02185)` / `[HEM](https://www.rcsb.org/ligand/HEM)`.
+- [x] **AlphaFold model → AlphaFold DB entry page, implemented per explicit request
+      despite being unverifiable by automated means.** `https://alphafold.ebi.ac.uk/entry/{uniprot_accession}`
+      remains **⚠ candidate, NOT conclusively verified** (checked twice, 2026-07-11: a
+      `WebFetch` render and a raw `curl` of the static HTML both show only the generic app
+      shell — `<title>AlphaFold Protein Structure Database</title>`, no accession-specific
+      content, because it's a JS single-page app that fetches data client-side).
+      Automated tooling genuinely cannot confirm or deny this URL pattern resolves
+      correctly — confirm once in a real browser (e.g. P69905) before fully trusting it.
+      Implemented in `app/app.py` as `modeling_alphafold_entry_id`'s link column, built
+      from `uniprot_id` (the accession the URL needs) but *displaying* the AF entry id
+      (e.g. `AF-P02185-F1`) via `_markdown_link`'s `label=` param — the two differ, so a
+      naive single-value link helper wasn't enough. **Not needed for the direct-download
+      links, which already are real and live-verified** (§10 step 4):
+      `AlphaFoldEntry.pdb_url`/`cif_url`/`pae_doc_url` are per-entry, confirmed against the
+      real REST API — these remain available for a future "download the structure" link,
+      independent of whether the entry-page URL pattern above is real.
+
+### Splitting bundled free-text columns into structured columns
+
+**The underlying structured data already exists upstream in both cases below — it's only
+`core/report.py`'s current projection that flattens it into a sentence.** Same shape of
+fix as §8a's ligand-collapse and §7b's `nonstd_residues` bug: the fix is a report-layer
+change, not new validator/fetch code.
+
+- [x] **`modeling_alphafold_entry_id` / `modeling_alphafold_mean_plddt` /
+      `modeling_alphafold_low_confidence_fraction` — implemented in `core/report.py`.**
+      Populated straight from the `alphafold_entry` param `build_candidate_report` already
+      receives (the same `AlphaFoldEntry` `modeling_validation.py`'s `run_modeling_validation`
+      separately flattens into `notes`' sentence — `notes` untouched, these are independent
+      columns). Registered in `core/report_schema.py`'s `REPORT_COLUMNS` (drift test enforces
+      the two stay in sync). Tests: `test_alphafold_columns_split_out_of_modeling_notes`,
+      `test_alphafold_columns_are_none_without_an_entry`. **Live-verified against the real
+      DB (2026-07-11):** real non-null values, e.g. `101M → AF-P02185-F1, mean pLDDT 97.5`.
+- [x] **`md_simulation_pdbfixer_repaired: bool | None` — implemented in `core/report.py`'s
+      `_pdbfixer_repaired`, no validator change needed**, exactly the derivation reasoned
+      through here: `True` if `status == SUCCESS`, else `failure_mode !=
+      FailureMode.COMPLETENESS` (`COMPLETENESS` is the one failure mode `md_validation.py`
+      raises specifically when PDBFixer's own repair fails — every other outcome happens
+      strictly after a successful repair). The reuse of `FailureMode.COMPLETENESS` for this
+      derivation is documented explicitly in `_pdbfixer_repaired`'s own docstring, not left
+      implicit. Tests: `test_pdbfixer_repaired_true_on_success`,
+      `test_pdbfixer_repaired_false_when_completeness_failure`,
+      `test_pdbfixer_repaired_true_when_a_later_stage_failed_instead`,
+      `test_pdbfixer_repaired_is_none_when_not_run`. **Live-verified against the real DB
+      (2026-07-11):** real, non-degenerate distribution — 135 `True`, 3 `False`
+      (genuine PDBFixer repair failures), 11 `None` (ex03 not yet run for those candidates).
+      **No second "additional column" added** — the other MD facts worth surfacing
+      (`n_atoms` after repair, final potential energy, minimization cutoff) are still only
+      in `notes`' free text and would need `run_test_md` to return a richer detail object,
+      not just `ValidationResult` — deferred until a concrete need is stated, not spec'd
+      blindly here.
+
+### `rationale_json`
+
+**Already not a raw dict in the report layer** — `core/report.py`'s `_flatten_row` already
+does `json.dumps(flat.pop("rationale"))` (`report.py:360`), so `rationale_json` is a JSON
+*string* column in both the CSV and the DataFrame `load_report_df` returns, not a Python
+dict. The remaining problem is purely **display**, in `app/app.py`'s Proteins DataTable:
+a raw JSON string in a table cell is unreadable.
+
+- [x] **Implemented: moved out of the Proteins table into the Explore tab's detail panel.**
+      `rationale_json` is dropped from `proteins_table_df` (the Proteins tab never shows
+      it); the Explore tab gained a "Rationale" `dcc.Markdown` panel, populated by the same
+      `render_connections_graph` callback that already looks up the selected `pdb_id` — it
+      re-`json.loads`s the row's `rationale_json` and renders it pretty-printed inside a
+      fenced code block. No data-layer change, `app/app.py` only, as planned.
+      **Live-verified (2026-07-11):** real callback output for a real candidate shows real
+      structured rationale (simulability/pocket reasons, per-exercise notes), not a raw
+      unreadable JSON string.
+
+---
+
+## 14c. Proteins table cleanup: no list/dict columns + a real column-width bug — IMPLEMENTED (2026-07-11)
+
+Two more issues raised while actually using v0's Proteins tab, beyond §14b's link/split
+work.
+
+**Every list/dict-valued column dropped from the Proteins tab, not just `rationale_json`.**
+Checked every column's real value against the live DB (not assumed): `suitable_for`,
+`modeling_notes`, `md_simulation_notes`, and `docking_notes` are *also* JSON-encoded
+lists (same `core/report.py._flatten_row` JSON-dumping §14b already covered for
+`rationale_json`) — e.g. `suitable_for -> '["modeling"]'`, `docking_notes -> '[]'`. All
+five (including `rationale_json`) are now dropped from `proteins_table_df` via one
+`_LIST_OR_DICT_COLUMNS` list in `app/app.py`; the underlying `report_df` (and the real
+CSV export, `core.report.write_report_csv`) are untouched — nothing is lost, `suitable_for`
+is still recoverable per-protein from the `*_status` columns that remain, and the full
+rationale is one click away in the Explore tab (§14b). Deliberately minimal styling on
+this table going forward — it's a data grid for an instructor, not meant to look polished.
+
+**Real bug found and fixed: columns couldn't be widened past 200px, at all.** The original
+`style_cell={"maxWidth": "200px"}` wasn't just a *default* width, it was a hard ceiling —
+`dash_table`'s native column drag-resize (on by default) can never make a column wider
+than whatever `maxWidth` allows, so no amount of dragging could exceed 200px. Fixed by
+dropping `maxWidth` entirely and keeping only `minWidth: "60px"` (stops narrow
+boolean/short columns from collapsing to nothing). **Live-verified (2026-07-11):**
+confirmed directly on the `DataTable` component object that `style_cell` no longer
+contains `maxWidth` and `style_table` is unchanged (`{"overflowX": "auto"}`).
+
+Full gate after all of §14b + §14c: `ruff check .` / `ty check` / `pytest -q` → 288 passed,
+2 skipped (unchanged from §14b — these were `app/app.py`-only changes, no new
+package-level logic to test).
