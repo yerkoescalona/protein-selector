@@ -11,6 +11,7 @@ to support).
 from __future__ import annotations
 
 import csv
+import json
 
 import pytest
 
@@ -28,7 +29,9 @@ from protein_selector.core.validation_result import (
     ValidationStatus,
 )
 from protein_selector.core.validation_store import upsert_validation_results
-from protein_selector.docking.docking_validation import EXERCISE_NAME as EX04_EXERCISE
+from protein_selector.docking.docking_validation import (
+    EXERCISE_NAME as DOCKING_EXERCISE,
+)
 from protein_selector.docking.meeko_parameterization import MeekoParameterizationResult
 from protein_selector.docking.parameterizability import ParameterizabilityResult
 from protein_selector.docking.pocket import PocketDetectionResult, PocketInfo
@@ -39,15 +42,19 @@ from protein_selector.docking.store import (
     upsert_pocket_detection,
 )
 from protein_selector.modeling.alphafold_lookup import AlphaFoldEntry
-from protein_selector.modeling.modeling_validation import EXERCISE_NAME as EX02_EXERCISE
+from protein_selector.modeling.modeling_validation import (
+    EXERCISE_NAME as MODELING_EXERCISE,
+)
 from protein_selector.modeling.store import upsert_alphafold_entry
 from protein_selector.molecular_dynamics.md_validation import (
-    EXERCISE_NAME as EX03_EXERCISE,
+    EXERCISE_NAME as MD_SIMULATION_EXERCISE,
 )
 from protein_selector.structural_biology.candidates import CandidateEntry
+from protein_selector.structural_biology.composition import EntityCompositionInfo
 from protein_selector.structural_biology.simulability import SimulabilityResult
 from protein_selector.structural_biology.store import (
     upsert_candidates,
+    upsert_entity_composition,
     upsert_simulability,
 )
 
@@ -72,11 +79,11 @@ class TestBuildCandidateReport:
         assert row.pdb_id == "4HHB"
         assert row.uniprot_id == "P69905"
         assert row.ligand_ccd is None
-        assert row.pocket_found is None
+        assert row.pocket_druggable is None
         assert row.suitable_for == []
-        assert row.ex02.status == "not_run"
-        assert row.ex03.status == "not_run"
-        assert row.ex04.status == "not_run"
+        assert row.modeling.status == "not_run"
+        assert row.md_simulation.status == "not_run"
+        assert row.docking.status == "not_run"
 
     def test_primary_ligand_is_first_ccd_code_sorted(self):
         row = build_candidate_report(
@@ -90,7 +97,7 @@ class TestBuildCandidateReport:
 
         assert row.ligand_ccd == "HEM"
         assert row.ligand_smiles == "Cc1c2n3..."
-        assert row.ligand_parameterizable is True
+        assert row.ligand_rdkit_parameterizable is True
 
     def test_ligand_meeko_parameterizable_is_its_own_column(self):
         # Regression test for a real gap: the report originally only joined
@@ -113,10 +120,10 @@ class TestBuildCandidateReport:
         # embed times out on it (see meeko_parameterization.py) -- a ligand
         # can genuinely pass one and fail the other, and both must be
         # visible, not merged into a single misleading column.
-        assert row.ligand_parameterizable is True
+        assert row.ligand_rdkit_parameterizable is True
         assert row.ligand_meeko_parameterizable is False
 
-    def test_predict_ex04_prefers_meeko_verdict_over_rdkit_when_both_present(self):
+    def test_predict_docking_prefers_meeko_verdict_over_rdkit_when_both_present(self):
         pocket = PocketDetectionResult(
             pdb_id="4HHB", passed=True,
             pockets=[PocketInfo(pocket_number=1, druggability_score=0.9)],
@@ -136,7 +143,7 @@ class TestBuildCandidateReport:
         # If RDKit's (passing) verdict were used, the parameterizability
         # component would be 0.0; using Meeko's (failing) verdict instead
         # makes it 1.0 -- confirm the harder, Meeko-driven number wins.
-        assert row.ex04.predicted_difficulty == pytest.approx((0.1 + 1.0) / 2)
+        assert row.docking.predicted_difficulty == pytest.approx((0.1 + 1.0) / 2)
 
     def test_falls_back_to_rdkit_when_meeko_result_absent(self):
         pocket = PocketDetectionResult(
@@ -153,31 +160,59 @@ class TestBuildCandidateReport:
         )
 
         assert row.ligand_meeko_parameterizable is None
-        assert row.ex04.predicted_difficulty == pytest.approx((0.1 + 0.0) / 2)
+        assert row.docking.predicted_difficulty == pytest.approx((0.1 + 0.0) / 2)
 
     def test_suitable_for_lists_only_passing_exercises(self):
         row = build_candidate_report(
             _CANDIDATE,
-            ex02_result=ValidationResult(pdb_id="4HHB", status=ValidationStatus.SUCCESS),
-            ex03_result=ValidationResult(
+            modeling_result=ValidationResult(pdb_id="4HHB", status=ValidationStatus.SUCCESS),
+            md_simulation_result=ValidationResult(
                 pdb_id="4HHB",
                 status=ValidationStatus.FAILURE,
                 failure_mode=FailureMode.PARAMETERIZATION,
             ),
-            ex04_result=ValidationResult(pdb_id="4HHB", status=ValidationStatus.SUCCESS),
+            docking_result=ValidationResult(pdb_id="4HHB", status=ValidationStatus.SUCCESS),
         )
 
-        assert row.suitable_for == [EX02_EXERCISE, EX04_EXERCISE]
-        assert row.ex03.status == "fail"
-        assert row.ex03.failure_mode == "parameterization"
+        assert row.suitable_for == [MODELING_EXERCISE, DOCKING_EXERCISE]
+        assert row.md_simulation.status == "fail"
+        assert row.md_simulation.failure_mode == "parameterization"
 
-    def test_nonstd_residues_is_inverse_of_simulability_passed(self):
+    def test_nonstd_residues_reads_the_real_per_entity_flag(self):
+        # Regression test for a real bug (PLAN.md §7b): this column used to
+        # be `not simulability.passed` -- true for ANY simulability failure
+        # (size, resolution, completeness, oligomeric state), not actually
+        # about non-standard residues. A candidate that fails simulability
+        # for an unrelated reason must NOT show nonstd_residues=True.
         row = build_candidate_report(
             _CANDIDATE,
-            simulability=SimulabilityResult(pdb_id="4HHB", passed=False, reasons=["bad"]),
+            simulability=SimulabilityResult(pdb_id="4HHB", passed=False, reasons=["too large"]),
+            entity_infos=[
+                EntityCompositionInfo(
+                    pdb_id="4HHB", entity_id="1", nstd_monomer=False, non_std_monomer_count=0
+                )
+            ],
+        )
+        assert row.nonstd_residues is False
+        assert row.rationale["simulability_reasons"] == ["too large"]
+
+    def test_nonstd_residues_true_when_any_entity_flagged(self):
+        row = build_candidate_report(
+            _CANDIDATE,
+            entity_infos=[
+                EntityCompositionInfo(
+                    pdb_id="4HHB", entity_id="1", nstd_monomer=False, non_std_monomer_count=0
+                ),
+                EntityCompositionInfo(
+                    pdb_id="4HHB", entity_id="2", nstd_monomer=True, non_std_monomer_count=1
+                ),
+            ],
         )
         assert row.nonstd_residues is True
-        assert row.rationale["simulability_reasons"] == ["bad"]
+
+    def test_nonstd_residues_is_none_when_composition_not_fetched(self):
+        row = build_candidate_report(_CANDIDATE)
+        assert row.nonstd_residues is None
 
     def test_pocket_and_alphafold_feed_predicted_difficulty(self):
         pocket = PocketDetectionResult(
@@ -206,22 +241,91 @@ class TestBuildCandidateReport:
             alphafold_entry=alphafold_entry,
         )
 
-        assert row.pocket_found is True
-        assert row.pocket_score == 0.9
-        assert row.ex02.predicted_difficulty is not None
-        assert row.ex02.predicted_difficulty < 0.1
-        assert row.ex04.predicted_difficulty is not None
+        assert row.pocket_druggable is True
+        assert row.pocket_druggability_score == 0.9
+        assert row.modeling.predicted_difficulty is not None
+        assert row.modeling.predicted_difficulty < 0.1
+        assert row.docking.predicted_difficulty is not None
 
-    def test_custom_weights_are_honored(self):
-        weights = ScoringWeights(ex02_max_effort_seconds=1000.0)
+    def test_alphafold_columns_split_out_of_modeling_notes(self):
+        # PLAN.md §14b: the structured AlphaFoldEntry data was already
+        # available before this method flattened it into modeling.notes'
+        # sentence -- these columns pull from the same source directly.
+        alphafold_entry = AlphaFoldEntry(
+            uniprot_accession="P69905",
+            entry_id="AF-P69905-F1",
+            mean_plddt=91.5,
+            fraction_plddt_very_low=0.01,
+            fraction_plddt_low=0.02,
+            fraction_plddt_confident=0.1,
+            fraction_plddt_very_high=0.87,
+            pdb_url="https://example.org/model.pdb",
+            cif_url="https://example.org/model.cif",
+            pae_doc_url="https://example.org/pae.json",
+            model_created_date="2025-01-01T00:00:00Z",
+        )
+        row = build_candidate_report(_CANDIDATE, alphafold_entry=alphafold_entry)
+
+        assert row.modeling_alphafold_entry_id == "AF-P69905-F1"
+        assert row.modeling_alphafold_mean_plddt == 91.5
+        assert row.modeling_alphafold_low_confidence_fraction == pytest.approx(0.03)
+
+    def test_alphafold_columns_are_none_without_an_entry(self):
+        row = build_candidate_report(_CANDIDATE)
+
+        assert row.modeling_alphafold_entry_id is None
+        assert row.modeling_alphafold_mean_plddt is None
+        assert row.modeling_alphafold_low_confidence_fraction is None
+
+    def test_pdbfixer_repaired_true_on_success(self):
         row = build_candidate_report(
             _CANDIDATE,
-            ex02_result=ValidationResult(
+            md_simulation_result=ValidationResult(pdb_id="4HHB", status=ValidationStatus.SUCCESS),
+        )
+        assert row.md_simulation_pdbfixer_repaired is True
+
+    def test_pdbfixer_repaired_false_when_completeness_failure(self):
+        # COMPLETENESS is raised only when PDBFixer's own repair step fails
+        # (md_validation.py) -- this is the one failure mode that means
+        # repair itself didn't succeed.
+        row = build_candidate_report(
+            _CANDIDATE,
+            md_simulation_result=ValidationResult(
+                pdb_id="4HHB",
+                status=ValidationStatus.FAILURE,
+                failure_mode=FailureMode.COMPLETENESS,
+            ),
+        )
+        assert row.md_simulation_pdbfixer_repaired is False
+
+    def test_pdbfixer_repaired_true_when_a_later_stage_failed_instead(self):
+        # Any failure mode other than COMPLETENESS happens strictly after a
+        # successful repair (e.g. PARAMETERIZATION == ForceField rejected
+        # the repaired structure) -- repair itself still succeeded.
+        row = build_candidate_report(
+            _CANDIDATE,
+            md_simulation_result=ValidationResult(
+                pdb_id="4HHB",
+                status=ValidationStatus.FAILURE,
+                failure_mode=FailureMode.PARAMETERIZATION,
+            ),
+        )
+        assert row.md_simulation_pdbfixer_repaired is True
+
+    def test_pdbfixer_repaired_is_none_when_not_run(self):
+        row = build_candidate_report(_CANDIDATE)
+        assert row.md_simulation_pdbfixer_repaired is None
+
+    def test_custom_weights_are_honored(self):
+        weights = ScoringWeights(modeling_max_effort_seconds=1000.0)
+        row = build_candidate_report(
+            _CANDIDATE,
+            modeling_result=ValidationResult(
                 pdb_id="4HHB", status=ValidationStatus.SUCCESS, effort_seconds=500.0
             ),
             weights=weights,
         )
-        assert row.ex02.measured_difficulty == 0.5
+        assert row.modeling.measured_difficulty == 0.5
 
 
 class TestBuildReportTableAndCsv:
@@ -231,6 +335,10 @@ class TestBuildReportTableAndCsv:
         upsert_candidates([_CANDIDATE], db_path=db_path)
         upsert_simulability(
             [SimulabilityResult(pdb_id="4HHB", passed=True, reasons=[])], db_path=db_path
+        )
+        upsert_entity_composition(
+            [EntityCompositionInfo(pdb_id="4HHB", entity_id="1", nstd_monomer=True, non_std_monomer_count=1)],
+            db_path=db_path,
         )
         upsert_ligand_ccd_codes({"4HHB": ["HEM"]}, db_path=db_path)
         upsert_parameterizability(
@@ -269,7 +377,7 @@ class TestBuildReportTableAndCsv:
             db_path=db_path,
         )
         upsert_validation_results(
-            EX03_EXERCISE,
+            MD_SIMULATION_EXERCISE,
             [ValidationResult(pdb_id="4HHB", status=ValidationStatus.SUCCESS, effort_seconds=20.0)],
             db_path=db_path,
         )
@@ -279,13 +387,14 @@ class TestBuildReportTableAndCsv:
         assert len(rows) == 1
         row = rows[0]
         assert row.pdb_id == "4HHB"
-        assert row.litref_count == 39
+        assert row.literature_count == 39
         assert row.ligand_ccd == "HEM"
-        assert row.ligand_parameterizable is True
+        assert row.ligand_rdkit_parameterizable is True
         assert row.ligand_meeko_parameterizable is False
-        assert row.pocket_score == 0.7
-        assert row.ex03.status == "pass"
-        assert EX03_EXERCISE in row.suitable_for
+        assert row.pocket_druggability_score == 0.7
+        assert row.nonstd_residues is True
+        assert row.md_simulation.status == "pass"
+        assert MD_SIMULATION_EXERCISE in row.suitable_for
 
     def test_empty_database_returns_empty_table(self, tmp_path):
         assert build_report_table(db_path=tmp_path / "protein_selector.db") == []
@@ -308,10 +417,10 @@ class TestBuildReportTableAndCsv:
         for expected_column in (
             "uniprot_id",
             "ligand_ccd",
-            "pocket_found",
-            "ex02_status",
-            "ex03_predicted_difficulty",
-            "ex04_failure_mode",
+            "pocket_druggable",
+            "modeling_status",
+            "md_simulation_predicted_difficulty",
+            "docking_failure_mode",
             "suitable_for",
             "rationale_json",
         ):
@@ -323,7 +432,25 @@ class TestRowsToDataframe:
         row = build_candidate_report(_CANDIDATE)
         df = rows_to_dataframe([row])
 
-        assert "ex02_status" in df.columns
-        assert "ex03_tier" in df.columns
-        assert "ex04_gap" in df.columns
-        assert "ex02" not in df.columns
+        assert "modeling_status" in df.columns
+        assert "md_simulation_tier" in df.columns
+        assert "docking_gap" in df.columns
+        assert "modeling" not in df.columns
+
+    def test_notes_column_is_valid_json_not_python_repr(self):
+        # Regression test for a real inconsistency (PLAN.md §7b): suitable_for
+        # and rationale were JSON-dumped, but ex0X_notes was left as a raw
+        # Python list, which pandas.to_csv stringifies as "['a', 'b']" --
+        # not valid JSON, unlike every other list-shaped column here.
+        row = build_candidate_report(
+            _CANDIDATE,
+            md_simulation_result=ValidationResult(
+                pdb_id="4HHB",
+                status=ValidationStatus.FAILURE,
+                failure_mode=FailureMode.PARAMETERIZATION,
+                notes=["no template found for HEM"],
+            ),
+        )
+        df = rows_to_dataframe([row])
+
+        assert json.loads(df.loc[0, "md_simulation_notes"]) == ["no template found for HEM"]
