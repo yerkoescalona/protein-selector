@@ -38,16 +38,16 @@ from protein_selector.structural_biology.candidates import CandidateEntry
 class ScoringWeights:
     """Tunable thresholds/weights for predicted- and measured-difficulty scoring."""
 
-    # ex03 (MD) predicted-difficulty proxies.
+    # md_simulation predicted-difficulty proxies.
     max_easy_residues: int = 300  # mirrors simulability.py's max_residues default
     max_easy_resolution: float = 2.5  # mirrors simulability.py's max_resolution default
-    ex03_size_weight: float = 1 / 3
-    ex03_resolution_weight: float = 1 / 3
-    ex03_completeness_weight: float = 1 / 3
+    md_simulation_size_weight: float = 1 / 3
+    md_simulation_resolution_weight: float = 1 / 3
+    md_simulation_completeness_weight: float = 1 / 3
 
-    # ex04 (docking) predicted-difficulty proxies.
-    ex04_pocket_weight: float = 0.5
-    ex04_parameterizability_weight: float = 0.5
+    # docking predicted-difficulty proxies.
+    docking_pocket_weight: float = 0.5
+    docking_parameterizability_weight: float = 0.5
 
     # Measured-difficulty effort ceilings (seconds) -- past this, measured
     # difficulty saturates at 1.0. Deliberately not derived from one
@@ -55,9 +55,9 @@ class ScoringWeights:
     # a Vina dock + PLIP analysis (ex04) have very different real wall-clock
     # budgets (see md_validation.py/docking_validation.py's own docstrings
     # for the live-measured numbers these are loosely based on).
-    ex02_max_effort_seconds: float = 5.0
-    ex03_max_effort_seconds: float = 300.0
-    ex04_max_effort_seconds: float = 120.0
+    modeling_max_effort_seconds: float = 5.0
+    md_simulation_max_effort_seconds: float = 300.0
+    docking_max_effort_seconds: float = 120.0
 
     # Tier thresholds (PLAN.md §5's "spiral-curriculum tier"), applied to
     # whichever of measured/predicted difficulty is available (measured
@@ -84,11 +84,11 @@ def _weighted_average(components: list[tuple[float | None, float]]) -> float | N
     return sum(value * weight for value, weight in present) / total_weight
 
 
-def predict_ex02_difficulty(alphafold_entry: AlphaFoldEntry | None) -> float | None:
-    """Predicted ex02 (modeling) difficulty: fraction of the AlphaFold model that's low-confidence.
+def predict_modeling_difficulty(alphafold_entry: AlphaFoldEntry | None) -> float | None:
+    """Predicted modeling difficulty: fraction of the AlphaFold model that's low-confidence.
 
     Directly bounded [0, 1] already (it's a fraction), so no weighting is
-    needed here, unlike ex03/ex04 below. Returns ``None`` if no AlphaFold DB
+    needed here, unlike md_simulation/docking below. Returns ``None`` if no AlphaFold DB
     entry exists at all -- that's a ``FailureMode.COMPLETENESS`` validation
     failure (``modeling_validation.py``), not a difficulty *score*; the two
     are deliberately distinct so a missing entry isn't silently treated as
@@ -101,10 +101,10 @@ def predict_ex02_difficulty(alphafold_entry: AlphaFoldEntry | None) -> float | N
     )
 
 
-def predict_ex03_difficulty(
+def predict_md_simulation_difficulty(
     candidate: CandidateEntry, weights: ScoringWeights | None = None
 ) -> float | None:
-    """Predicted ex03 (MD) difficulty: size, resolution, and completeness proxies.
+    """Predicted md_simulation difficulty: size, resolution, and completeness proxies.
 
     Returns ``None`` only if ``candidate.n_residues`` is missing (nothing to
     score against). A missing resolution is treated as *neutral* (0.5), not
@@ -132,19 +132,19 @@ def predict_ex03_difficulty(
 
     return _weighted_average(
         [
-            (size_component, weights.ex03_size_weight),
-            (resolution_component, weights.ex03_resolution_weight),
-            (completeness_component, weights.ex03_completeness_weight),
+            (size_component, weights.md_simulation_size_weight),
+            (resolution_component, weights.md_simulation_resolution_weight),
+            (completeness_component, weights.md_simulation_completeness_weight),
         ]
     )
 
 
-def predict_ex04_difficulty(
+def predict_docking_difficulty(
     pocket_result: PocketDetectionResult | None,
     ligand_parameterizable: bool | None,
     weights: ScoringWeights | None = None,
 ) -> float | None:
-    """Predicted ex04 (docking) difficulty: pocket druggability + ligand parameterizability.
+    """Predicted docking difficulty: pocket druggability + ligand parameterizability.
 
     Returns ``None`` if neither a pocket result nor a parameterizability
     verdict is available -- nothing to score. Either input missing on its
@@ -167,8 +167,8 @@ def predict_ex04_difficulty(
 
     return _weighted_average(
         [
-            (pocket_component, weights.ex04_pocket_weight),
-            (parameterizability_component, weights.ex04_parameterizability_weight),
+            (pocket_component, weights.docking_pocket_weight),
+            (parameterizability_component, weights.docking_parameterizability_weight),
         ]
     )
 

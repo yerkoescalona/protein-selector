@@ -156,7 +156,7 @@ from protein_selector.docking.store import (
 )
 from protein_selector.modeling.alphafold_lookup import fetch_alphafold_entry
 from protein_selector.modeling.modeling_validation import (
-    EXERCISE_NAME as MODELING_LOOKUP_EXERCISE,
+    EXERCISE_NAME as MODELING_EXERCISE,
 )
 from protein_selector.modeling.modeling_validation import run_modeling_validation
 from protein_selector.modeling.store import upsert_alphafold_entry
@@ -500,7 +500,7 @@ def run_pipeline(
 
     if modeling_lookup.enabled:
         already_modeling_validated = (
-            set() if force_refresh else set(load_validation_results(MODELING_LOOKUP_EXERCISE, db_path).keys())
+            set() if force_refresh else set(load_validation_results(MODELING_EXERCISE, db_path).keys())
         )
         modeling_results: list[ValidationResult] = []
         for entry in tqdm(entries, desc="🧠 AlphaFold DB lookup", unit="candidate"):
@@ -527,7 +527,7 @@ def run_pipeline(
             # candidate N (e.g. an unhandled network error) must not lose the
             # N-1 results already computed -- see pipeline.py's module
             # docstring for why this stage-level batching used to be a real gap.
-            upsert_validation_results(MODELING_LOOKUP_EXERCISE, [result], db_path=db_path)
+            upsert_validation_results(MODELING_EXERCISE, [result], db_path=db_path)
             modeling_results.append(result)
         already_modeling_in_batch = sum(1 for e in entries if e.pdb_id in already_modeling_validated)
         logger.info(

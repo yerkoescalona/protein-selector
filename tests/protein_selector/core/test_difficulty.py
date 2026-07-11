@@ -13,9 +13,9 @@ from protein_selector.core.difficulty import (
     difficulty_tier,
     effective_difficulty,
     measured_difficulty,
-    predict_ex02_difficulty,
-    predict_ex03_difficulty,
-    predict_ex04_difficulty,
+    predict_docking_difficulty,
+    predict_md_simulation_difficulty,
+    predict_modeling_difficulty,
     predicted_vs_measured_gap,
 )
 from protein_selector.core.validation_result import (
@@ -46,21 +46,21 @@ def _alphafold_entry(low=0.0, very_low=0.0) -> AlphaFoldEntry:
 
 class TestPredictEx02Difficulty:
     def test_no_entry_returns_none(self):
-        assert predict_ex02_difficulty(None) is None
+        assert predict_modeling_difficulty(None) is None
 
     def test_high_confidence_entry_is_low_difficulty(self):
         entry = _alphafold_entry(low=0.007, very_low=0.0)
-        assert predict_ex02_difficulty(entry) == pytest.approx(0.007)
+        assert predict_modeling_difficulty(entry) == pytest.approx(0.007)
 
     def test_low_confidence_entry_is_high_difficulty(self):
         entry = _alphafold_entry(low=0.3, very_low=0.4)
-        assert predict_ex02_difficulty(entry) == pytest.approx(0.7)
+        assert predict_modeling_difficulty(entry) == pytest.approx(0.7)
 
 
 class TestPredictEx03Difficulty:
     def test_missing_n_residues_returns_none(self):
         candidate = CandidateEntry(pdb_id="1ABC", n_residues=None)
-        assert predict_ex03_difficulty(candidate) is None
+        assert predict_md_simulation_difficulty(candidate) is None
 
     def test_small_clean_complete_structure_is_easy(self):
         candidate = CandidateEntry(
@@ -70,7 +70,7 @@ class TestPredictEx03Difficulty:
             n_modeled_residues=76,
             n_unmodeled_residues=0,
         )
-        result = predict_ex03_difficulty(candidate)
+        result = predict_md_simulation_difficulty(candidate)
         assert result is not None
         assert result < 0.35
 
@@ -82,7 +82,7 @@ class TestPredictEx03Difficulty:
             n_modeled_residues=700,
             n_unmodeled_residues=200,
         )
-        result = predict_ex03_difficulty(candidate)
+        result = predict_md_simulation_difficulty(candidate)
         assert result is not None
         assert result > 0.7
 
@@ -95,14 +95,14 @@ class TestPredictEx03Difficulty:
             n_unmodeled_residues=0,
         )
         weights = ScoringWeights(
-            ex03_size_weight=0, ex03_resolution_weight=1, ex03_completeness_weight=0
+            md_simulation_size_weight=0, md_simulation_resolution_weight=1, md_simulation_completeness_weight=0
         )
-        assert predict_ex03_difficulty(candidate, weights) == pytest.approx(0.5)
+        assert predict_md_simulation_difficulty(candidate, weights) == pytest.approx(0.5)
 
 
 class TestPredictEx04Difficulty:
     def test_no_inputs_returns_none(self):
-        assert predict_ex04_difficulty(None, None) is None
+        assert predict_docking_difficulty(None, None) is None
 
     def test_high_druggability_and_parameterizable_ligand_is_easy(self):
         pocket = PocketDetectionResult(
@@ -110,7 +110,7 @@ class TestPredictEx04Difficulty:
             passed=True,
             pockets=[PocketInfo(pocket_number=1, druggability_score=0.9)],
         )
-        result = predict_ex04_difficulty(pocket, ligand_parameterizable=True)
+        result = predict_docking_difficulty(pocket, ligand_parameterizable=True)
         assert result == pytest.approx((0.1 + 0.0) / 2)
 
     def test_low_druggability_and_unparameterizable_ligand_is_hard(self):
@@ -119,7 +119,7 @@ class TestPredictEx04Difficulty:
             passed=False,
             pockets=[PocketInfo(pocket_number=1, druggability_score=0.05)],
         )
-        result = predict_ex04_difficulty(pocket, ligand_parameterizable=False)
+        result = predict_docking_difficulty(pocket, ligand_parameterizable=False)
         assert result == pytest.approx((0.95 + 1.0) / 2)
 
     def test_pocket_only_renormalizes_over_available_component(self):
@@ -128,12 +128,12 @@ class TestPredictEx04Difficulty:
             passed=True,
             pockets=[PocketInfo(pocket_number=1, druggability_score=0.8)],
         )
-        result = predict_ex04_difficulty(pocket, ligand_parameterizable=None)
+        result = predict_docking_difficulty(pocket, ligand_parameterizable=None)
         assert result == pytest.approx(0.2)
 
     def test_no_pockets_list_but_parameterizability_known(self):
         pocket = PocketDetectionResult(pdb_id="1ABC", passed=False, pockets=[])
-        result = predict_ex04_difficulty(pocket, ligand_parameterizable=True)
+        result = predict_docking_difficulty(pocket, ligand_parameterizable=True)
         assert result == pytest.approx(0.0)
 
 

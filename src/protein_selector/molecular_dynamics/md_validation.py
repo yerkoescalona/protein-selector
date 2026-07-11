@@ -1,4 +1,4 @@
-"""Validation-stage ex03 validator: PDBFixer prep + a real short test MD in OpenMM (PLAN.md §4a).
+"""md_simulation validator: PDBFixer prep + a real short test MD in OpenMM (PLAN.md §4a).
 
 This is the empirical "does this actually work" check for the MD exercise --
 not a fast hard-filters/simulability/parameterizability gate. It fetches/reads a structure, runs PDBFixer's real
@@ -47,10 +47,13 @@ from protein_selector.core.validation_result import (
 
 logger = logging.getLogger(__name__)
 
-EXERCISE_NAME = "ex03"  # the label callers pass to core.validation_store's
-# upsert/load_validation_results(exercise=...) -- added for consistency with
-# docking_validation.EXERCISE_NAME/modeling_validation.EXERCISE_NAME once
-# core/report.py needed one canonical string per exercise to join against.
+EXERCISE_NAME = "md_simulation"  # the label callers pass to core.validation_store's
+# upsert/load_validation_results(exercise=...). This module OWNS this name (PLAN.md
+# §7b): every downstream consumer (the validation table's exercise column,
+# core/report.py's CSV columns, core/difficulty.py's weights) references this
+# constant instead of re-declaring the string. Corresponds to the course's "ex03"
+# exercise slot (PLAN.md §4a) -- that numbering is course context, not this module's
+# own name.
 
 _DEFAULT_N_STEPS = 2500  # 5 ps at the 2 fs timestep below -- a quick smoke test, not a
 # production run; PLAN.md §4a wants "short test MD sized to the Colab time budget".

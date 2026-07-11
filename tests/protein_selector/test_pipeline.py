@@ -84,7 +84,7 @@ class TestRunPipelineAlwaysOnStages:
 
         assert len(rows) == 1
         assert rows[0].pdb_id == "4HHB"
-        assert rows[0].litref_count == 39
+        assert rows[0].literature_count == 39
 
     def test_persists_ligand_ccd_and_parameterizability(self, db_path):
         from protein_selector.docking.store import (
@@ -177,7 +177,7 @@ class TestRunPipelineModelingLookup:
         rows = run_pipeline(db_path=db_path, candidate_filter=_PERMISSIVE_FILTER)
 
         assert load_alphafold_entries(db_path=db_path) == {"P69905": entry}
-        assert rows[0].ex02.status == "pass"
+        assert rows[0].modeling.status == "pass"
 
     def test_skips_candidate_with_no_uniprot_id(self, monkeypatch, db_path):
         entry_no_uniprot = CandidateEntry(
@@ -210,7 +210,7 @@ class TestRunPipelineMdSimulation:
         rows = run_pipeline(
             db_path=db_path, candidate_filter=_PERMISSIVE_FILTER, modeling_lookup=_MODELING_OFF
         )
-        assert rows[0].ex03.status == "not_run"
+        assert rows[0].md_simulation.status == "not_run"
 
     def test_missing_conda_env_stops_gracefully(self, monkeypatch, db_path):
         import protein_selector.molecular_dynamics.md_validation as md_validation_module
@@ -230,7 +230,7 @@ class TestRunPipelineMdSimulation:
             md_simulation=MdSimulationConfig(enabled=True),
         )
         assert len(rows) == 1
-        assert rows[0].ex03.status == "not_run"
+        assert rows[0].md_simulation.status == "not_run"
 
     def test_candidate_over_max_residues_is_filtered_out_before_pipeline_runs(
         self, monkeypatch, db_path
@@ -283,7 +283,7 @@ class TestRunPipelineMdSimulation:
             md_simulation=MdSimulationConfig(enabled=True),
         )
 
-        assert rows[0].ex03.status == "pass"
+        assert rows[0].md_simulation.status == "pass"
 
     def test_n_steps_and_max_minimization_iterations_are_passed_through(
         self, monkeypatch, db_path
@@ -319,7 +319,7 @@ class TestRunPipelinePocketDetection:
         rows = run_pipeline(
             db_path=db_path, candidate_filter=_PERMISSIVE_FILTER, modeling_lookup=_MODELING_OFF
         )
-        assert rows[0].pocket_found is None
+        assert rows[0].pocket_druggable is None
 
     def test_persists_when_enabled(self, monkeypatch, db_path):
         monkeypatch.setattr(
@@ -340,8 +340,8 @@ class TestRunPipelinePocketDetection:
             pocket_detection=PocketDetectionConfig(enabled=True),
         )
 
-        assert rows[0].pocket_found is True
-        assert rows[0].pocket_score == 0.8
+        assert rows[0].pocket_druggable is True
+        assert rows[0].pocket_druggability_score == 0.8
 
     def test_missing_fpocket_binary_stops_gracefully(self, monkeypatch, db_path):
         monkeypatch.setattr(
@@ -359,7 +359,7 @@ class TestRunPipelinePocketDetection:
             modeling_lookup=_MODELING_OFF,
             pocket_detection=PocketDetectionConfig(enabled=True),
         )
-        assert rows[0].pocket_found is None
+        assert rows[0].pocket_druggable is None
 
     def test_download_failure_for_one_candidate_is_skipped(self, monkeypatch, db_path):
         def fake_download(pdb_id, dest_dir):
@@ -373,4 +373,4 @@ class TestRunPipelinePocketDetection:
             modeling_lookup=_MODELING_OFF,
             pocket_detection=PocketDetectionConfig(enabled=True),
         )
-        assert rows[0].pocket_found is None
+        assert rows[0].pocket_druggable is None

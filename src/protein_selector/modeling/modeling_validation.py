@@ -1,4 +1,4 @@
-"""ex02 modeling validator: compose the AlphaFold DB lookup into one ValidationResult.
+"""modeling validator: compose the AlphaFold DB lookup into one ValidationResult.
 
 Per PLAN.md §10 step 5's easy-signal ("DB entry exists, crisp single domain,
 high pLDDT, low PAE"), this checks two things using
@@ -13,8 +13,21 @@ not attempted here):
    teaching example, rather than a mostly-floppy prediction?
 
 Reports one ``{status, effort, failure_mode, notes}`` record via the shared
-``core.validation_result`` contract, keyed by exercise="ex02" -- same shape
-as the ex03/ex04 validators.
+``core.validation_result`` contract, keyed by ``EXERCISE_NAME`` -- same shape
+as the ``md_simulation``/``docking`` validators. **Naming (PLAN.md §7b):**
+this module OWNS the ``"modeling"`` name -- every downstream consumer
+(the ``validation`` table's ``exercise`` column, ``core/report.py``'s CSV
+columns, ``core/difficulty.py``'s weights) references ``EXERCISE_NAME``
+rather than re-declaring the string, so there is exactly one place this
+label is decided. **Deliberately named ``"modeling"``, not
+``"modeling_lookup"``** (renamed 2026-07-09): this validator only does a
+fetch-only AlphaFold DB lookup today, but the exercise *slot* it validates
+is the broader modeling domain -- a future revision could run a real
+prediction here without needing to rename the exercise identifier again
+(``pipeline.ModelingLookupConfig`` keeps the narrower "Lookup" name, since
+that config class does accurately describe what it controls right now).
+Corresponds to the course's "ex02" exercise slot (PLAN.md §4a) -- that
+numbering is course context, not this module's own name.
 """
 
 from __future__ import annotations
@@ -28,7 +41,7 @@ from protein_selector.core.validation_result import (
 )
 from protein_selector.modeling.alphafold_lookup import fetch_alphafold_entry
 
-EXERCISE_NAME = "ex02"
+EXERCISE_NAME = "modeling"
 _DEFAULT_MAX_LOW_CONFIDENCE_FRACTION = 0.3  # combined very-low + low pLDDT fraction above
 # which a structure is "too floppy" to reason about in class -- not a PLAN.md-mandated
 # number (§4a never fixes one), adjust per course needs.

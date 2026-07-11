@@ -1,4 +1,4 @@
-"""ex04 docking validator: compose the Vina self-dock + PLIP checks into one ValidationResult.
+"""docking validator: compose the Vina self-dock + PLIP checks into one ValidationResult.
 
 fpocket pocket detection and ligand parameterization are already handled
 (and persisted) upstream, in the parameterizability stage -- this module is
@@ -7,8 +7,12 @@ real Vina test-dock (``vina_docking.py``), then PLIP interaction analysis
 (``plip_analysis.py``) on the resulting complex, and report one combined
 ``{status, effort, failure_mode, notes}`` record via the shared
 ``core.validation_result`` contract -- same shape as ``md_validation.py``'s
-ex03 validator, keyed by exercise="ex04" in the shared ``validation`` table
-(``core.validation_store``).
+md_simulation validator, keyed by ``EXERCISE_NAME`` in the shared
+``validation`` table (``core.validation_store``). **Naming (PLAN.md §7b):**
+this module OWNS the ``"docking"`` name -- downstream consumers reference
+``EXERCISE_NAME`` rather than re-declaring the string. Corresponds to the
+course's "ex04" exercise slot (PLAN.md §4a) -- that numbering is course
+context, not this module's own name.
 
 **Live-verified end-to-end (2026-07-06)** in a throwaway `micromamba` env
 bootstrapped from `environment-validation.yml`: a real receptor (1UBQ,
@@ -66,7 +70,7 @@ from protein_selector.docking.vina_docking import (
 
 logger = logging.getLogger(__name__)
 
-EXERCISE_NAME = "ex04"
+EXERCISE_NAME = "docking"
 
 
 _LIGAND_CHAIN_ID = "X"  # a chain ID distinct from any real receptor chain, so PLIP/
