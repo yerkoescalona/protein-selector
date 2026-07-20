@@ -62,10 +62,16 @@ logger = logging.getLogger(__name__)
 _DEFAULT_BOX_SIZE = (20.0, 20.0, 20.0)
 _DEFAULT_EXHAUSTIVENESS = 8
 _DEFAULT_N_POSES = 9
-_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 2.0  # standard self-dock "success" cutoff in the
-# docking literature (a top pose within 2 A of the crystal pose is conventionally
-# considered a successful redocking) -- not a PLAN.md-mandated number, adjust per course
-# needs.
+_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 2.5  # relaxed from the literature-standard 2.0 A
+# cutoff (2026-07-20, user decision) -- live-verified real self-dock (1A7E, OFO ligand)
+# landed at 2.04 A, a near-perfect redock, and was scored a hard `docking_quality`
+# failure purely for being 0.04 A over 2.0. That margin is well within this pipeline's
+# own real noise floor: `_rmsd` is an index-order heavy-atom comparison, not a
+# symmetry-aware one (see this module's own docstring), so even a chemically identical
+# pose can read a few tenths of an Angstrom higher than a symmetry-matched RMSD would
+# report -- 2.0 was too tight to absorb that. Not a PLAN.md-mandated number either way,
+# adjust per course needs (`DockingConfig.rmsd_threshold_angstrom` /
+# `workflow/config.yaml`'s `dock_rmsd_threshold`).
 
 
 def _parse_heavy_atom_coords(pdb_or_pdbqt_text: str) -> list[tuple[float, float, float]]:

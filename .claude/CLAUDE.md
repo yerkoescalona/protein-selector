@@ -115,6 +115,28 @@ src/protein_selector/
                                  folder — see below. Every consumer of the four
                                  parameterizability-stage files remains docking-only
                                  (Vina/Meeko/PDBQT toolchain).
+                                 **PLAN.md §17 (2026-07-18):** three more docking-domain
+                                 modules, all conda-only (same env as the validator trio
+                                 above): `pdb_download.py` (plain-PDB text fetch, needed to
+                                 extract a bound ligand's real crystal coordinates —
+                                 separate from `stages/pocket_detection.py`'s own
+                                 file-writing downloader, different callers need text vs. a
+                                 file), `native_ligand.py` (extract one native-ligand
+                                 HETATM block by CCD code, strip it from the receptor,
+                                 compute its centroid, pick the largest Meeko-passing
+                                 ligand when several are bound, prep its PDBQT via `obabel`
+                                 straight from crystal coordinates — deliberately NOT
+                                 Meeko's SMILES-embedded conformer, which is in an
+                                 unrelated frame). `pocket.py` gained `box_size` alongside
+                                 the existing `box_center` (max pairwise alpha-sphere
+                                 vertex distance + a padding margin, PLAN.md §17b) and
+                                 `select_containing_pocket` (picks the pocket that actually
+                                 encloses a point, not fpocket's top-druggability pocket).
+                                 **Not yet live-verified against real fpocket/vina/obabel
+                                 binaries** (none available in the environment this was
+                                 built in) — every new function's docstring states this
+                                 explicitly; re-verify before trusting a real run (PLAN.md
+                                 §17g).
   molecular_dynamics/            md_validation.py (ex03 MD validator, needs
                                  `environment-validation.yml`, NOT the `validate` extra) +
                                  openff_parameterization.py (OpenFF ligand parameterization
@@ -141,13 +163,76 @@ src/protein_selector/
                                  AlphaFold: extracting a known structure vs.
                                  designing/mutating one are different pedagogical
                                  purposes.
+  stages/                         PLAN.md §16's per-stage decomposition — one
+                                 `run_<stage>_stage(config, db_path)` function per Snakemake
+                                 rule, each a thin, independently testable wrapper calling
+                                 its domain function(s) directly (config.py holds the
+                                 relocated `CandidateSearchConfig`/`CandidateFilterConfig`/
+                                 `ModelingLookupConfig`/`MdSimulationConfig`/
+                                 `PocketDetectionConfig`/`DockingConfig` dataclasses).
+                                 `pipeline.py` still exists (§16 Phase C, deleting it, is
+                                 not done) but every Snakemake rule calls a `stages/`
+                                 function directly, never `run_pipeline`. **PLAN.md §17
+                                 additions:** `docking_common.py` (`resolve_docking_target`
+                                 — the ONE function that decides "is this candidate
+                                 dockable, with which ligand/pocket", shared by
+                                 `docking_shortlist.py`'s batch gate and `docking.py`'s
+                                 per-candidate `run_docking_stage`, so the two can never
+                                 silently disagree).
   legacy/                        find_small_proteins_with_ligands.py (v0 seed, superseded)
   pipeline.py                    run_pipeline() -- end-to-end orchestration (PLAN.md §7/§10),
-                                 wiring every stage above into one call, script-first per
-                                 PLAN.md §7's decision (not Snakemake). See its own module
-                                 docstring for exactly which stages are always-on vs.
-                                 optional (ex03/pocket detection) vs. deliberately not
-                                 auto-wired yet (ex04 docking).
+                                 wiring every stage above into one call. §7's original
+                                 script-first-not-Snakemake decision was reversed 2026-07-18
+                                 (PLAN.md §15) — run_pipeline itself is unchanged and still
+                                 the callable implementation of every stage; it's now also
+                                 wrapped by the Snakefile (below) for the slow/parallel lane.
+                                 See its own module docstring for exactly which stages are
+                                 always-on vs. optional (ex03/pocket detection) vs.
+                                 deliberately not auto-wired yet (ex04 docking).
+Snakefile                       Snakemake DAG (PLAN.md §16, one rule per cheap-lane stage —
+                                 supersedes §15's black-box `metadata_lane`): `search_candidates`
+                                 -> `simulability` -> `ligands`/`literature`/`modeling` (run
+                                 concurrently) -> `parameterizability`/`meeko`/`pocket_detect`
+                                 (run concurrently) -> `docking_shortlist`, plus the two
+                                 per-candidate slow-lane rules `md_validate {pdb_id}` and
+                                 `dock_validate {pdb_id}` (PLAN.md §17), all feeding `report`
+                                 (core.report.build_report_table/write_report_csv). Snakemake
+                                 owns DAG/scheduling/resume; cache/protein_selector.db
+                                 (SQLite, unchanged) stays the actual result store — the
+                                 Snakefile only tracks *completion* via shortlist/marker
+                                 files, never duplicates a result into a data file (§15b).
+                                 `shortlist.txt`/`docking_shortlist.txt` are frozen
+                                 determinism anchors (§16c/§17c) for the two per-candidate
+                                 fan-outs, each needing a first invocation to exist before
+                                 `--config run_md=true`/`run_dock=true` expands the fan-out.
+                                 Config in workflow/config.yaml (db path, candidate-search/
+                                 filter overrides, dock_box_padding/dock_exhaustiveness);
+                                 run via `make workflow` or `snakemake --cores N`. Needs the
+                                 `workflow` dependency group (`uv sync --group workflow`),
+                                 not installed by a plain `uv sync` — same pattern as
+                                 `notebook`/`webapp`.
+workflow/scripts/               Snakemake `script:` targets, one per rule (search_candidates.py,
+                                 simulability.py, ligands.py, literature.py, modeling.py,
+                                 parameterizability.py, meeko.py, pocket_detect.py,
+                                 docking_shortlist.py, md_validate.py, dock_validate.py,
+                                 report.py) -- every rule uses `script:`, never `run:`: a real,
+                                 live-discovered incompatibility (see search_candidates.py's
+                                 docstring) where Snakemake 9.x's own asyncio event loop
+                                 conflicts with rcsb-api's internal `asyncio.run()` call if
+                                 the rule body executes in-process (`run:`). `script:` runs
+                                 each rule in its own subprocess instead. `md_validate.py`/
+                                 `dock_validate.py` additionally rely on `script:` for the
+                                 `conda:` directive (only applies to `shell:`/`script:`/
+                                 `wrapper:` rules) and both follow the same
+                                 marker-only-on-real-result discipline (no `touch()` on the
+                                 rule's `output:` — the script creates the marker itself,
+                                 only when a real ValidationResult was persisted, so a
+                                 genuinely unavailable conda env fails loudly via
+                                 `MissingOutputException` instead of caching a false "done").
+                                 Excluded from ruff/ty (see pyproject.toml) -- Snakemake
+                                 injects a `snakemake` object into each script's globals at
+                                 run time, not statically resolvable, same reason
+                                 notebooks/`display()` and app/ are excluded.
 scripts/                       benchmark_pipeline.py — manual live-API diagnostic, not a
                                 pytest test (see its docstring)
 notebooks/                     db_explorer.ipynb — a static (not a live dashboard) notebook

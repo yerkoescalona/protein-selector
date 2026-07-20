@@ -1,0 +1,108 @@
+# Snakemake config (PLAN.md §16). Same db as protein_selector.core.db.DEFAULT_DB_PATH --
+# override on the CLI with `snakemake --config db_path=... max_candidates=...`.
+db_path: cache/protein_selector.db
+candidate_ids_path: results/candidate_ids.txt  # frozen sample, PLAN.md §16c
+shortlist_path: results/shortlist.txt
+docking_candidates_path: results/docking_candidates.txt  # scripts/ligand_filter_fix_brief.md
+# Problem 3: cheap pre-MD docking-eligibility gate, frozen the same way as shortlist_path.
+docking_shortlist_path: results/docking_shortlist.txt  # PLAN.md §17c, frozen the same way
+report_csv_path: results/report.csv
+stage_marker_dir: results/stages  # ligands/parameterizability/meeko/pocket_detect/literature/modeling markers
+max_candidates: 2000  # doubled 2026-07-19 to grow real MD+docking coverage beyond the
+# first 1000-candidate sample (168 shortlist / 36 dockable) -- candidate_ids.txt deleted
+# alongside this change to force a fresh, larger sample (PLAN.md §16c).
+# CandidateFilterConfig overrides (2026-07-18, production run): a real
+# 50-200 residue range (not CandidateFilterConfig's own exact-50 dataclass
+# default) -- wide enough to get a real shortlist out of 1000 sampled
+# candidates, still within PLAN.md §13's original 100-300 aa Colab-budget
+# window's lower half.
+min_residues: 50
+max_residues: 200
+max_resolution: 3.0
+
+# Slow lane (PLAN.md §16b) -- ON by default as of 2026-07-19: both the MD and docking
+# validators are now fully built, live-verified, and their conda env complete (PLAN.md
+# §17e/§18/§19) -- a plain `snakemake --cores N --sdm conda` invocation (`make workflow`)
+# now exercises the WHOLE pipeline (cheap lane + MD + docking) with no extra `--config`
+# flags needed. Still needs a real conda/mamba binary on PATH (Snakemake's
+# `--sdm conda`/`--use-conda` frontend requires the literal `conda`/`mamba` CLI --
+# `micromamba` alone does NOT satisfy it, live-discovered 2026-07-18) plus `--sdm conda`
+# passed on the command line -- without it, `conda:`-gated rules just run in the base env
+# and correctly fail loudly (missing binaries), never silently skip. Set back to `false`
+# (or pass `--config run_md=false` on the CLI) for a cheap-lane-only run.
+run_md: true
+restrict_md_to_dockable: true  # scripts/ligand_filter_fix_brief.md, Problem 3 -- turned
+# on 2026-07-19 to cut real compute: of the 280-candidate sim shortlist, only ~52 ever
+# reach the docking shortlist, so ~228 candidates' MD runs were pure waste in a
+# docking-focused workflow (a candidate with no dockable ligand fails
+# resolve_docking_target regardless of what MD says). MD is now only requested for
+# candidates with a real, non-denylisted, Meeko-parameterizable ligand (the
+# docking_candidates checkpoint, decided from already-cached cheap-lane data, no MD
+# needed to compute it).
+# **Real, stated tradeoff -- not free:** this also narrows `md_simulation` (ex03) report
+# coverage down to the same dockable subset; a candidate outside it goes back to
+# `not_run` for ex03 too, even though it was never actually MD-incompatible. If full ex03
+# coverage is ever needed again independent of docking, set this back to `false` (or pass
+# `--config restrict_md_to_dockable=false` for one run) -- nothing about the fix is
+# destructive, already-persisted `validation` rows for previously-run candidates are
+# untouched either way.
+# Points Snakemake's `conda:` directive at an already-built env prefix (skip
+# env creation) -- built via `conda`, NOT `environment-validation.yml`'s own
+# "one shot, all ten packages" solve: that monolithic solve was tried twice
+# on this machine and both times drove available RAM under 1GB before being
+# killed (real, live-discovered, not a guess -- conda-forge's own solver
+# combinatorics across openmm+openff-toolkit+openmmforcefields+pdbfixer+
+# rdkit+vina+plip+openbabel+fpocket+meeko together are genuinely heavy).
+# Fix: build incrementally (`conda create` with python, then one
+# `conda install` per small package group -- see PLAN.md §15e for the exact
+# sequence and which packages needed pip instead of conda-forge).
+# **Docking-only packages (vina/plip/openbabel/fpocket/meeko/requests) must be added to
+# this same prefix before `run_dock=true` will actually work (PLAN.md §17e)** -- not yet
+# added as of 2026-07-18, this is the real, stated gap the docking rules above depend on.
+# `requests` specifically: `resolve_docking_target` (used by `dock_validate`, which runs
+# under this conda env) needs it directly for `docking.pdb_download.fetch_pdb_text` --
+# unlike `md_validate` (PDBFixer fetches its own structure, no `requests` call), so
+# `requests` was never in this env's original MD-only package list and must be added too.
+validation_conda_prefix: /home/yescalona/miniconda3/envs/protein-selector-validation
+md_threads: 2
+md_n_steps: 50  # short smoke test (§15.0/PLAN.md §5b: setup/stability failure modes
+# surface in minutes, not a converged trajectory -- see PLAN.md §15f for why cutting
+# n_steps is correct scope, not a corner cut). 200 was already fast in practice
+# (10-34s/candidate, live-verified, 4 real candidates, 99-164 residues).
+# ⚠ Live-discovered tradeoff, not just a speed win: at 20/20 one real candidate
+# (103L, 2687 atoms) minimized too little before its MD steps ran, and the
+# system numerically blew up (final PE ~4e28 kJ/mol) -- but `run_test_md`'s
+# stability check only catches NaN, not an absurd-but-finite energy, so this
+# was recorded as `status=success`, a false positive. With the residue window
+# now up to 200 (larger atom counts than the 20/20 test used), the same risk
+# applies at 50/50 too -- watch `md_simulation_notes` for
+# "may not have fully converged" and treat those rows' status with suspicion;
+# use 200/200 (also fast, ~10-34s/candidate) if you need to fully trust the
+# MD status for candidate selection.
+# Separately, leaving this at 0 (unbounded, OpenMM's own default) let one real
+# candidate's minimization run 13+ minutes before being killed -- exactly the
+# risk md_validation.py's own docstring already named. Always set a real cap.
+md_max_minimization_iterations: 50
+
+# Docking slow lane (PLAN.md §17) -- ON by default as of 2026-07-19, see run_md above for
+# why. Needs the same conda/mamba frontend as run_md plus the docking packages (all built
+# into validation_conda_prefix as of PLAN.md §17e). Set false (or `--config
+# run_dock=false`) to skip.
+run_dock: true
+dock_threads: 2
+dock_exhaustiveness: 8  # Vina search effort -- do NOT lower for speed (PLAN.md §15h/§17h:
+# low exhaustiveness produces FALSE self-dock failures and poisons the measured-difficulty
+# gap this tool exists to compute). Parallelism + shortlist-only scoping is the speed
+# answer, not degraded fidelity.
+dock_box_padding: 6.0  # PLAN.md §17b/§18. Live-verified across dozens of real self-docks
+# (2026-07-19, 2000-candidate run): produces real, sane docking boxes -- no evidence this
+# default needs adjusting, but still a judgment call, not derived from any published
+# source; revisit if a future candidate's box turns out too tight/loose. The margin added
+# to a pocket's own maximum pairwise-vertex distance so a comparably sized bound ligand
+# fits inside the derived Vina box (docking.pocket._parse_vertex_extent).
+dock_rmsd_threshold: 2.5  # self-dock "success" cutoff (PLAN.md §21, relaxed from the
+# literature-standard 2.0 A, 2026-07-20). Live-verified real self-dock on the cealign-fixed
+# pipeline (1A7E, OFO ligand) landed at 2.04 A -- a near-perfect redock, hard-failed by
+# 0.04 A under the old threshold. `vina_docking._DEFAULT_RMSD_THRESHOLD_ANGSTROM`'s own
+# comment has the full reasoning (the RMSD itself is index-order, not symmetry-matched, so
+# some slack above the textbook 2.0 A is warranted).

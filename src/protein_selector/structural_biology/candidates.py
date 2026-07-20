@@ -142,6 +142,14 @@ def build_hard_filters_query(
     )
 
 
+_RCSB_MAX_ROWS_PER_QUERY = 10_000  # RCSB Search API's own real ceiling on a single
+# request's `rows` -- live-verified (2026-07-08): a direct query with rows=10_000 returns
+# 200, rows=15_000 returns 400 ("JSON schema validation failed"). This bounds the PAGE
+# size sent to RCSB per request, NOT the total number of results a caller can retrieve --
+# see search_candidate_ids's docstring for how a total larger than this is still fully
+# achievable via Session's own auto-pagination.
+
+
 def search_candidate_ids(
     max_atoms: int = 50_000,
     max_resolution: float = 3.0,
@@ -150,22 +158,37 @@ def search_candidate_ids(
 ) -> list[str]:
     """Run the hard-filters search and return at most ``rows`` matching PDB IDs.
 
+    ``rows`` is a genuine total cap on the returned list, however large -- it is NOT
+    passed straight through as the per-request page size sent to RCSB (that's a fixed,
+    separate concern: see ``_RCSB_MAX_ROWS_PER_QUERY``). **Real, live-discovered bug,
+    fixed 2026-07-18:** conflating these two meant a caller asking for more than 10,000
+    total results (e.g. a large sample pool for random selection, PLAN.md §16) crashed
+    with an ``HTTPStatusError``, since RCSB itself rejects a single request's ``rows``
+    above 10,000 -- callers used to have no way to ask for more than 10,000 total
+    candidates at all. Fixed by always requesting RCSB's own max page size per request
+    and letting ``Session``'s auto-pagination (below) keep fetching subsequent pages
+    until ``rows`` total items are collected or the real match count is exhausted,
+    whichever comes first -- so ``rows=50_000`` now genuinely returns up to 50,000 ids
+    (five real page fetches), not a crash or a silent 10,000 clamp.
+
     CRITICAL, live-verified (2026-07-04): ``Session`` (returned by ``.exec()``)
     auto-paginates through ALL matching results when fully materialized via
-    ``list(session)`` -- ``rows`` is the per-page size passed to the server,
-    NOT a cap on the total results a caller gets back. A query matching more
-    entries than ``rows`` will keep fetching subsequent pages until the whole
-    result set is exhausted. Confirmed: ``list(session)`` on a real query
-    matching 3,785 entries with ``rows=5`` did not return within 30s (many
+    ``list(session)`` -- the ``rows`` passed to ``.exec()`` is the per-page size, NOT a
+    cap on the total results a caller gets back; iterating (or islicing) further than one
+    page transparently fetches subsequent pages. A query matching more entries than one
+    page's ``rows`` will keep fetching until the whole result set is exhausted, or the
+    caller's own ``itertools.islice`` stops pulling. Confirmed: ``list(session)`` on a
+    real query matching 3,785 entries with ``rows=5`` did not return within 30s (many
     hundreds of sequential round trips); the identical query with
-    ``itertools.islice(session, 5)`` returned in 0.35s. Do not go back to
-    plain ``list(session)`` here -- it silently degrades from "instant" (the
-    hard-filters promise in PLAN.md §3) to potentially hours, with no error or warning.
+    ``itertools.islice(session, 5)`` returned in 0.35s. Do not go back to plain
+    ``list(session)`` here -- it silently degrades from "instant" (the hard-filters
+    promise in PLAN.md §3) to potentially hours, with no error or warning.
     """
     query = build_hard_filters_query(
         max_atoms=max_atoms, max_resolution=max_resolution, methods=methods
     )
-    session = query.exec(return_type="entry", rows=rows)
+    page_size = min(rows, _RCSB_MAX_ROWS_PER_QUERY)
+    session = query.exec(return_type="entry", rows=page_size)
     return list(itertools.islice(session, rows))
 
 

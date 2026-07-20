@@ -129,7 +129,11 @@ class TestRunDockingValidation:
         assert result.failure_mode == FailureMode.DOCKING_QUALITY
         assert "self-dock RMSD" in result.notes[0]
 
-    def test_good_pose_but_no_interactions_fails(self, monkeypatch, tmp_path):
+    def test_good_pose_but_zero_interactions_is_a_soft_success(self, monkeypatch, tmp_path):
+        # scripts/ligand_filter_fix_brief.md Problem 2 (2026-07-19): a real, non-empty
+        # interaction_counts dict (PLIP ran fine, genuinely found zero interactions) is a
+        # soft pass, not a docking_quality failure -- distinct from the "PLIP couldn't
+        # even analyze the complex" case below.
         receptor_pdb_path = tmp_path / "receptor.pdb"
         receptor_pdb_path.write_text("ATOM      1  CA  ALA A   1       0.0     0.0     0.0\n")
 
@@ -143,7 +147,41 @@ class TestRunDockingValidation:
                 pdb_id=pdb_id,
                 passed=False,
                 reasons=["PLIP found no interpretable protein-ligand interactions"],
-                interaction_counts={"hydrogen_bonds": 0},
+                interaction_counts={"hydrogen_bonds": 0, "hydrophobic_contacts": 0},
+            ),
+        )
+
+        result = run_docking_validation(
+            "1ABC",
+            receptor_pdbqt_path=tmp_path / "receptor.pdbqt",
+            receptor_pdb_path=receptor_pdb_path,
+            ligand_pdbqt_path=tmp_path / "ligand.pdbqt",
+            reference_ligand_pdb_block=_REFERENCE_PDB_BLOCK,
+            box_center=(0.0, 0.0, 0.0),
+        )
+
+        assert result.status == ValidationStatus.SUCCESS
+        assert result.failure_mode is None
+        assert any("zero interpretable interactions" in note for note in result.notes)
+
+    def test_plip_could_not_analyze_complex_still_fails(self, monkeypatch, tmp_path):
+        # The genuine pipeline-malfunction case (empty interaction_counts, e.g. PLIP
+        # never even detected the ligand) stays a real docking_quality failure -- distinct
+        # from the soft-pass "ran fine, found nothing" case above.
+        receptor_pdb_path = tmp_path / "receptor.pdb"
+        receptor_pdb_path.write_text("ATOM      1  CA  ALA A   1       0.0     0.0     0.0\n")
+
+        monkeypatch.setattr(
+            docking_validation, "dock_top_pose", lambda *a, **k: _MATCHING_POSE_PDBQT
+        )
+        monkeypatch.setattr(
+            docking_validation,
+            "run_plip_analysis",
+            lambda pdb_id, complex_path: PlipAnalysisResult(
+                pdb_id=pdb_id,
+                passed=False,
+                reasons=["PLIP found no ligand in the complex"],
+                interaction_counts={},
             ),
         )
 
@@ -158,7 +196,7 @@ class TestRunDockingValidation:
 
         assert result.status == ValidationStatus.FAILURE
         assert result.failure_mode == FailureMode.DOCKING_QUALITY
-        assert any("no interpretable" in note for note in result.notes)
+        assert any("no ligand" in note for note in result.notes)
 
     def test_good_pose_and_interactions_succeeds(self, monkeypatch, tmp_path):
         receptor_pdb_path = tmp_path / "receptor.pdb"

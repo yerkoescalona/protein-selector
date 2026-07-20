@@ -109,6 +109,25 @@ class TestSearchCandidateIds:
         result = search_candidate_ids(max_atoms=10_000, rows=5)
         assert result == ["0000", "0001", "0002", "0003", "0004"]
 
+    def test_rows_above_rcsb_ceiling_still_returns_full_total(self, mock_hard_filters_query):
+        """Regression test for a real bug, fixed 2026-07-18 (see the function's docstring).
+
+        `rows` used to be passed straight through as BOTH the per-request page size sent
+        to RCSB (which rejects anything over 10,000 with a real, live-verified 400) AND
+        the total-results cap -- so a caller asking for more than 10,000 total candidates
+        (a real, live scenario: PLAN.md §16's `search_candidates` stage with a wide
+        `sample_pool_size`) had no way to do so without crashing. Fixed by always
+        requesting RCSB's own max page size (10,000) regardless of how large `rows` is,
+        while still returning up to the full `rows` total (Session's own auto-pagination,
+        already relied on by the test above, supplies the rest).
+        """
+        mock_hard_filters_query.exec.return_value = [f"{i:05d}" for i in range(20_000)]
+        result = search_candidate_ids(max_atoms=10_000, rows=15_000)
+        assert len(result) == 15_000
+        assert result[0] == "00000"
+        assert result[-1] == "14999"
+        mock_hard_filters_query.exec.assert_called_once_with(return_type="entry", rows=10_000)
+
 
 class TestFetchEntryMetadata:
     """fetch_entry_metadata delegates to DataQuery -- mock_data_query patches the class."""

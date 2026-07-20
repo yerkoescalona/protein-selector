@@ -16,10 +16,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from protein_selector.docking.pocket import (
+    PocketInfo,
     _parse_vertex_centroid,
+    _parse_vertex_extent,
     check_pocket_detected,
     parse_fpocket_info,
     run_fpocket,
+    select_containing_pocket,
 )
 
 # Real ATOM-line format from a real pocket{N}_vert.pqr, trimmed to two atoms
@@ -135,6 +138,10 @@ class TestRunFpocket:
 
         assert pockets[0].box_center == pytest.approx((35.621, 29.557, 4.4365))
         assert pockets[1].box_center is None
+        # box_size, PLAN.md §17b: max pairwise vertex distance (~3.038 Å for these two
+        # real atom lines) + the default 6.0 Å padding, isotropic on all three axes.
+        assert pockets[0].box_size == pytest.approx((9.0376, 9.0376, 9.0376), abs=1e-3)
+        assert pockets[1].box_size is None
 
 
 class TestParseVertexCentroid:
@@ -143,6 +150,57 @@ class TestParseVertexCentroid:
 
     def test_no_atom_lines_returns_none(self):
         assert _parse_vertex_centroid("HEADER\nHEADER only\n") is None
+
+
+class TestParseVertexExtent:
+    def test_max_pairwise_distance_plus_default_padding(self):
+        # Real coords from _SAMPLE_VERT_PQR: max pairwise distance ~3.038 Å, default
+        # padding 6.0 Å -> isotropic edge ~9.038 Å on all three axes (PLAN.md §17b).
+        assert _parse_vertex_extent(_SAMPLE_VERT_PQR) == pytest.approx(
+            (9.0376, 9.0376, 9.0376), abs=1e-3
+        )
+
+    def test_custom_padding_is_additive(self):
+        extent = _parse_vertex_extent(_SAMPLE_VERT_PQR, padding_angstroms=0.0)
+        assert extent is not None
+        assert extent[0] == pytest.approx(3.0376, abs=1e-3)
+
+    def test_fewer_than_two_vertices_returns_none(self):
+        single_atom = "ATOM      1    O STP     1      35.878  28.901   5.782    0.00     4.13\n"
+        assert _parse_vertex_extent(single_atom) is None
+
+    def test_no_atom_lines_returns_none(self):
+        assert _parse_vertex_extent("HEADER\nHEADER only\n") is None
+
+
+class TestSelectContainingPocket:
+    def test_picks_nearest_containing_pocket(self):
+        near = PocketInfo(pocket_number=1, box_center=(0.0, 0.0, 0.0), box_size=(10.0, 10.0, 10.0))
+        far = PocketInfo(pocket_number=2, box_center=(100.0, 100.0, 100.0), box_size=(10.0, 10.0, 10.0))
+
+        assert select_containing_pocket([near, far], (1.0, 1.0, 1.0)) is near
+
+    def test_returns_none_if_no_pocket_contains_the_point(self):
+        pocket = PocketInfo(pocket_number=1, box_center=(0.0, 0.0, 0.0), box_size=(2.0, 2.0, 2.0))
+
+        assert select_containing_pocket([pocket], (100.0, 100.0, 100.0)) is None
+
+    def test_skips_pockets_missing_box_center_or_box_size(self):
+        no_center = PocketInfo(pocket_number=1, box_center=None, box_size=(10.0, 10.0, 10.0))
+        no_size = PocketInfo(pocket_number=2, box_center=(0.0, 0.0, 0.0), box_size=None)
+
+        assert select_containing_pocket([no_center, no_size], (0.0, 0.0, 0.0)) is None
+
+    def test_point_on_box_boundary_counts_as_contained(self):
+        pocket = PocketInfo(pocket_number=1, box_center=(0.0, 0.0, 0.0), box_size=(10.0, 10.0, 10.0))
+
+        assert select_containing_pocket([pocket], (5.0, 0.0, 0.0)) is pocket
+
+    def test_ties_broken_by_pocket_number(self):
+        first = PocketInfo(pocket_number=1, box_center=(0.0, 0.0, 0.0), box_size=(10.0, 10.0, 10.0))
+        second = PocketInfo(pocket_number=2, box_center=(0.0, 0.0, 0.0), box_size=(10.0, 10.0, 10.0))
+
+        assert select_containing_pocket([second, first], (0.0, 0.0, 0.0)) is first
 
 
 class TestCheckPocketDetected:

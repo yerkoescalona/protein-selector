@@ -12,3 +12,7 @@ venv/
 *.parquet
 *.db
 cache/
+
+# Snakemake outputs (PLAN.md §15) -- shortlist/report/markers, not source
+results/
+.snakemake/

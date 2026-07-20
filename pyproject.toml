@@ -26,6 +26,14 @@ dependencies = [
 # NOTE: openff-toolkit is intentionally excluded here — its only PyPI release
 # is yanked (it's conda-forge-first). Install it separately via conda when
 # that OpenFF-side work starts; do not add it back as a pip dependency.
+# structure_alignment.py (PLAN.md §18, switched to PyMOL's cealign 2026-07-20): the
+# docking receptor is the MD run's own relaxed structure, not a freshly-fetched one — the
+# crystal ligand's coordinates must be superposed into that frame first. This is done by
+# shelling out to the system `pymol` binary (cealign), not a pip/conda dependency of
+# either environment — see structure_alignment.py's module docstring. mdanalysis was
+# tried first (a hand-matched (chain, resid, icode) CA correspondence + Kabsch fit) and
+# dropped after two separate live-discovered atom-matching bugs; cealign's own structural
+# correspondence removes that whole bug class.
 validate = [
     "rdkit>=2024.3",
     "meeko",
@@ -53,6 +61,9 @@ webapp = [
     "dash-bootstrap-components>=2.0.4",
     "dash-cytoscape>=1.0.2",
 ]
+workflow = [
+    "snakemake>=9.23.1",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -77,6 +88,9 @@ exclude = [
     "app",  # thin Dash view script (PLAN.md §14) -- no business logic, same
     # "not linted" treatment as notebooks/; the logic it calls into
     # (src/protein_selector/webapp/) is linted/typed/tested normally.
+    "workflow",  # Snakemake `script:` targets (PLAN.md §15) -- thin glue only,
+    # same "not linted" treatment as app/; the logic they call into
+    # (src/protein_selector/pipeline.py, core/report.py) is linted normally.
 ]
 
 [tool.ruff.lint]
@@ -107,7 +121,10 @@ root = ["src", "tests"]
 # not resolvable statically -- same reason notebooks/ is excluded from ruff.
 # `app/` isn't under `root` (src, tests) above, so it's already out of scope
 # for ty -- listed here too for documentation, same as notebooks/.
-exclude = ["notebooks", "app"]
+# `workflow/` (PLAN.md §15): Snakemake injects a `snakemake` object into each
+# `script:` target's global namespace at run time -- same "not statically
+# resolvable" reason as notebooks' `display()`.
+exclude = ["notebooks", "app", "workflow"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

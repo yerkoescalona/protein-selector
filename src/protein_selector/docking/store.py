@@ -96,16 +96,22 @@ def _pocket_to_json(pocket: PocketInfo) -> dict[str, object]:
         "score": pocket.score,
         "druggability_score": pocket.druggability_score,
         "volume": pocket.volume,
+        "box_center": pocket.box_center,
+        "box_size": pocket.box_size,
         "fields": pocket.fields,
     }
 
 
 def _pocket_from_json(data: Any) -> PocketInfo:
+    box_center = data.get("box_center")
+    box_size = data.get("box_size")
     return PocketInfo(
         pocket_number=data["pocket_number"],
         score=data["score"],
         druggability_score=data["druggability_score"],
         volume=data["volume"],
+        box_center=tuple(box_center) if box_center is not None else None,
+        box_size=tuple(box_size) if box_size is not None else None,
         fields=data["fields"],
     )
 

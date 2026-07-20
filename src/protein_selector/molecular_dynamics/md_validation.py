@@ -47,6 +47,24 @@ from protein_selector.core.validation_result import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MD_STRUCTURES_DIR = Path("cache/md_structures")  # PLAN.md §18: a stated, explicit
+# exception to §4b's "no archive-wide structure mirror" rule -- this one is small (only
+# candidates that actually pass ex03 MD get a file, one PDB each) and load-bearing:
+# docking (PLAN.md §18) uses the MD run's own relaxed coordinates as the receptor, not a
+# freshly-fetched or freshly-PDBFixer-repaired structure, so the file has to persist
+# somewhere between the `md_validate` and `pocket_detect`/`dock_validate` rules.
+
+
+def relaxed_structure_path(pdb_id: str, base_dir: Path = DEFAULT_MD_STRUCTURES_DIR) -> Path:
+    """Deterministic path for a candidate's post-MD relaxed structure, PLAN.md §18.
+
+    Written by ``run_test_md`` only on a real ``SUCCESS`` outcome (never on a stability
+    blow-up or a NaN state -- see ``run_test_md``'s final branches). Callers (
+    ``stages.pocket_detection``, ``stages.docking_common``) must treat a missing file at
+    this path as "MD hasn't succeeded for this candidate yet", not an error to raise.
+    """
+    return base_dir / f"{pdb_id}_relaxed.pdb"
+
 EXERCISE_NAME = "md_simulation"  # the label callers pass to core.validation_store's
 # upsert/load_validation_results(exercise=...). This module OWNS this name (PLAN.md
 # §7b): every downstream consumer (the validation table's exercise column,
@@ -75,6 +93,18 @@ _DEFAULT_MAX_MINIMIZATION_ITERATIONS = 0  # 0 = OpenMM's own default: run until
 # pass a real value via `max_minimization_iterations` for triage runs where a bounded
 # worst-case wall-clock matters more than every candidate reaching full convergence.
 
+_MAX_SANE_COORDINATE_ANGSTROM = 10_000.0  # PLAN.md §18, real bug fixed 2026-07-19: the
+# NaN check below was already known-insufficient (workflow/config.yaml's own comments,
+# pre-dating this fix, document a real observed case -- 103L, final PE ~4e28 kJ/mol --
+# where a numerically blown-up-but-still-finite structure was recorded as SUCCESS). That
+# stopped being just a false-positive-in-the-report problem once relaxed structures started
+# being written to disk (PLAN.md §18): a real candidate (1PLJ) blew up to atom coordinates
+# in the tens of millions of Å, and OpenMM's own `PDBFile.writeFile` raised
+# `ValueError: coordinate "..." could not be represented in a width-8 field` -- an
+# UNCAUGHT exception that killed the entire Snakemake run, not just that one candidate's
+# job. 10,000 Å is a generous, round sanity bound -- no real protein structure's own
+# coordinates come anywhere close to it; only a genuine numerical blow-up would.
+
 
 def run_test_md(
     pdb_id: str,
@@ -84,6 +114,7 @@ def run_test_md(
     temperature_kelvin: float = _DEFAULT_TEMPERATURE_KELVIN,
     max_atoms: int | None = None,
     max_minimization_iterations: int = _DEFAULT_MAX_MINIMIZATION_ITERATIONS,
+    structures_dir: Path = DEFAULT_MD_STRUCTURES_DIR,
 ) -> ValidationResult:
     """Fetch/read, repair, and run a short OpenMM MD test on one structure.
 
@@ -106,6 +137,15 @@ def run_test_md(
 
     Requires the validation conda environment (`openmm`, `pdbfixer`); raises
     ``ImportError`` with an install hint if unavailable.
+
+    **On a real ``SUCCESS`` only**, the final relaxed structure (post-minimization,
+    post-``n_steps`` MD) is written to ``relaxed_structure_path(pdb_id, structures_dir)``
+    (PLAN.md §18) -- the docking slow lane (``stages.docking_common.resolve_docking_target``)
+    uses this file as the actual Vina receptor, not a freshly-fetched or
+    freshly-PDBFixer-repaired-but-never-relaxed structure, since the whole point of running
+    MD first is to dock into the receptor conformation the MD validator already confirmed
+    is stable. Never written on any ``FAILURE`` path (a blown-up or NaN structure is not a
+    usable receptor).
     """
     try:
         import openmm
@@ -308,8 +348,22 @@ def run_test_md(
     stages.close()
     elapsed = time.monotonic() - start
 
-    state = simulation.context.getState(getEnergy=True)
-    potential_energy = state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
+    try:
+        state = simulation.context.getState(getEnergy=True, getPositions=True)
+        potential_energy = state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
+    except Exception as exc:
+        # OpenMM itself refuses to report energy once positions have gone NaN
+        # (raises openmm.OpenMMException: "Particle coordinate is NaN" instead of
+        # returning a NaN-valued State) -- caught here as the same STABILITY
+        # blow-up case the NaN-energy check below exists for, not a new failure mode.
+        logger.warning("❌ %s: could not read final state after %.1fs -- simulation blew up: %s", pdb_id, elapsed, exc)
+        return ValidationResult(
+            pdb_id=pdb_id,
+            status=ValidationStatus.FAILURE,
+            failure_mode=FailureMode.STABILITY,
+            effort_seconds=elapsed,
+            notes=[f"simulation blew up: could not read final state ({exc})"],
+        )
     if potential_energy != potential_energy:  # NaN check -- NaN is never equal to itself
         logger.warning("❌ %s: potential energy is NaN after %.1fs -- simulation blew up", pdb_id, elapsed)
         return ValidationResult(
@@ -318,6 +372,32 @@ def run_test_md(
             failure_mode=FailureMode.STABILITY,
             effort_seconds=elapsed,
             notes=["potential energy is NaN after the test run -- simulation blew up"],
+        )
+
+    # Real, live-discovered gap fixed here (see _MAX_SANE_COORDINATE_ANGSTROM's comment):
+    # a finite-but-absurd energy/coordinate blow-up is NOT caught by the NaN check above.
+    positions = state.getPositions()
+    max_abs_coordinate = max(
+        abs(component)
+        for vec in positions.value_in_unit(unit.angstrom)
+        for component in (vec.x, vec.y, vec.z)
+    )
+    if max_abs_coordinate > _MAX_SANE_COORDINATE_ANGSTROM:
+        logger.warning(
+            "❌ %s: max atom coordinate %.1f Å exceeds sane bound after %.1fs -- "
+            "simulation blew up (finite, not NaN)",
+            pdb_id, max_abs_coordinate, elapsed,
+        )
+        return ValidationResult(
+            pdb_id=pdb_id,
+            status=ValidationStatus.FAILURE,
+            failure_mode=FailureMode.STABILITY,
+            effort_seconds=elapsed,
+            notes=[
+                f"simulation blew up: max atom coordinate {max_abs_coordinate:.1f} Å "
+                f"exceeds the {_MAX_SANE_COORDINATE_ANGSTROM:.0f} Å sane bound "
+                f"(final PE {potential_energy:.3g} kJ/mol, not NaN but not physical)"
+            ],
         )
 
     logger.info("✅ %s: MD completed in %.1fs, final PE %.1f kJ/mol", pdb_id, elapsed, potential_energy)
@@ -330,6 +410,13 @@ def run_test_md(
             f"minimization may not have fully converged: stopped at "
             f"max_minimization_iterations={max_minimization_iterations}"
         )
+
+    relaxed_path = relaxed_structure_path(pdb_id, structures_dir)
+    relaxed_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(relaxed_path, "w") as relaxed_file:
+        app.PDBFile.writeFile(simulation.topology, positions, relaxed_file)
+    logger.info("💾 %s: relaxed structure written to %s", pdb_id, relaxed_path)
+
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,
