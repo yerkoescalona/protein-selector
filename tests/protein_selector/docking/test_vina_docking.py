@@ -1,6 +1,6 @@
 """Tests for protein_selector.docking.vina_docking.
 
-_parse_heavy_atom_coords/_rmsd are pure logic -- tested directly against
+_parse_heavy_atom_coords/_rmsd/rmsd_by_atom_name are pure logic -- tested directly against
 hand-built PDB/PDBQT text, no mocks needed. dock_top_pose/run_self_dock
 shell out to the real `vina` package (conda-only, see the module's
 docstring for why it's not pip-installable) -- the ImportError path is
@@ -21,6 +21,7 @@ from protein_selector.docking import vina_docking
 from protein_selector.docking.vina_docking import (
     _parse_heavy_atom_coords,
     _rmsd,
+    rmsd_by_atom_name,
     run_self_dock,
 )
 
@@ -63,6 +64,54 @@ class TestRmsd:
         reference = _parse_heavy_atom_coords(_PDB_BLOCK)
         docked = _parse_heavy_atom_coords(_PDBQT_BLOCK_SHIFTED)
         assert _rmsd(docked, reference) == pytest.approx(1.0)
+
+
+class TestRmsdByAtomName:
+    def test_matches_atoms_by_name_regardless_of_file_order(self):
+        # Regression test for the live-verified bug (PLAN.md §22c): a real docked pose and
+        # its reference ligand shared every atom name but in a completely different file
+        # order (2R43/G3G) -- the old index-order `_rmsd` compared unrelated atoms and
+        # reported a meaningless RMSD despite a near-perfect visual overlay.
+        reference = (
+            "HETATM    1  C1  LIG A   1       1.000   2.000   3.000  1.00  0.00           C\n"
+            "HETATM    2  O1  LIG A   1       4.000   5.000   6.000  1.00  0.00           O\n"
+            "HETATM    3  N1  LIG A   1       7.000   8.000   9.000  1.00  0.00           N\n"
+        )
+        # Same atoms, shifted by (1, 0, 0), but written in REVERSED file order.
+        docked = (
+            "ATOM      1  N1  LIG A   1       8.000   8.000   9.000  0.00  0.00     0.000 N\n"
+            "ATOM      2  O1  LIG A   1       5.000   5.000   6.000  0.00  0.00     0.000 OA\n"
+            "ATOM      3  C1  LIG A   1       2.000   2.000   3.000  0.00  0.00     0.000 C\n"
+        )
+        result = rmsd_by_atom_name(docked, reference)
+        assert result is not None
+        rmsd, n_matched = result
+        assert rmsd == pytest.approx(1.0)
+        assert n_matched == 3
+
+    def test_no_shared_atom_names_returns_none(self):
+        reference = (
+            "HETATM    1  C1  LIG A   1       1.000   2.000   3.000  1.00  0.00           C\n"
+        )
+        docked = (
+            "ATOM      1  C99 LIG A   1       1.000   2.000   3.000  0.00  0.00     0.000 C\n"
+        )
+        assert rmsd_by_atom_name(docked, reference) is None
+
+    def test_partial_overlap_matches_only_shared_names(self):
+        reference = (
+            "HETATM    1  C1  LIG A   1       1.000   2.000   3.000  1.00  0.00           C\n"
+            "HETATM    2  O1  LIG A   1       4.000   5.000   6.000  1.00  0.00           O\n"
+        )
+        docked = (
+            "ATOM      1  C1  LIG A   1       2.000   2.000   3.000  0.00  0.00     0.000 C\n"
+            "ATOM      2  N99 LIG A   1       99.00   99.00   99.00  0.00  0.00     0.000 N\n"
+        )
+        result = rmsd_by_atom_name(docked, reference)
+        assert result is not None
+        rmsd, n_matched = result
+        assert n_matched == 1
+        assert rmsd == pytest.approx(1.0)
 
 
 class TestRunSelfDock:
@@ -136,11 +185,15 @@ class TestRunSelfDock:
         assert result.failure_mode == FailureMode.DOCKING_QUALITY
         assert "self-dock RMSD" in result.notes[0]
 
-    def test_atom_count_mismatch_fails_as_docking_quality(self, monkeypatch):
+    def test_no_shared_atom_names_fails_as_docking_quality(self, monkeypatch):
+        # PLAN.md §22c: RMSD is now matched by atom NAME, not file order/count -- a docked
+        # pose sharing zero atom names with the reference (a real correspondence failure,
+        # not just "fewer atoms") is the case that should still fail here.
+        no_shared_names_pose = (
+            "ATOM      1  X1  LIG A   1       2.000   2.000   3.000  0.00  0.00     0.000 C\n"
+        )
         monkeypatch.setattr(
-            vina_docking,
-            "dock_top_pose",
-            lambda *a, **k: _PDBQT_BLOCK_SHIFTED.rsplit("\n", 2)[0] + "\n",
+            vina_docking, "dock_top_pose", lambda *a, **k: no_shared_names_pose
         )
 
         result = run_self_dock(
@@ -153,4 +206,4 @@ class TestRunSelfDock:
 
         assert result.status == ValidationStatus.FAILURE
         assert result.failure_mode == FailureMode.DOCKING_QUALITY
-        assert "mismatch" in result.notes[0]
+        assert "no atom names" in result.notes[0]

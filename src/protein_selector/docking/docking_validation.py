@@ -52,6 +52,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from protein_selector.core.paths import CACHE_STRUCTURES_DIR, ligand_dir
 from protein_selector.core.validation_result import (
     FailureMode,
     ValidationResult,
@@ -63,18 +64,156 @@ from protein_selector.docking.vina_docking import (
     _DEFAULT_EXHAUSTIVENESS,
     _DEFAULT_N_POSES,
     _DEFAULT_RMSD_THRESHOLD_ANGSTROM,
-    _parse_heavy_atom_coords,
-    _rmsd,
     dock_top_pose,
+    rmsd_by_atom_name,
 )
 
 logger = logging.getLogger(__name__)
 
 EXERCISE_NAME = "docking"
 
+DEFAULT_DOCKING_STRUCTURES_DIR = CACHE_STRUCTURES_DIR  # PLAN.md §22c: same stated
+# exception to §4b's "no archive-wide structure mirror" rule as `md_validation.py`'s
+# relaxed-structure directory, for the same reason: small (one file per attempted
+# candidate+ligand, not per-conformer), and load-bearing for debugging -- without it, the
+# native crystal pose and the Vina-docked pose only ever existed inside a
+# `tempfile.TemporaryDirectory()` that was gone by the time anyone could inspect a
+# surprising result (e.g. good RMSD/affinity yet a recorded failure). Written for every
+# attempted dock, pass or fail, as soon as both poses exist -- including the
+# heavy-atom-count-mismatch case -- so the file itself is part of the debugging signal, not
+# just a reward for success. Scoped by CCD code (`cache/structures/{pdb_id}/{ccd_code}/`,
+# see `core.paths`) rather than living flat under a candidate-only path, since one
+# candidate can have several bound ligands and this keeps them from colliding.
+
 
 _LIGAND_CHAIN_ID = "X"  # a chain ID distinct from any real receptor chain, so PLIP/
 # OpenBabel's residue grouping doesn't collide with the receptor's own chains.
+_NATIVE_LIGAND_CHAIN_ID = "N"  # distinct from both the receptor's own chains and
+# _LIGAND_CHAIN_ID, so the native (crystal) and Vina-docked ligand poses never collide
+# when loaded into the same structure viewer.
+
+
+def _force_chain_id(pdb_text: str, chain_id: str) -> str:
+    """Extract ATOM/HETATM lines only, forcing PDB column 22 (0-indexed offset 21) to ``chain_id``.
+
+    Same fixed-column technique as ``_pdbqt_pose_to_pdb_hetatm_block``, applied to
+    already-valid PDB text (not PDBQT) -- used so the native and docked ligand blocks in
+    ``ligand_comparison_pdb_path``'s output never share a chain ID, regardless of what
+    chain the crystal structure originally assigned the ligand.
+
+    **Real, live-discovered bug, fixed here (2026-07-20):** the aligned native-ligand block
+    (``align_ligand_into_md_frame``'s output) carries its own trailing ``CONECT``/``END``
+    records. Passing those through unchanged (the previous behavior, which kept every
+    non-ATOM/HETATM line as-is) put a premature ``END`` in the middle of
+    ``_write_ligand_comparison_pdb``'s combined file -- PyMOL's ``load`` auto-splits a file
+    with two ``END`` records into two separate objects, silently breaking the
+    ``chain N``/``chain X`` selections `write_ligand_comparison_pml`'s script depends on
+    (confirmed live: PyMOL reported "loaded 2 objects from" and every subsequent
+    ``create native_ligand, ligand_poses and chain N`` failed with
+    "Invalid selection name"). Now drops every non-ATOM/HETATM line instead of passing it
+    through -- only coordinate lines belong in a multi-pose comparison file.
+    """
+    lines = []
+    for line in pdb_text.splitlines():
+        if line.startswith(("ATOM", "HETATM")):
+            lines.append(line[:21] + chain_id + line[22:])
+    return "\n".join(lines)
+
+
+def ligand_comparison_pdb_path(
+    pdb_id: str, ccd_code: str, base_dir: Path | None = None
+) -> Path:
+    """Deterministic path for a candidate+ligand's native-vs-docked comparison file.
+
+    Two-chain PDB: chain ``N`` is the native crystal ligand pose (the same
+    ``reference_ligand_pdb_block`` self-dock RMSD is computed against), chain ``X`` is the
+    top Vina-docked pose. Lives at ``cache/structures/{pdb_id}/{ccd_code}/{pdb_id}_{ccd_code}_ligands.pdb``
+    (PLAN.md §22c), alongside ``{pdb_id}_relaxed.pdb`` one directory up
+    (``molecular_dynamics.md_validation.relaxed_structure_path(pdb_id)``, the same receptor
+    frame the dock ran against) -- load both to visually inspect a surprising RMSD/PLIP
+    result, e.g. a low Vina affinity that still failed the RMSD or PLIP gate.
+
+    ``base_dir=None`` (the normal case) resolves ``DEFAULT_DOCKING_STRUCTURES_DIR`` by
+    module-global lookup at call time, not as a baked-in default value -- lets tests
+    monkeypatch the module attribute to redirect writes under a tmp dir.
+    """
+    if base_dir is None:
+        base_dir = DEFAULT_DOCKING_STRUCTURES_DIR
+    return ligand_dir(pdb_id, ccd_code, base_dir) / f"{pdb_id}_{ccd_code}_ligands.pdb"
+
+
+def ligand_comparison_pml_path(
+    pdb_id: str, ccd_code: str, base_dir: Path | None = None
+) -> Path:
+    """Deterministic path for a candidate+ligand's PyMOL comparison script. See ``write_ligand_comparison_pml``."""
+    if base_dir is None:
+        base_dir = DEFAULT_DOCKING_STRUCTURES_DIR
+    return ligand_dir(pdb_id, ccd_code, base_dir) / f"{pdb_id}_{ccd_code}_ligands.pml"
+
+
+def write_ligand_comparison_pml(
+    pdb_id: str,
+    ccd_code: str,
+    receptor_pdb_path: Path,
+    base_dir: Path | None = None,
+) -> Path:
+    """Write a PyMOL script that loads receptor + native + docked ligand pre-styled.
+
+    Deliberately takes ``receptor_pdb_path`` as a plain argument rather than importing
+    ``molecular_dynamics.md_validation.relaxed_structure_path`` itself -- keeps this
+    docking-domain module free of a cross-domain import; the caller (``stages/docking.py``,
+    which already imports that function for the docking run itself) passes it in.
+
+    Paths are written as given (relative paths are relative to wherever ``pymol`` is later
+    launched from, typically the repo root --
+    ``pymol cache/structures/{pdb_id}/{ccd_code}/{pdb_id}_{ccd_code}_ligands.pml``).
+    Loads the native ligand pose (chain ``N``) and Vina-docked pose (chain ``X``) as
+    separate named objects (``native_ligand``/``docked_ligand``) colored distinctly
+    (yellow/cyan carbons) as sticks over a cartoon receptor, zoomed to the ligands -- meant
+    as a one-command visual gut-check for a surprising RMSD/PLIP result (e.g. a low Vina
+    affinity that still failed the RMSD or PLIP gate).
+    """
+    ligands_path = ligand_comparison_pdb_path(pdb_id, ccd_code, base_dir)
+    lines = [
+        f"load {receptor_pdb_path}, receptor",
+        f"load {ligands_path}, ligand_poses",
+        "hide everything",
+        "show cartoon, receptor",
+        "color grey80, receptor",
+        "create native_ligand, ligand_poses and chain N",
+        "create docked_ligand, ligand_poses and chain X",
+        "delete ligand_poses",
+        "show sticks, native_ligand or docked_ligand",
+        "util.cbay native_ligand",  # yellow carbons -- native crystal pose
+        "util.cbac docked_ligand",  # cyan carbons -- Vina-docked pose
+        "set stick_radius, 0.18",
+        "zoom native_ligand or docked_ligand, 8",
+        "bg_color white",
+    ]
+    path = ligand_comparison_pml_path(pdb_id, ccd_code, base_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    logger.debug("📝 %s/%s: wrote PyMOL comparison script to %s", pdb_id, ccd_code, path)
+    return path
+
+
+def _write_ligand_comparison_pdb(
+    pdb_id: str,
+    ccd_code: str,
+    reference_ligand_pdb_block: str,
+    docked_pose_pdbqt_text: str,
+    base_dir: Path | None = None,
+) -> Path:
+    """Write the native + docked ligand poses to one two-chain PDB file. See ``ligand_comparison_pdb_path``."""
+    native_block = _force_chain_id(reference_ligand_pdb_block, _NATIVE_LIGAND_CHAIN_ID)
+    docked_block = _pdbqt_pose_to_pdb_hetatm_block(docked_pose_pdbqt_text, _LIGAND_CHAIN_ID)
+    text = "\n".join([native_block.rstrip("\n"), docked_block, "END"]) + "\n"
+
+    path = ligand_comparison_pdb_path(pdb_id, ccd_code, base_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    logger.debug("📝 %s/%s: wrote native/docked ligand comparison to %s", pdb_id, ccd_code, path)
+    return path
 
 
 def _pdbqt_pose_to_pdb_hetatm_block(
@@ -137,6 +276,7 @@ def _temp_complex_pdb(text: str):
 
 def run_docking_validation(
     pdb_id: str,
+    ccd_code: str,
     receptor_pdbqt_path: Path,
     receptor_pdb_path: Path,
     ligand_pdbqt_path: Path,
@@ -149,6 +289,9 @@ def run_docking_validation(
 ) -> ValidationResult:
     """Run the full ex04 check: Vina self-dock, then PLIP, on one candidate.
 
+    ``ccd_code`` scopes the persisted comparison structures (PLAN.md §22c) at
+    ``cache/structures/{pdb_id}/{ccd_code}/`` -- purely a filesystem key, no bearing on the
+    dock itself.
     ``receptor_pdb_path`` is the plain-PDB receptor structure (not PDBQT) --
     used only to assemble the complex PDB PLIP analyzes; ``receptor_pdbqt_path``
     is the Vina-ready receptor used for docking itself. Both must describe
@@ -184,22 +327,21 @@ def run_docking_validation(
         )
     dock_elapsed = time.monotonic() - start
 
-    docked_coords = _parse_heavy_atom_coords(pose_text)
-    reference_coords = _parse_heavy_atom_coords(reference_ligand_pdb_block)
-    if len(docked_coords) != len(reference_coords) or not docked_coords:
+    _write_ligand_comparison_pdb(pdb_id, ccd_code, reference_ligand_pdb_block, pose_text)
+
+    matched = rmsd_by_atom_name(pose_text, reference_ligand_pdb_block)
+    if matched is None:
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.DOCKING_QUALITY,
             effort_seconds=dock_elapsed,
             notes=[
-                f"heavy-atom count mismatch between docked pose ({len(docked_coords)}) "
-                f"and reference ligand ({len(reference_coords)}) -- cannot compute a "
+                "docked pose and reference ligand share no atom names -- cannot compute a "
                 "meaningful self-dock RMSD"
             ],
         )
-
-    rmsd = _rmsd(docked_coords, reference_coords)
+    rmsd, n_matched = matched
     if rmsd > rmsd_threshold_angstrom:
         return ValidationResult(
             pdb_id=pdb_id,
@@ -207,7 +349,8 @@ def run_docking_validation(
             failure_mode=FailureMode.DOCKING_QUALITY,
             effort_seconds=dock_elapsed,
             notes=[
-                f"self-dock RMSD {rmsd:.2f} Å exceeds threshold {rmsd_threshold_angstrom} Å"
+                f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms) exceeds threshold "
+                f"{rmsd_threshold_angstrom} Å"
             ],
         )
 
@@ -244,7 +387,7 @@ def run_docking_validation(
                 status=ValidationStatus.SUCCESS,
                 effort_seconds=total_elapsed,
                 notes=[
-                    f"self-dock RMSD {rmsd:.2f} Å, within {rmsd_threshold_angstrom} Å",
+                    f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms), within {rmsd_threshold_angstrom} Å",
                     "PLIP found zero interpretable interactions of any kind "
                     "(soft caveat, not treated as a failure -- see "
                     "scripts/ligand_filter_fix_brief.md Problem 2)",
@@ -256,7 +399,7 @@ def run_docking_validation(
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.DOCKING_QUALITY,
             effort_seconds=total_elapsed,
-            notes=[f"self-dock RMSD {rmsd:.2f} Å", *plip_result.reasons],
+            notes=[f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms)", *plip_result.reasons],
         )
 
     logger.info(

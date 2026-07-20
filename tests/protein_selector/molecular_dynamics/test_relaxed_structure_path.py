@@ -16,12 +16,12 @@ class TestRelaxedStructurePath:
     def test_default_base_dir_is_deterministic_per_pdb_id(self):
         path = relaxed_structure_path("1UBQ")
 
-        assert path == Path("cache/md_structures/1UBQ_relaxed.pdb")
+        assert path == Path("cache/structures/1UBQ/1UBQ_relaxed.pdb")
 
     def test_custom_base_dir_is_honored(self, tmp_path):
         path = relaxed_structure_path("4HHB", base_dir=tmp_path)
 
-        assert path == tmp_path / "4HHB_relaxed.pdb"
+        assert path == tmp_path / "4HHB" / "4HHB_relaxed.pdb"
 
     def test_different_pdb_ids_get_different_paths(self):
         assert relaxed_structure_path("1UBQ") != relaxed_structure_path("4HHB")

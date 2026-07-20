@@ -180,15 +180,16 @@ src/protein_selector/
                                  per-candidate `run_docking_stage`, so the two can never
                                  silently disagree).
   legacy/                        find_small_proteins_with_ligands.py (v0 seed, superseded)
-  pipeline.py                    run_pipeline() -- end-to-end orchestration (PLAN.md §7/§10),
-                                 wiring every stage above into one call. §7's original
-                                 script-first-not-Snakemake decision was reversed 2026-07-18
-                                 (PLAN.md §15) — run_pipeline itself is unchanged and still
-                                 the callable implementation of every stage; it's now also
-                                 wrapped by the Snakefile (below) for the slow/parallel lane.
-                                 See its own module docstring for exactly which stages are
-                                 always-on vs. optional (ex03/pocket detection) vs.
-                                 deliberately not auto-wired yet (ex04 docking).
+  pipeline.py                    run_pipeline() -- the original end-to-end orchestrator
+                                 (PLAN.md §7/§10). **Superseded and orphaned (§16/§22a):** the
+                                 Snakefile no longer wraps it -- every rule calls a
+                                 `stages/run_<stage>_stage(...)` function directly. §16 Phase C
+                                 (migrate its `TestRunPipeline*` behaviors onto the stage
+                                 functions, then delete this file) is NOT done: the file still
+                                 exists and `tests/test_pipeline.py` + `notebooks/
+                                 run_real_pipeline.ipynb` still import it, while the Snakefile
+                                 docstring already asserts it's gone. Resolve that drift (finish
+                                 the migration or correct the docstring) -- see PLAN.md §22a.
 Snakefile                       Snakemake DAG (PLAN.md §16, one rule per cheap-lane stage —
                                  supersedes §15's black-box `metadata_lane`): `search_candidates`
                                  -> `simulability` -> `ligands`/`literature`/`modeling` (run
@@ -600,6 +601,23 @@ a real docked complex before trusting the change.
   not installed by a plain `uv sync`. Both live-executed end-to-end via
   `jupyter nbconvert --execute` (build the demo db, then browse it) to confirm every cell
   actually runs — not just written and assumed correct.
+
+## Database safety — hard rule (stated user requirement, PLAN.md §4b)
+
+The SQLite DB (`cache/protein_selector.db`) is the accumulated product of hours of real
+MD/docking compute. It is **append/upsert-only and must NEVER be wiped or rebuilt from
+scratch** — the user has called this out explicitly as too dangerous. Concretely:
+
+- Every write stays an upsert (`ON CONFLICT DO UPDATE`) or `INSERT OR IGNORE`; schema stays
+  `CREATE TABLE IF NOT EXISTS`. There is deliberately **no** `DROP`/`DELETE`/`TRUNCATE`, no
+  `.db` unlink, and no "reset/init-from-scratch" mode anywhere — do not add one, in code,
+  a script, a Makefile target, or a notebook.
+- Recompute = overwrite *specific* rows in place via `force_refresh` upsert (PLAN.md §22a),
+  never deletion. Any new entry point (`validate-one` CLI, `force_refresh` wiring, a schema
+  migration) must be scoped, additive, and reversible; back up the `.db` before any
+  unavoidable row-level surgery.
+- `notebooks/build_demo_db.ipynb` seeds the *default* db path additively — point it at a
+  throwaway/demo path, never let a demo seed overwrite real fields on a colliding `pdb_id`.
 
 ## Anti-hallucination rules
 

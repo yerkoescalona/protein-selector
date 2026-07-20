@@ -17,7 +17,7 @@ I go?"
 | Persistence (SQLite schema/connection), the cross-exercise validation-result contract, per-exercise difficulty scoring, or the final joined report/CSV | `src/protein_selector/core/` | Cross-domain infrastructure, not biology — every domain's `store.py` imports `connect`/`DEFAULT_DB_PATH` from `core/db.py`. `difficulty.py` (pure scoring) + `report.py` (the join + CSV writer) implement PLAN.md §5/§8 — see below. |
 | The superseded v0 script | `src/protein_selector/legacy/` | Reference only; do not extend. Slated for removal per `PLAN.md` §4/§10 step 1. |
 | Manual live-API performance diagnostics | `scripts/benchmark_pipeline.py` | Not a pytest test — see its own docstring. |
-| Running the pipeline as a resumable/parallel DAG, adding a Snakemake rule, the metadata-lane/slow-lane split | `Snakefile` + `workflow/scripts/` | PLAN.md §15. Wraps `pipeline.run_pipeline`/`core.report` — doesn't replace them. `workflow/config.yaml` for run config; `make workflow` to run. |
+| Running the pipeline as a resumable/parallel DAG, adding a Snakemake rule, the cheap-lane/slow-lane split | `Snakefile` + `workflow/scripts/` | PLAN.md §15–§22. One rule per stage, each calling a `stages/run_<stage>_stage(...)` function directly (not `run_pipeline`, §16); `core.report` unchanged. `workflow/config.yaml` for run config; `make workflow` to run. See §22 for the single-PDB flow audit. |
 | The overall design, layer rationale, open decisions, verification status | `PLAN.md` | The authoritative design doc. Read before any architectural change. |
 
 ## Why there's no per-domain `CONTEXT.md` yet (Layer 2, no longer blocked, not yet done)

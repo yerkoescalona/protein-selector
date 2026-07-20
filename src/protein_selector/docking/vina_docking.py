@@ -104,6 +104,62 @@ def _rmsd(
     return math.sqrt(sum(squared_diffs) / len(squared_diffs))
 
 
+def _parse_heavy_atoms_by_name(pdb_or_pdbqt_text: str) -> dict[str, tuple[float, float, float]]:
+    """Extract heavy-atom (x, y, z) coordinates from PDB/PDBQT ATOM/HETATM lines, keyed by atom name.
+
+    Same fixed-column parsing as ``_parse_heavy_atom_coords``, but keyed by the PDB atom
+    name (columns 13-16) instead of returned in file order -- lets a caller match two
+    poses' atoms by identity rather than by position.
+    """
+    atoms: dict[str, tuple[float, float, float]] = {}
+    for line in pdb_or_pdbqt_text.splitlines():
+        if not (line.startswith("ATOM") or line.startswith("HETATM")):
+            continue
+        atom_name = line[12:16].strip()
+        if atom_name[:1].upper() == "H" or atom_name[:2].upper() == "HH":
+            continue
+        try:
+            x, y, z = float(line[30:38]), float(line[38:46]), float(line[46:54])
+        except ValueError:
+            continue
+        atoms[atom_name] = (x, y, z)
+    return atoms
+
+
+def rmsd_by_atom_name(
+    docked_pdb_or_pdbqt_text: str, reference_pdb_or_pdbqt_text: str
+) -> tuple[float, int] | None:
+    """Self-dock RMSD matched by atom NAME, not by file order.
+
+    **Real, live-discovered bug this replaces (2026-07-20):** ``dock_top_pose``'s pose text
+    and ``reference_ligand_pdb_block`` do NOT reliably share atom order, even when they
+    describe the exact same ligand with the exact same atom names -- confirmed live (2R43,
+    ligand G3G): both blocks had the identical 41 heavy-atom names, but in a completely
+    different order (the native crystal block in the CIF's own atom order; the Vina-docked
+    pose in whatever order ``native_ligand.prepare_ligand_pdbqt``'s `obabel` conversion
+    emitted them). The old index-order ``_rmsd(zip(...))`` compared atom N of one pose to
+    atom N of the other regardless of what those atoms actually were -- silently comparing
+    unrelated atoms and reporting a meaningless RMSD (6.09 Å for what a direct PyMOL
+    overlay showed was a near-perfect redock). This function matches atoms by their shared
+    PDB atom NAME instead (both poses trace back to the same source ligand's atom naming,
+    unlike a symmetry problem across truly different conformer-generation pipelines) and
+    returns ``None`` if the two poses share no atom names at all (a real correspondence
+    failure, distinct from "RMSD happens to be large").
+
+    Returns ``(rmsd, n_matched_atoms)``. Callers should treat a low ``n_matched_atoms``
+    relative to either pose's total atom count as its own warning sign (see
+    ``run_docking_validation``'s notes).
+    """
+    docked_atoms = _parse_heavy_atoms_by_name(docked_pdb_or_pdbqt_text)
+    reference_atoms = _parse_heavy_atoms_by_name(reference_pdb_or_pdbqt_text)
+    common_names = sorted(set(docked_atoms) & set(reference_atoms))
+    if not common_names:
+        return None
+    docked_coords = [docked_atoms[name] for name in common_names]
+    reference_coords = [reference_atoms[name] for name in common_names]
+    return _rmsd(docked_coords, reference_coords), len(common_names)
+
+
 def dock_top_pose(
     receptor_pdbqt_path: Path,
     ligand_pdbqt_path: Path,
@@ -198,22 +254,18 @@ def run_self_dock(
             notes=[str(exc)],
         )
 
-    docked_coords = _parse_heavy_atom_coords(pose_text)
-    reference_coords = _parse_heavy_atom_coords(reference_ligand_pdb_block)
-
-    if len(docked_coords) != len(reference_coords) or not docked_coords:
+    matched = rmsd_by_atom_name(pose_text, reference_ligand_pdb_block)
+    if matched is None:
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.DOCKING_QUALITY,
             notes=[
-                f"heavy-atom count mismatch between docked pose ({len(docked_coords)}) "
-                f"and reference ligand ({len(reference_coords)}) -- cannot compute a "
+                "docked pose and reference ligand share no atom names -- cannot compute a "
                 "meaningful self-dock RMSD"
             ],
         )
-
-    rmsd = _rmsd(docked_coords, reference_coords)
+    rmsd, n_matched = matched
     if rmsd > rmsd_threshold_angstrom:
         logger.info("❌ %s: self-dock RMSD %.2f Å exceeds threshold %.2f Å", pdb_id, rmsd, rmsd_threshold_angstrom)
         return ValidationResult(
@@ -221,7 +273,7 @@ def run_self_dock(
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.DOCKING_QUALITY,
             notes=[
-                f"self-dock RMSD {rmsd:.2f} Å exceeds threshold "
+                f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms) exceeds threshold "
                 f"{rmsd_threshold_angstrom} Å"
             ],
         )
@@ -230,5 +282,5 @@ def run_self_dock(
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,
-        notes=[f"self-dock RMSD {rmsd:.2f} Å, within {rmsd_threshold_angstrom} Å"],
+        notes=[f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms), within {rmsd_threshold_angstrom} Å"],
     )

@@ -39,6 +39,7 @@ from pathlib import Path
 
 from tqdm.auto import tqdm
 
+from protein_selector.core.paths import CACHE_STRUCTURES_DIR, candidate_dir
 from protein_selector.core.validation_result import (
     FailureMode,
     ValidationResult,
@@ -47,23 +48,29 @@ from protein_selector.core.validation_result import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MD_STRUCTURES_DIR = Path("cache/md_structures")  # PLAN.md §18: a stated, explicit
+DEFAULT_MD_STRUCTURES_DIR = CACHE_STRUCTURES_DIR  # PLAN.md §18/§22c: a stated, explicit
 # exception to §4b's "no archive-wide structure mirror" rule -- this one is small (only
-# candidates that actually pass ex03 MD get a file, one PDB each) and load-bearing:
+# candidates that actually pass ex03 MD get a file, one per PDB id) and load-bearing:
 # docking (PLAN.md §18) uses the MD run's own relaxed coordinates as the receptor, not a
 # freshly-fetched or freshly-PDBFixer-repaired structure, so the file has to persist
-# somewhere between the `md_validate` and `pocket_detect`/`dock_validate` rules.
+# somewhere between the `md_validate` and `pocket_detect`/`dock_validate` rules. **§22c
+# reorg:** this used to be its own dedicated `cache/md_structures/` directory; now points
+# at the shared `cache/structures/` root every candidate's structures (MD + docking) live
+# under, keyed by PDB id -- see `core.paths` for the full layout.
 
 
-def relaxed_structure_path(pdb_id: str, base_dir: Path = DEFAULT_MD_STRUCTURES_DIR) -> Path:
-    """Deterministic path for a candidate's post-MD relaxed structure, PLAN.md §18.
+def relaxed_structure_path(pdb_id: str, base_dir: Path = CACHE_STRUCTURES_DIR) -> Path:
+    """Deterministic path for a candidate's post-MD relaxed structure, PLAN.md §18/§22c.
 
     Written by ``run_test_md`` only on a real ``SUCCESS`` outcome (never on a stability
     blow-up or a NaN state -- see ``run_test_md``'s final branches). Callers (
     ``stages.pocket_detection``, ``stages.docking_common``) must treat a missing file at
     this path as "MD hasn't succeeded for this candidate yet", not an error to raise.
+    Lives at ``cache/structures/{pdb_id}/{pdb_id}_relaxed.pdb`` (PLAN.md §22c) -- fpocket's
+    own output directory (``{pdb_id}_relaxed_out/``, named automatically from this file's
+    stem) lands alongside it in the same per-candidate directory with no extra wiring.
     """
-    return base_dir / f"{pdb_id}_relaxed.pdb"
+    return candidate_dir(pdb_id, base_dir) / f"{pdb_id}_relaxed.pdb"
 
 EXERCISE_NAME = "md_simulation"  # the label callers pass to core.validation_store's
 # upsert/load_validation_results(exercise=...). This module OWNS this name (PLAN.md

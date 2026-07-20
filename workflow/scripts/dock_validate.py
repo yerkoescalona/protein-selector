@@ -35,6 +35,11 @@ if __name__ == "__main__":
             rmsd_threshold_angstrom=snakemake.config["dock_rmsd_threshold"],  # noqa: F821
         ),
         db_path=Path(snakemake.config["db_path"]),  # noqa: F821
+        # PLAN.md §22a/§22c: wires force_refresh through so a real recompute is
+        # `snakemake --config force_refresh=true --forcerun dock_validate -- <targets>`,
+        # no manual DB row deletion needed. Defaults false -- the normal incremental-skip
+        # behavior every other stage already has.
+        force_refresh=snakemake.config.get("force_refresh", False),  # noqa: F821
     )
 
     if result is None:

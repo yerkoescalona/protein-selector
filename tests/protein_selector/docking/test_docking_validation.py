@@ -10,10 +10,13 @@ itself (covered by test_vina_docking.py/test_plip_analysis.py).
 
 from __future__ import annotations
 
+import pytest
+
 from protein_selector.core.validation_result import FailureMode, ValidationStatus
 from protein_selector.docking import docking_validation
 from protein_selector.docking.docking_validation import (
     _assemble_complex_pdb,
+    _force_chain_id,
     _pdbqt_pose_to_pdb_hetatm_block,
     run_docking_validation,
 )
@@ -37,6 +40,34 @@ _REAL_MEEKO_STYLE_POSE_PDBQT = (
     "ATOM      1  C   UNL     1      17.646  30.674   7.179  0.00  0.00     0.034 C \n"
     "ATOM      2  O   UNL     1      18.341  28.657   8.172  0.00  0.00    -0.397 OA\n"
 )
+
+
+class TestForceChainId:
+    def test_drops_conect_and_end_records(self):
+        # Regression test for the live-verified bug: the aligned native-ligand block
+        # carries its own trailing CONECT/END records; passing those through unchanged put
+        # a premature END in the middle of the combined native+docked comparison file,
+        # which made PyMOL's `load` auto-split it into two objects and silently break the
+        # chain N/chain X selections `write_ligand_comparison_pml`'s script depends on.
+        text = (
+            "CRYST1   57.917   85.953   46.261  90.00  90.00  90.00 P 21 21 2     1\n"
+            "HETATM    1  C1  LIG A   1       1.000   2.000   3.000  1.00  0.00           C\n"
+            "CONECT    1    2\n"
+            "END\n"
+        )
+        block = _force_chain_id(text, "N")
+        lines = block.splitlines()
+        assert len(lines) == 1
+        assert lines[0].startswith("HETATM")
+        assert lines[0][21] == "N"
+
+    def test_forces_chain_id_on_every_atom_line(self):
+        text = (
+            "HETATM    1  C1  LIG A   1       1.000   2.000   3.000  1.00  0.00           C\n"
+            "HETATM    2  O1  LIG A   1       4.000   5.000   6.000  1.00  0.00           O\n"
+        )
+        block = _force_chain_id(text, "N")
+        assert all(line[21] == "N" for line in block.splitlines())
 
 
 class TestPdbqtPoseToPdbHetatmBlock:
@@ -91,6 +122,14 @@ class TestAssembleComplexPdb:
 
 
 class TestRunDockingValidation:
+    @pytest.fixture(autouse=True)
+    def _no_real_cache_writes(self, monkeypatch, tmp_path):
+        # PLAN.md §22c: run_docking_validation now persists a native/docked ligand
+        # comparison PDB under cache/structures/{pdb_id}/{ccd_code}/ as a side effect --
+        # redirect that under this test's own tmp_path so pytest runs never litter the
+        # real repo cache with a "1ABC" candidate.
+        monkeypatch.setattr(docking_validation, "DEFAULT_DOCKING_STRUCTURES_DIR", tmp_path)
+
     def test_vina_failure_short_circuits_before_plip(self, monkeypatch, tmp_path):
         def fake_dock_top_pose(*args, **kwargs):
             raise RuntimeError("Vina docking run failed: simulated crash")
@@ -99,6 +138,7 @@ class TestRunDockingValidation:
 
         result = run_docking_validation(
             "1ABC",
+            "LIG",
             receptor_pdbqt_path=tmp_path / "receptor.pdbqt",
             receptor_pdb_path=tmp_path / "receptor.pdb",
             ligand_pdbqt_path=tmp_path / "ligand.pdbqt",
@@ -118,6 +158,7 @@ class TestRunDockingValidation:
 
         result = run_docking_validation(
             "1ABC",
+            "LIG",
             receptor_pdbqt_path=tmp_path / "receptor.pdbqt",
             receptor_pdb_path=tmp_path / "receptor.pdb",
             ligand_pdbqt_path=tmp_path / "ligand.pdbqt",
@@ -153,6 +194,7 @@ class TestRunDockingValidation:
 
         result = run_docking_validation(
             "1ABC",
+            "LIG",
             receptor_pdbqt_path=tmp_path / "receptor.pdbqt",
             receptor_pdb_path=receptor_pdb_path,
             ligand_pdbqt_path=tmp_path / "ligand.pdbqt",
@@ -187,6 +229,7 @@ class TestRunDockingValidation:
 
         result = run_docking_validation(
             "1ABC",
+            "LIG",
             receptor_pdbqt_path=tmp_path / "receptor.pdbqt",
             receptor_pdb_path=receptor_pdb_path,
             ligand_pdbqt_path=tmp_path / "ligand.pdbqt",
@@ -218,6 +261,7 @@ class TestRunDockingValidation:
 
         result = run_docking_validation(
             "1ABC",
+            "LIG",
             receptor_pdbqt_path=tmp_path / "receptor.pdbqt",
             receptor_pdb_path=receptor_pdb_path,
             ligand_pdbqt_path=tmp_path / "ligand.pdbqt",

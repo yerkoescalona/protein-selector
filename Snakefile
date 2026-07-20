@@ -133,10 +133,10 @@ def _md_markers(wildcards):
 
 
 def _pocket_markers(wildcards):
-    """Input function for the `docking_shortlist` checkpoint: the `pocket_detect` marker
-    for every simulability-checkpoint survivor, gated on `run_dock` (pocket detection is
-    docking-only, PLAN.md §18 -- unlike `md_validate`, which stays gated by `run_md` since
-    the MD lane is independently useful without docking).
+    """Input function for `report`: the `pocket_detect` marker for every simulability
+    survivor, gated on `run_dock` (pocket detection is docking-only, PLAN.md §18).
+    Deliberately NOT an input of `docking_shortlist` (PLAN.md §22) -- pocket data is
+    informational only (§20), so it must not gate docking's per-candidate fan-out.
     """
     if not RUN_DOCK:
         return []
@@ -277,21 +277,15 @@ rule pocket_detect:
 
 
 checkpoint docking_shortlist:
-    """Batch: the "second shortlist for Vina" (PLAN.md §17c) -- every sim-shortlist
-    survivor with a resolvable docking target (organic Meeko-passing ligand + a
-    containing fpocket pocket that's actually in the same frame as the MD-relaxed
-    receptor, PLAN.md §18).
-
-    A `checkpoint`, not a plain `rule`, same reason as `simulability` above -- lets
-    `_dock_markers` determine `dock_validate`'s per-candidate fan-out within the same
-    single `snakemake` invocation (PLAN.md §17c, decided 2026-07-19). Depends on
-    `_pocket_markers` (every shortlist survivor's now-per-candidate `pocket_detect` job,
-    PLAN.md §18), not a single whole-shortlist marker.
+    """Second shortlist for Vina (PLAN.md §17c): sim-shortlist survivors with a
+    resolvable docking target. Checkpoint so `_dock_markers` can fan out `dock_validate`
+    within one invocation. No longer depends on `_pocket_markers` (PLAN.md §22) --
+    pocket data is informational only (§20), not needed to build the Vina box, so it
+    must not gate this checkpoint. `pocket_detect` still runs, just via `rule report`.
     """
     input:
         shortlist=str(SHORTLIST_PATH),
         meeko_marker=str(STAGE_MARKER_DIR / "meeko.done"),
-        pocket_markers=_pocket_markers,
     output:
         docking_shortlist=str(DOCKING_SHORTLIST_PATH),
     script:
@@ -393,8 +387,8 @@ rule report:
     which regresses the "cheap lane only, no conda env needed" invocation this Snakefile's
     own module docstring promises. Every shortlist survivor's `pocket_detect` job is still
     required, and its failure still loud (§ above), but ONLY when docking is actually
-    requested -- transitively, via `_pocket_markers` -> `docking_shortlist` ->
-    `_dock_markers`, only pulled in when `run_dock=true`.
+    requested -- via `_pocket_markers` below (moved here from `docking_shortlist`,
+    PLAN.md §22, so it's required without gating the fan-out).
 
     **Real, live-discovered bug, fixed 2026-07-19: `run_md`/`run_dock` declared as
     `params:`, not just read as globals inside `_md_markers`/`_dock_markers`.**
@@ -417,6 +411,7 @@ rule report:
         str(STAGE_MARKER_DIR / "literature.done"),
         str(STAGE_MARKER_DIR / "modeling.done"),
         _md_markers,
+        _pocket_markers,
         _dock_markers,
     params:
         run_md=RUN_MD,

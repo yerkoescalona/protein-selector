@@ -29,7 +29,9 @@ from protein_selector.core.validation_store import (
 )
 from protein_selector.docking.docking_validation import (
     EXERCISE_NAME,
+    ligand_comparison_pdb_path,
     run_docking_validation,
+    write_ligand_comparison_pml,
 )
 from protein_selector.docking.native_ligand import prepare_ligand_pdbqt
 from protein_selector.docking.receptor_prep import prepare_receptor_pdbqt
@@ -125,6 +127,7 @@ def run_docking_stage(
             )
             result = run_docking_validation(
                 pdb_id,
+                target.ccd_code,
                 receptor_pdbqt_path=receptor_pdbqt_path,
                 receptor_pdb_path=receptor_pdb_path,
                 ligand_pdbqt_path=ligand_pdbqt_path,
@@ -134,6 +137,12 @@ def run_docking_stage(
                 exhaustiveness=docking.exhaustiveness,
                 rmsd_threshold_angstrom=docking.rmsd_threshold_angstrom,
             )
+        if ligand_comparison_pdb_path(pdb_id, target.ccd_code).exists():
+            # PLAN.md §22c: the receptor here is the SAME MD-relaxed structure just used
+            # as the docking receptor, referenced by its persistent path (not the tempdir
+            # copy above, which is gone once this `with` block exits) so the generated
+            # `.pml` still resolves after the fact.
+            write_ligand_comparison_pml(pdb_id, target.ccd_code, relaxed_structure_path(pdb_id))
     except (ImportError, FileNotFoundError) as exc:
         logger.warning(
             "⚠️ docking stopped for %s: validation conda env not fully installed (%s)",
