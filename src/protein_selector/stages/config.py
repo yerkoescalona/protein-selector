@@ -94,6 +94,9 @@ class CandidateFilterConfig:
     min_residues: int = 50
     max_residues: int = 50
     max_resolution: float = 2.5
+    max_unmodeled_fraction: float = 0.1  # check_full_simulability's own default,
+    # threaded through here (2026-07-22) so scripts/validate_one.py can override it
+    # per-run without touching workflow/config.yaml -- previously hardcoded, unreachable.
     methods: list[ExperimentalMethod] | None = None
 
 
@@ -122,6 +125,21 @@ class MdSimulationConfig:
     # md_validation.run_test_md's docstring for the real, unbounded-wall-clock risk this
     # controls. Set a real cap here for triage runs where bounded worst-case time matters
     # more than every candidate's minimization reaching full convergence.
+
+
+@dataclass
+class ComplexMdSimulationConfig:
+    """Real GAFF2/AMBER receptor+ligand complex MD, persisted as exercise "complex_md_simulation".
+
+    PLAN.md §23a. Needs ``md_simulation`` and ``docking`` to have already succeeded for a
+    candidate (starts from the MD-relaxed receptor + the ligand's real crystal pose, not a
+    freshly re-embedded conformer or Vina's predicted pose).
+    """
+
+    enabled: bool = False  # needs environment-validation.yml's conda env (ambertools too,
+    # not just openmm/openff-toolkit) -- off by default, same as MdSimulationConfig.
+    n_steps: int | None = None  # None = complex_md_validation.py's own default.
+    max_minimization_iterations: int = 0  # 0 = unbounded, same rationale as MdSimulationConfig.
 
 
 @dataclass

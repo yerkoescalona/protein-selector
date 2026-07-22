@@ -51,6 +51,7 @@ def run_simulability_stage(
             min_residues=candidate_filter.min_residues,
             max_residues=candidate_filter.max_residues,
             max_resolution=candidate_filter.max_resolution,
+            max_unmodeled_fraction=candidate_filter.max_unmodeled_fraction,
         )
         for entry in entries
     ]

@@ -54,8 +54,8 @@ _EXCLUDED_CCD_CODES = frozenset(
         "SR", "CS", "SCN", "UNL", "NI", "LI", "CO",
         "SF4", "F3S", "FES", "HEM", "HEC", "RBF", "FMN", "FAD", "BTN",
         "COA", "NAD", "GTP", "GSP", "PLP",
-        # Not in course_candidates.sql's list, added here for the same reason --
-        # nitrate/nitrite were the concrete bug this brief reports (1LKS/1V7S).
+        # Small polyatomic crystallization ions -- nitrate/nitrite were the concrete
+        # bug this brief reports (1LKS/1V7S).
         "NO3", "NO2",
     }
 )

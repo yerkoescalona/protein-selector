@@ -80,6 +80,19 @@ workflow-dock:
 workflow-all:
 	PATH="$$HOME/miniconda3/bin:$$PATH" uv run --extra validate --group workflow snakemake --cores 2 --sdm conda --config run_md=true run_dock=true --forcerun report
 
+# Complex (receptor+ligand) MD via GAFF2/AMBER (PLAN.md §23a) -- OFF by default in
+# workflow/config.yaml (needs `ambertools` in validation_conda_prefix). Fans out over
+# `docking_shortlist`. The `PATH=...` prefix is NOT optional here (unlike a passing
+# resemblance to the targets above might suggest): live-discovered 2026-07-21 -- without
+# it, `--sdm conda`'s activation silently loses a PATH-ordering race against `uv run`'s
+# own venv, so the script runs under the uv venv's Python (which has `openmm` but NOT
+# `openff-toolkit`/`ambertools`) instead of the conda env's -- every job then fails with
+# `ModuleNotFoundError: No module named 'openff'`, NOT a "conda env missing" error, so it
+# looks like a real ligand-parametrization failure rather than an invocation bug. Confirmed
+# fixed by this exact `PATH=` prefix (same one workflow-md/-dock/-all already use).
+workflow-complex-md:
+	PATH="$$HOME/miniconda3/bin:$$PATH" uv run --extra validate --group workflow snakemake --cores 2 --sdm conda --config run_complex_md=true --forcerun report
+
 clean:
 	rm -rf .pytest_cache .ruff_cache
 	find . -type d -name __pycache__ -not -path "./.venv/*" -exec rm -rf {} +

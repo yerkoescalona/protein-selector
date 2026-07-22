@@ -3,7 +3,9 @@
 -- polyatomic crystallization ions like nitrate/sulfate) that have ALSO
 -- actually completed the full validation pipeline: MD simulation
 -- (exercise="md_simulation"), AlphaFold DB modeling lookup (exercise="modeling"),
--- and a real Vina self-dock + PLIP check (exercise="docking").
+-- a real Vina self-dock + PLIP check (exercise="docking"), and optionally a real
+-- receptor+ligand GAFF2/AMBER complex MD (exercise="complex_md_simulation",
+-- PLAN.md §23a -- off by default, uncomment the cmd.status filter below).
 --
 -- Run against cache/protein_selector.db, e.g.:
 --   sqlite3 -header -column cache/protein_selector.db < scripts/course_candidates.sql
@@ -58,14 +60,19 @@ SELECT
   model.status                AS modeling_status,
   dock.status                 AS docking_status,
   dock.failure_mode           AS docking_failure_mode,
-  dock.notes                  AS docking_notes
+  dock.notes                  AS docking_notes,
+  cmd.status                  AS complex_md_status,       -- PLAN.md §23a, GAFF2/AMBER
+  cmd.failure_mode            AS complex_md_failure_mode, -- receptor+ligand MD from the
+  cmd.notes                   AS complex_md_notes         -- real crystal ligand pose
 FROM candidates c
 JOIN real_ligands rl        ON rl.pdb_id = c.pdb_id
 LEFT JOIN simulability s    ON s.pdb_id = c.pdb_id
 LEFT JOIN validation md     ON md.pdb_id = c.pdb_id AND md.exercise = 'md_simulation'
 LEFT JOIN validation model  ON model.pdb_id = c.pdb_id AND model.exercise = 'modeling'
 LEFT JOIN validation dock   ON dock.pdb_id = c.pdb_id AND dock.exercise = 'docking'
+LEFT JOIN validation cmd    ON cmd.pdb_id = c.pdb_id AND cmd.exercise = 'complex_md_simulation'
 WHERE s.passed = 1
   AND md.status = 'success'          -- comment out to include not-yet-simulated candidates
   -- AND dock.status = 'success'     -- uncomment for ONLY full-pipeline-confirmed candidates
+  -- AND cmd.status = 'success'      -- uncomment for ONLY complex-MD-confirmed candidates
 ORDER BY c.n_residues ASC;

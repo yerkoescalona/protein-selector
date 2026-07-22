@@ -15,8 +15,12 @@ from pathlib import Path
 
 from protein_selector.core.report import build_report_table
 from protein_selector.docking.store import load_ligand_ccd_codes
+from protein_selector.stages.complex_md_simulation import (
+    run_complex_md_simulation_stage,
+)
 from protein_selector.stages.config import (
     CandidateFilterConfig,
+    ComplexMdSimulationConfig,
     DockingConfig,
     MdSimulationConfig,
     ModelingLookupConfig,
@@ -44,9 +48,10 @@ def run_validate_one_stage(
     run_md: bool,
     run_pocket: bool,
     run_dock: bool,
+    run_complex_md: bool,
     force_refresh: bool,
 ) -> None:
-    """Run every stage for one PDB id: metadata -> simulability -> ligands/literature/modeling -> parameterizability/meeko -> md -> pocket -> dock. No checkpoints."""
+    """Run every stage for one PDB id: metadata -> simulability -> ligands/literature/modeling -> parameterizability/meeko -> md -> pocket -> dock -> complex_md. No checkpoints."""
     pdb_id = pdb_id.upper()
     logger.info("🔎 fetching metadata for %s", pdb_id)
     entries = fetch_entry_metadata([pdb_id])
@@ -58,6 +63,9 @@ def run_validate_one_stage(
         min_residues=config.get("min_residues", CandidateFilterConfig.min_residues),
         max_residues=config.get("max_residues", CandidateFilterConfig.max_residues),
         max_resolution=config.get("max_resolution", CandidateFilterConfig.max_resolution),
+        max_unmodeled_fraction=config.get(
+            "max_unmodeled_fraction", CandidateFilterConfig.max_unmodeled_fraction
+        ),
     )
     survivors = run_simulability_stage(entries, candidate_filter, db_path)
     if not survivors:
@@ -152,6 +160,36 @@ def run_validate_one_stage(
             )
     elif ccd_codes:
         logger.info("⏭️ %s: docking skipped (--no-dock)", pdb_id)
+
+    if run_complex_md and run_dock:
+        complex_md_result = run_complex_md_simulation_stage(
+            pdb_id,
+            ComplexMdSimulationConfig(
+                enabled=True,
+                n_steps=config.get("complex_md_n_steps", ComplexMdSimulationConfig.n_steps),
+                max_minimization_iterations=config.get(
+                    "complex_md_max_minimization_iterations",
+                    ComplexMdSimulationConfig.max_minimization_iterations,
+                ),
+            ),
+            db_path,
+            force_refresh=force_refresh,
+        )
+        if complex_md_result is None:
+            logger.warning(
+                "⚠️ %s: complex MD stage skipped (validation conda env not active/installed, "
+                "needs ambertools)",
+                pdb_id,
+            )
+        else:
+            logger.info(
+                "🧪🎯 %s: complex MD (receptor+ligand) -> %s%s",
+                pdb_id,
+                complex_md_result.status.value,
+                f" ({complex_md_result.failure_mode.value})" if complex_md_result.failure_mode else "",
+            )
+    elif ccd_codes and run_complex_md:
+        logger.info("⏭️ %s: complex MD skipped (docking is off, needs a docked pose)", pdb_id)
 
     print_validate_one_summary(pdb_id, db_path)
 

@@ -106,3 +106,16 @@ dock_rmsd_threshold: 2.5  # self-dock "success" cutoff (PLAN.md §21, relaxed fr
 # 0.04 A under the old threshold. `vina_docking._DEFAULT_RMSD_THRESHOLD_ANGSTROM`'s own
 # comment has the full reasoning (the RMSD itself is index-order, not symmetry-matched, so
 # some slack above the textbook 2.0 A is warranted).
+
+# Complex (receptor+ligand) MD slow lane (PLAN.md §23a, 2026-07-21) -- OFF by default,
+# unlike run_md/run_dock: needs `ambertools` (antechamber/sqm for GAFF2 AM1-BCC charges)
+# added to validation_conda_prefix on top of the existing openmm/openmmforcefields/
+# openff-toolkit/rdkit packages -- not yet a standing assumption for every course machine.
+# Fans out over `docking_shortlist` (same candidates dock_validate runs on); the stage
+# itself skips a candidate gracefully (FailureMode.COMPLETENESS) if docking didn't
+# actually succeed for it, so `run_complex_md=true` is safe even before every
+# `dock_validate` job has finished.
+run_complex_md: false
+complex_md_threads: 2
+complex_md_n_steps: 200  # short smoke test, same rationale as md_n_steps.
+complex_md_max_minimization_iterations: 200

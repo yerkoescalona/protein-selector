@@ -93,6 +93,7 @@ REPORT_CSV_PATH = Path(config["report_csv_path"])
 STAGE_MARKER_DIR = Path(config["stage_marker_dir"])
 RUN_MD = config["run_md"]
 RUN_DOCK = config["run_dock"]
+RUN_COMPLEX_MD = config.get("run_complex_md", False)
 RESTRICT_MD_TO_DOCKABLE = config["restrict_md_to_dockable"]
 
 
@@ -155,6 +156,24 @@ def _dock_markers(wildcards):
         checkpoints.docking_shortlist.get(**wildcards).output.docking_shortlist
     )
     return expand("results/dock/{pdb_id}.done", pdb_id=_ids_from_file(docking_shortlist_path))
+
+
+def _complex_md_markers(wildcards):
+    """Same fan-out as `_dock_markers` (docking-shortlist candidates), gated on
+    `run_complex_md` (PLAN.md §23a, off by default -- needs `ambertools` in the conda
+    env). A candidate on the docking shortlist whose `dock_validate` didn't actually
+    succeed still gets a `complex_md_validate` job (marker existence, not success, gates
+    the fan-out here -- same convention as `pocket_detect`'s relationship to `md_validate`)
+    but the stage function itself skips it gracefully via `resolve_docking_target`.
+    """
+    if not RUN_COMPLEX_MD:
+        return []
+    docking_shortlist_path = Path(
+        checkpoints.docking_shortlist.get(**wildcards).output.docking_shortlist
+    )
+    return expand(
+        "results/complex_md/{pdb_id}.done", pdb_id=_ids_from_file(docking_shortlist_path)
+    )
 
 
 rule all:
@@ -372,6 +391,31 @@ rule dock_validate:
         "workflow/scripts/dock_validate.py"
 
 
+rule complex_md_validate:
+    """Slow lane, one job per docking-shortlist candidate (PLAN.md §23a): real GAFF2/AMBER
+    receptor+ligand complex MD, starting from the crystal ligand pose
+    (`stages.complex_md_simulation.run_complex_md_simulation_stage`), upserted to the
+    shared `validation` table under exercise `"complex_md_simulation"`. Same
+    marker-only-on-real-result discipline as `md_validate`/`dock_validate`.
+
+    **Depends on `dock_validate` for the SAME `{pdb_id}`** (needs a real docked/aligned
+    ligand pose to resolve, via `resolve_docking_target` -- same function `dock_validate`
+    itself uses, so this rule can never target a different ligand/pose than the one
+    `dock_validate` already validated). The stage function itself treats "docking didn't
+    actually succeed" as a graceful `FailureMode.COMPLETENESS`, not a crash, so this rule
+    only needs the marker to exist, not the docking result to be a `SUCCESS`.
+    """
+    input:
+        docking_shortlist=str(DOCKING_SHORTLIST_PATH),
+        dock_marker="results/dock/{pdb_id}.done",
+    output:
+        "results/complex_md/{pdb_id}.done",
+    threads: config["complex_md_threads"]
+    conda: config["validation_conda_prefix"]
+    script:
+        "workflow/scripts/complex_md_validate.py"
+
+
 rule report:
     """Pure offline join over whatever is currently persisted in `DB_PATH`
     (`core.report.build_report_table`, PLAN.md §8) -- depends on every stage's marker (and,
@@ -413,9 +457,11 @@ rule report:
         _md_markers,
         _pocket_markers,
         _dock_markers,
+        _complex_md_markers,
     params:
         run_md=RUN_MD,
         run_dock=RUN_DOCK,
+        run_complex_md=RUN_COMPLEX_MD,
         restrict_md_to_dockable=RESTRICT_MD_TO_DOCKABLE,
     output:
         str(REPORT_CSV_PATH),
