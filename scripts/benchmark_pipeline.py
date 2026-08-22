@@ -28,7 +28,6 @@ import argparse
 import time
 from collections.abc import Callable, Sized
 from dataclasses import dataclass
-from typing import TypeVar
 
 from protein_selector.structural_biology.candidates import (
     fetch_entry_metadata,
@@ -38,8 +37,6 @@ from protein_selector.structural_biology.composition import (
     fetch_non_standard_residues,
     fetch_oligomeric_state,
 )
-
-_T = TypeVar("_T", bound=Sized)
 
 
 @dataclass
@@ -52,7 +49,7 @@ class StageTiming:
     seconds: float
 
 
-def time_stage(stage: str, n_requested: int, fn: Callable[[], _T]) -> tuple[StageTiming, _T]:
+def time_stage[T: Sized](stage: str, n_requested: int, fn: Callable[[], T]) -> tuple[StageTiming, T]:
     """Run ``fn``, returning a ``StageTiming`` alongside ``fn``'s own (typed) result."""
     start = time.time()
     result = fn()

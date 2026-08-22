@@ -1,25 +1,9 @@
-"""complex_md_simulation validator: real receptor+ligand MD via GAFF2/AMBER (PLAN.md §23a).
+"""complex_md_simulation validator: real receptor+ligand MD via GAFF2/AMBER (PLAN.md §24).
 
-Distinct from ``md_validation.py`` (apo protein only). Requires ``md_simulation`` (ex03)
-and ``docking`` (ex04) to have already succeeded for a candidate: the receptor is
-``md_validation``'s own MD-relaxed structure, and the ligand's starting pose is its real
-crystal coordinates (not a freshly re-embedded conformer, not Vina's predicted pose),
-extracted via ``stages.docking_common.resolve_docking_target`` -- the same function
-``dock_validate`` already uses, so this validator can never silently disagree with it
-about which ligand/pose a candidate uses.
-
-Ligand parametrization: GAFF2 (via ``openmmforcefields.generators.GAFFTemplateGenerator``)
-+ AM1-BCC partial charges (via ``ambertools``'s ``sqm``, called internally by
-``openff.toolkit``'s ``assign_partial_charges("am1bcc")``) -- the AMBER-family force field
-the user asked for over SMIRNOFF, requires the ``environment-validation.yml`` conda env's
-``ambertools`` package. Real crystal heavy-atom coordinates are preserved via RDKit's
-``AssignBondOrdersFromTemplate`` (SMILES gives correct bond orders; the crystal PDB block
-gives the real 3D pose) then ``AddHs(addCoords=True)`` -- live-verified on 1MPJ/IPH
-(phenol): heavy-atom coordinates after this round-trip match the crystal PDB block exactly.
-
-Requires the validation conda environment (``openmm``, ``openmmforcefields``,
-``openff-toolkit``, ``ambertools``, ``rdkit``). Lazily imported inside the one function
-that needs them, same pattern as ``md_validation.py``.
+Distinct from ``md_validation.py`` (apo protein only) -- requires ``md_simulation`` (ex03)
+and ``docking`` (ex04) to have already succeeded for a candidate. Needs the validation
+conda environment (``openmm``, ``openmmforcefields``, ``openff-toolkit``, ``ambertools``,
+``rdkit``), lazily imported inside the one function that needs them.
 """
 
 from __future__ import annotations
@@ -60,11 +44,8 @@ def complex_relaxed_structure_path(pdb_id: str, ccd_code: str, base_dir: Path = 
 def _crystal_pose_ligand_molecule(native_ligand_block: str, smiles: str):
     """Build an OpenFF ``Molecule`` with correct GAFF-ready bonding but REAL crystal coordinates.
 
-    RDKit's ``AssignBondOrdersFromTemplate`` fixes the PDB-block-derived molecule's bond
-    orders using the SMILES template (PDB format alone has no bond-order info); ``AddHs``
-    then adds hydrogens with inferred positions while leaving the real heavy-atom
-    coordinates untouched. Raises on any step's failure -- caller classifies as
-    ``FailureMode.PARAMETERIZATION``.
+    RDKit's bond-order-from-template + AddHs round-trip; see PLAN.md §24 for why. Raises on
+    any step's failure -- caller classifies as ``FailureMode.PARAMETERIZATION``.
     """
     from openff.toolkit import Molecule  # ty: ignore[unresolved-import]
     from rdkit import Chem
@@ -86,15 +67,8 @@ def _crystal_pose_ligand_molecule(native_ligand_block: str, smiles: str):
 def _single_residue_ligand_topology(off_mol):
     """OpenMM ``Topology`` for one ligand molecule, forced into a SINGLE residue.
 
-    Real, live-discovered bug: ``off_mol.to_topology().to_openmm()`` keeps whatever PDB
-    monomer info RDKit attached during ``_crystal_pose_ligand_molecule`` -- the crystal's
-    original heavy atoms carry the real CCD residue name (e.g. "IPH"), but atoms added by
-    ``AddHs`` carry none, so OpenMM sees TWO residues ("IPH" + a blank "UNK"). That silently
-    breaks ``GAFFTemplateGenerator``'s whole-molecule matching (it tries to match the
-    heavy-atom-only "IPH" fragment, not the full hydrogenated molecule) -- confirmed live on
-    1MPJ/IPH: ``ForceField.createSystem`` raised "No template found for residue 102 (IPH)"
-    even though the generator WAS registered. Rebuilding a fresh, one-residue topology
-    (same atoms/elements/bonds, no monomer info at all) fixes it.
+    A two-residue topology (real heavy atoms + hydrogens-with-no-monomer-info) silently
+    breaks ``GAFFTemplateGenerator``'s whole-molecule matching -- see PLAN.md §24.
     """
     import openmm.app as app
 

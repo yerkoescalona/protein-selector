@@ -49,8 +49,8 @@ in validation, which is **not optional**.
 
 - [x] Batched GraphQL via `rcsb-api` (≤1000 IDs/req) replaced sequential REST + `sleep`.
 - [x] Difficulty score + rationale (§5), done.
-- [ ] `legacy/` UniProt-first path superseded by the RCSB structured query; kept for
-      reference only, removable once its cofactor-lookup path is confirmed unwanted.
+- [x] `legacy/` UniProt-first path superseded by the RCSB structured query; removed 2026-08-08
+      (§25c) — zero importers, everything it did is live-verified and superseded.
 
 ### 4a. Validation harness — the a-priori "does this actually work" test
 
@@ -233,7 +233,7 @@ never data.**
 Base rules run in the uv env; slow-lane rules declare `conda:
 config["validation_conda_prefix"]`. Live-discovered constraints: `--sdm conda` needs a real
 `conda`/`mamba` binary (**micromamba does not satisfy it**); the full one-shot solve
-OOM-killed a 15 GB machine twice → build **incrementally** (`conda create python=3.11`, then
+OOM-killed a 15 GB machine twice → build **incrementally** (`conda create python=3.12`, then
 small `conda install` groups; `openmmforcefields`/`openff-toolkit` via pip). Instructor-side
 tooling only — never leaks into the student env (§12).
 
@@ -310,17 +310,36 @@ candidate, and `pocket_detect` is **per-candidate** (runs fpocket on that candid
 relaxed structure). *(This dependency is what drives the §22 single-PDB blocking problem.)*
 
 Live-caught bug worth keeping: a capped-minimization MD run can converge to a finite-but-
-blown-up structure the NaN-only stability check missed; `_MAX_SANE_COORDINATE_ANGSTROM`
-(10,000 Å) now catches it. Energy-magnitude is still NaN-only — see §22.
+blown-up structure the NaN-only stability check missed — `workflow/config.yaml` already
+documented one observed case (103L, final PE ~4e28 kJ/mol) recorded as `SUCCESS`. That
+stopped being just a false-positive-in-the-report problem once relaxed structures started
+being written to disk (§18 above): a real candidate (1PLJ) blew up to atom coordinates in
+the tens of millions of Å, and OpenMM's own `PDBFile.writeFile` raised `ValueError:
+coordinate "..." could not be represented in a width-8 field` — an uncaught exception that
+killed the entire Snakemake run, not just that one candidate's job. Fixed:
+`_MAX_SANE_COORDINATE_ANGSTROM` (10,000 Å, generous — no real protein structure comes
+close) now catches it. Energy-magnitude is still NaN-only — see §22.
 
 ## 19. Ligand filter fix — "organic" ≠ "passed Meeko"
 
 Small polyatomic ions (nitrate/sulfate/phosphate…) have real covalent bonds and pass Meeko
-cleanly, so Meeko-passing is not sufficient for dockable. `docking/native_ligand.py`'s
-`_EXCLUDED_CCD_CODES` + `is_dockable_ligand_code` (denylist first) is the single predicate
-used by both `pick_largest_organic_ligand` and the cheap pre-MD `docking_candidates` gate.
+cleanly, so Meeko-passing is not sufficient for dockable — confirmed live: 1LKS/1V7S (both
+nitrate-only structures) were picked as "organic" this way and reached `docking: success`.
+`docking/native_ligand.py`'s `_EXCLUDED_CCD_CODES` + `is_dockable_ligand_code` (denylist
+checked FIRST, regardless of what Meeko says) is the single predicate used by both
+`pick_largest_organic_ligand` and the cheap pre-MD `docking_candidates` gate. The denylist
+covers crystallization additives/cryoprotectants, bare metal ions (real biology, but not a
+real protein-ligand *interaction* worth docking), and metal clusters/covalently-tricky
+cofactors "too difficult to parametrize" per the instructor's explicit ask — a judgment
+call, not derived from any schema field.
 PLIP zero-interaction is now a soft `SUCCESS` (ran fine, found none), distinct from a real
-malfunction (PLIP couldn't detect the ligand). Denylist duplicated by hand in
+malfunction (PLIP couldn't detect the ligand) — the two are told apart by whether
+`plip_analysis.py`'s `interaction_counts` is a real, all-zero dict (every key present: PLIP
+ran fine, no interactions) vs. an empty `{}` (PLIP itself malfunctioned). Confirmed live:
+186L/1JJ9/2B03 all have excellent self-dock RMSD (0.65–1.65 Å) yet zero PLIP interactions of
+any kind, including `hydrophobic_contacts` — implausible on its face for 186L, a T4
+lysozyme hydrophobic-cavity binder, which is exactly why this needed distinguishing from a
+real malfunction rather than silently failing the candidate. Denylist duplicated by hand in
 `scripts/course_candidates.sql`, kept in sync manually.
 
 `docking_candidates` (checkpoint) + `restrict_md_to_dockable` (config, default on) narrow MD
@@ -336,8 +355,15 @@ aligned it into the receptor frame), never from fpocket's guess. `native_ligand.
 `ligand_bounding_box` (per-axis, padded 6.0 Å) supplies `box_center`/`box_size` on
 `DockingTarget`. **fpocket / `pocket_detection` is now purely descriptive** — a classroom
 signal ("did blind pocket detection agree with the crystal site?"), never a pass/fail gate.
-Root cause it fixed (diagnosed live on 3DAU, 6.61 Å): an off-target druggability-0.0 pocket
-was selected merely for enclosing the ligand centroid. **⚠ Not yet re-verified live.**
+Root cause it fixed (diagnosed live on 3DAU): fpocket can legitimately return a pocket that
+geometrically *contains* the ligand centroid while being a small, low-quality artifact —
+the containing pocket had `druggability_score` 0.0, volume 187 Å³, while a real
+1571 Å³/druggability-0.581 pocket sat ~15 Å away, uninvolved because it didn't happen to
+contain the centroid point. Handing Vina that wrong box silently miscredits an off-target
+search as "the receptor changed" or "Vina is inaccurate" when the real cause is upstream
+box selection (6.61 Å self-dock RMSD before this fix). fpocket/`pocket_detection` stays a
+real, persisted, independently useful signal — it just no longer gates or defines the Vina
+search box. **⚠ Not yet re-verified live.**
 
 ## 21. Structure alignment via PyMOL `cealign` (reverses MDAnalysis Kabsch)
 
@@ -426,7 +452,11 @@ simulability + whole-shortlist pocket/MD fan-out just to reach one `dock_validat
   threshold and ≥1 PLIP interaction; the second independently fails geometrically-good poses.
   Candidate fix: keep PLIP counts as descriptive `notes`, let RMSD alone decide. Alternative:
   keep both, since `predicted_vs_measured_gap` (§5) is designed to surface exactly these.
-  `dock_rmsd_threshold` relaxed 2.0 → 2.5 Å (RMSD is index-order, not symmetry-matched).
+  `dock_rmsd_threshold` relaxed 2.0 → 2.5 Å (2026-07-20, user decision) — a real self-dock
+  (1A7E, OFO ligand) landed at 2.04 Å, a near-perfect redock, and was scored a hard failure
+  purely for being 0.04 Å over 2.0. `rmsd_by_atom_name` is index-order-free but still not
+  symmetry-aware, so even a chemically identical pose can read a few tenths of an Å higher
+  than a symmetry-matched RMSD would report; 2.0 was too tight to absorb that.
 - **Live re-verification debt (§20, §17g).** The ligand-coord box change is unit-tested but
   not re-run against real fpocket/vina/obabel/plip.
 - **Per-domain `CONTEXT.md` (Layer 2)** — the `stages/` decomposition made it concrete; the
@@ -505,7 +535,34 @@ through the fixed writer. Old `cache/md_structures/`/`cache/docking_structures/`
 removed once empty. `tests/protein_selector/molecular_dynamics/test_relaxed_structure_path.py`
 updated for the new nested default path.
 
-### 23. PROPOSED: RDKit ligand-analog re-docking (not started)
+### 22d. Stale incremental-skip caching, two bugs, both real (2026-07-19)
+
+`run_docking_stage`'s and `run_md_simulation_stage`'s incremental-skip cache trusted ANY
+existing persisted result without checking whether the *meaning* of that result had since
+become stale. Two distinct real bugs, both fixed the same day:
+
+1. **Stale COMPLETENESS failure in `run_docking_stage`.** A cached `FailureMode.COMPLETENESS`
+   failure ("MD relaxed structure not available") could have had its actual cause resolved
+   by a later, successful run of `md_validate`. Confirmed live (1W6Y): a genuine, on-disk
+   relaxed structure existed and `docking_shortlist` correctly included it, yet
+   `dock_validate` kept returning the stale pre-existing COMPLETENESS failure because
+   nothing ever told the skip cache the blocking condition had been resolved. Fixed: a
+   cached COMPLETENESS failure is only trusted if its blocking condition (the relaxed
+   structure file) still doesn't exist. Other failure modes (parameterization, pocket,
+   docking quality) are NOT re-attempted this way, since those reflect the candidate's own
+   real chemistry/geometry, not a resolvable dependency on another stage.
+2. **Stale SUCCESS row in `run_md_simulation_stage`.** Before §18, "md_simulation succeeded"
+   meant only a DB row; after §18, it also implies `relaxed_structure_path(pdb_id)` was
+   written (docking's receptor source). Confirmed live: 18 real candidates had genuine
+   pre-§18 `SUCCESS` rows (persisted hours before the relaxed-structure-writing code
+   existed) with no file at that path — the incremental-skip check, unaware the meaning of
+   "success" had changed, kept serving the stale row, and `dock_validate` correctly but
+   confusingly reported "MD relaxed structure not available" for candidates whose MD had,
+   in the DB's eyes, already succeeded. Fixed: a cached `SUCCESS` row missing its structure
+   file is now treated as if nothing were cached — MD re-runs for real (which backfills the
+   missing file).
+
+## 23. PROPOSED: RDKit ligand-analog re-docking (not started)
 
 **Idea (user, 2026-07-20):** for a receptor with an already-validated native ligand, find
 chemically similar ligands (RDKit Morgan/ECFP4 fingerprint, Tanimoto similarity against the
@@ -526,3 +583,222 @@ similarity ranking.
   derivable from the schema — same category as §22a's other non-codifiable curation asks.
 
 **Not started:** no new pipeline stage, no schema, no RDKit fingerprinting code written yet.
+
+## 24. Complex MD (GAFF2/AMBER receptor+ligand) — the section §23a should have been
+
+`README.md` and `.claude/CLAUDE.md` both cite "PLAN.md §23a" for the GAFF2/AMBER
+receptor+ligand complex-MD stage. That section was never written, and §23 is an unrelated
+proposal (RDKit analog re-docking), so the citation resolved to the wrong topic. This
+section is the real one; `README.md`'s citations remain to be repointed (deferred — see
+§25e, that file has unrelated pending edits this pass didn't touch).
+
+The subsystem (commit `51d07d3`, ~850 LOC): `molecular_dynamics/complex_md_validation.py`
+(the validator, persisted as exercise `"complex_md_simulation"`), `docking/receptor_prep.py`
+(`obabel -xr` PDBQT prep it reuses), `stages/complex_md_simulation.py`, `core/paths.py`
+(shared structure-cache layout, §22c), plus `make workflow-complex-md`.
+
+**Why GAFF2/AMBER, not SMIRNOFF** (user decision, distinct from `molecular_dynamics/
+openff_parameterization.py`'s existing SMIRNOFF path): the AMBER force-field family, via
+`openmmforcefields.generators.GAFFTemplateGenerator` + AM1-BCC partial charges
+(`openff.toolkit`'s `assign_partial_charges("am1bcc")`, which internally shells out to
+`ambertools`'s `sqm` binary). This is what makes the stage conda-only — `ambertools` has no
+pip release (see README's Setup §2).
+
+**Why the ligand's starting pose is real crystal coordinates**, not a freshly re-embedded
+conformer or Vina's predicted pose: `stages.docking_common.resolve_docking_target` (the
+same function `dock_validate` uses) supplies the native ligand's real HETATM block, so this
+validator can never silently disagree with the docking validator about which ligand/pose a
+candidate uses. Requires `md_simulation` (ex03) and `docking` (ex04) to have already
+succeeded — the receptor is `md_validation`'s own MD-relaxed structure.
+
+**Two real, live-discovered bugs in getting from "crystal HETATM block" to "GAFF2-ready
+OpenFF molecule," both fixed and only relevant if this code is touched again:**
+
+1. **Bond orders + hydrogens.** A PDB block alone has no bond-order information. Fixed via
+   RDKit's `AssignBondOrdersFromTemplate` (SMILES template supplies correct bond orders)
+   then `AddHs(addCoords=True)` (adds hydrogens with inferred positions, leaves real
+   heavy-atom coordinates untouched). Live-verified on 1MPJ/IPH (phenol): heavy-atom
+   coordinates after the round-trip match the crystal PDB block exactly.
+   (`_crystal_pose_ligand_molecule`.)
+2. **Two-residue topology broke template matching.** `off_mol.to_topology().to_openmm()`
+   keeps whatever PDB monomer info RDKit attached — the crystal's original heavy atoms
+   carry the real CCD residue name (e.g. "IPH"), but atoms `AddHs` added carry none, so
+   OpenMM saw TWO residues ("IPH" + a blank "UNK"). That silently broke
+   `GAFFTemplateGenerator`'s whole-molecule matching (it tried to match the heavy-atom-only
+   fragment): confirmed live on 1MPJ/IPH, `ForceField.createSystem` raised "No template
+   found for residue 102 (IPH)" even with the generator registered. Fixed by rebuilding a
+   fresh, single-residue topology (same atoms/elements/bonds, no monomer info at all).
+   (`_single_residue_ligand_topology`.)
+
+## 25. Pre-presentation cleanup (2026-08-08 audit → work plan)
+
+The repo is about to be shown to other people as a work sample. A full code-quality and
+architecture audit (`docs/code-audit-2026-08-08.md`) found the engineering itself sound —
+the layering claims hold in the code, `ruff`/`ty` are clean, `pytest` is 334 passed / 2
+skipped (both skips are expected conda-only guards), the append/upsert-only DB rule is
+actually enforced (zero `DROP`/`DELETE`/`TRUNCATE`/`unlink` in `src/`), and the
+live-verification regression tests genuinely fail if their bug is reintroduced. What lets
+it down is presentation-layer noise: narrative sprawl in source, dead code still shipping,
+docs that contradict the code, and loose run-artifacts sitting in the working tree.
+
+Ordered cheapest-and-most-visible first. §25a is a blocker for everything after it.
+
+### 25a. Start from a clean tree (blocker — do this first)
+
+There are currently **9 modified and 11 untracked files** in the working tree, including
+substantive in-flight edits (`README.md` +98 lines, `environment-validation.yml` +68,
+`pyproject.toml` +48, `structure_alignment.py` +47, and a `uv.lock` with 446 deletions).
+Every task below rewrites files across `src/`, so starting a sweep on top of this would
+tangle unrelated work into one undifferentiated diff and make review impossible.
+
+Land or park the in-flight work first — commit it as its own logical change(s), or stash
+it — so each cleanup step lands as a reviewable, single-purpose commit. Do not begin §25b
+until `git status` is clean.
+
+### 25b. Loose files in the working tree
+
+- `2r43.cif` (222 KB) sits at repo root, untracked — a run artifact, not source. Delete it,
+  or move it under `cache/` (already gitignored).
+- `scripts/candidates_table_2026-07-20.md` (33 KB),
+  `scripts/candidate_assignment_priority_2026-07-22.md`,
+  `scripts/candidate_assignment_priority_2026-07-25.md` are dated pipeline *outputs* living
+  in a *source* directory. Move to `results/` (gitignored) or `docs/`; `scripts/` should
+  hold runnable scripts only.
+- `.python-version` is untracked — either commit it (it pins the toolchain, so it probably
+  belongs in git) or add it to `.gitignore`. Leaving it ambiguous is the only wrong answer.
+- `scripts/requirements-colab.{in,txt}` and the four `scripts/colab_*.py` files are
+  untracked but genuinely useful; decide deliberately whether they ship (see §25g).
+
+### 25c. Delete dead code (~728 lines) — DONE (2026-08-08)
+
+- **`legacy/find_small_proteins_with_ligands.py` (728 lines)** — grep confirmed **zero
+  importers** anywhere in `src/`, `tests/`, `workflow/`, `scripts/`, or the `Snakefile`;
+  the only reference was an empty test `__init__.py`. §4/§10 already declared it
+  removable. **Deleted**, along with `tests/protein_selector/legacy/`; `CONTEXT.md` and
+  `.claude/CLAUDE.md` references removed. Git history preserves it. `ruff`/`ty`/`pytest`
+  reverified clean after (334 passed, 2 skipped).
+
+### 25c'. `pipeline.py` (620 lines) — kept, docstring fixed, full migration deferred
+
+§16 Phase C calls for retiring this file (Snakemake becoming the sole orchestrator). Full
+retirement means migrating `tests/protein_selector/test_pipeline.py`'s 17 passing behaviors
+onto the `stages/run_*_stage` functions and repointing `notebooks/run_real_pipeline.ipynb`
+at them — a real feature migration (incremental skip-if-already-persisted logic, pool
+sampling, per-candidate crash-safe persistence all need a new home), not a documentation
+task, and too large to fold into a pre-presentation cleanup pass without risking breakage
+right before a demo.
+
+**Taken instead (cheap, honest, done 2026-08-08):** corrected the `Snakefile` docstring,
+which previously asserted `pipeline.run_pipeline` "no longer exists" — false, it's 620
+lines and its 17 tests pass. It now states plainly that `pipeline.py` is not deleted yet,
+still used by the test suite and the notebook, and that retiring it is an open, tracked
+step. **Still open, tracked here, not to be silently dropped:** do the real migration
+(§25c's original "preferred" path) in a dedicated follow-up session, not squeezed in here.
+
+### 25d. Docstring and comment discipline sweep (the big one)
+
+**2,883 of ~8,900 `src/` lines (32%) are docstring or comment.** 27 files carry dated
+war-story narrative (81 occurrences of `live-discovered` / `live-verified` / `Real bug` /
+`found and fixed` / a `2026-0*` date), and there are **168 `PLAN.md` references embedded in
+source**. Worst offenders by share: `stages/config.py` (62%), `docking/parameterizability.py`
+(51%), `docking/native_ligand.py` (46%), `docking/meeko_parameterization.py` (45%),
+`docking/docking_validation.py` (41%), `pipeline.py` (40%).
+
+This directly contradicts the repo's own stated convention: a docstring or comment gets
+1–3 lines — what it does, plus a one-line why only if genuinely non-obvious. Everything
+else (why a design was chosen, what was tried before, dated verification narratives)
+belongs here in `PLAN.md`. The existing dense style is what to move *away* from, not a
+precedent to keep matching.
+
+**Method — this is a migration, not a deletion.** For each of the 27 files: cut the
+narrative, paste it into the relevant `PLAN.md` section (creating one where none exists,
+as §24 does for complex MD), leave behind a terse docstring and at most a bare `PLAN.md
+§N` pointer. Nothing gets lost; it moves to where a reader actually looks for design
+rationale. Do it file-by-file with `pytest` green after each, not as one mega-commit.
+
+**Deliberately out of scope:** the "why" comments inside `pyproject.toml` and
+`environment-validation.yml` that explain *dependency* decisions (why `openff-toolkit` is
+excluded, why `meeko`'s transitive deps are pinned). Those are load-bearing at the exact
+point someone would otherwise "fix" the dependency and break it. Trim them if they sprawl,
+but they are not the same problem as narrative in Python.
+
+### 25e. Make the docs true again
+
+- **`Snakefile:3-4` states a falsehood:** that `pipeline.run_pipeline` "no longer exists
+  (PLAN.md §16 retired it)." It exists, is 620 lines, and its 17 tests pass. Resolved by
+  whichever branch of §25c is taken.
+- **The `§23a` citations** in `README.md` and `.claude/CLAUDE.md` point at a section that
+  was never written, colliding with an unrelated §23 — fixed by §24 above.
+- **`.claude/CLAUDE.md`'s repository-layout tree is stale:** it omits five real modules —
+  `docking/receptor_prep.py`, `molecular_dynamics/complex_md_validation.py`,
+  `molecular_dynamics/structure_alignment.py`, `core/paths.py`, `core/report_schema.py`.
+  A reader using it as the map will not find the newest subsystem.
+- **`CONTEXT.md`'s Layer 2 gap:** it explains at length why no per-domain `CONTEXT.md`
+  exists yet and notes the blocker is gone. Either write them or shorten the explanation to
+  a line — a paragraph explaining an absence reads worse than the absence.
+
+### 25f. Close the highest-risk test gaps
+
+`stages/` was the least-tested layer: 15 of 16 stage modules had no test, despite the
+design doc describing each `run_<stage>_stage` as "independently testable." Ranked by risk:
+
+1. **`stages/docking_common.py` — DONE (2026-08-08).** `resolve_docking_target` is the
+   single function deciding "is this candidate dockable, with which ligand/pocket," shared
+   by both the batch gate and the per-candidate validator *specifically so the two can
+   never silently disagree*. `tests/protein_selector/stages/test_docking_common.py` (9
+   tests, all dependencies monkeypatched) now covers every failure branch plus the §20
+   invariant itself: a non-containing fpocket pocket must never gate dockability.
+   Mutation-verified — reintroducing the pre-§20 pocket-gating behavior makes
+   `test_pocket_detection_never_gates_dockability_when_no_pocket_contains_the_ligand` fail.
+2. **`stages/validate_one.py` — DONE (2026-08-08).** A first-class documented CLI
+   (`README.md` shows three invocations).
+   `tests/protein_selector/stages/test_validate_one.py` (11 tests, every called stage
+   function monkeypatched) covers the control-flow contract: early-exit on no
+   metadata/failed simulability, ligand-gated parameterizability/meeko/docking, each
+   `run_md`/`run_pocket`/`run_dock` flag gating its own stage, `run_complex_md` requiring
+   both its own flag and `run_dock`, and config-dict values flowing into the per-stage
+   dataclasses.
+3. **`core/db.py`** — still untested directly; the multi-table schema creation has only
+   incidental coverage via each domain's store tests. Not done in this pass.
+4. The remaining ~14 thin stage wrappers (`search_candidates.py`, `docking.py`,
+   `md_simulation.py`, `meeko.py`, `pocket_detection.py`, etc.) still have no dedicated
+   test — `docking_common.py`/`validate_one.py` were the two flagged as highest-risk and
+   are now closed; the rest remain open, lower-priority follow-up work.
+4. The remaining thin stage wrappers — mocked-loader tests in the style of the one existing
+   `test_docking_candidates.py`, which already demonstrates the pattern works.
+
+No coverage tooling is installed; adding `pytest-cov` to the `dev` group would make this
+gap visible rather than something an audit has to discover by hand.
+
+### 25g. Optional — defer if time-boxed
+
+- **`store.py` upsert boilerplate:** ~9 near-identical upsert/load pairs across five
+  domain `store.py` files (`{key, passed: bool↔int, reasons: json}` is repeated verbatim
+  three times). A single `core/db.py` helper collapses them. Genuinely nice-to-have; the
+  duplication is boring and safe as-is.
+- **One layering inversion:** `molecular_dynamics/complex_md_validation.py:37` imports
+  `stages.docking_common`, while `stages/docking_common.py` imports back down into
+  `molecular_dynamics`. Not a Python import cycle (each direction resolves through
+  different files), but it inverts the domain→stages direction the architecture claims.
+  Fix by moving `resolve_docking_target` down into the `docking/` domain, or document the
+  exception explicitly.
+- **`scripts/colab_standalone_2pk4.py` (844 lines)** deliberately reimplements the four
+  scientific stages with *nothing* imported from the package. That is the point (it proves
+  the science runs with no repo access), but it is a real duplicate-logic maintenance
+  liability that will silently drift from `src/`. Keep it, but say so in its header and in
+  `PLAN.md` — an unexplained 844-line parallel implementation reads as an accident.
+- **Emoji-prefixed log messages** (`✅`/`❌`/`🧲`, ~34 call sites across 10 files) are
+  consistent and harmless, but non-standard for a scientific tool's log output. Cosmetic;
+  only worth touching if the live log output is part of the demo.
+
+### Definition of done
+
+`ruff`/`ty`/`pytest` green; no file in `src/` above ~20% comment share; no dated
+war-story narrative in any `.py`; `legacy/` gone (done); `pipeline.py`'s status accurately
+described even though the file itself stays for now (done — Snakefile docstring fixed,
+§25c'); every `PLAN.md §N` citation in `README.md`/`.claude/CLAUDE.md`/`Snakefile`
+resolving to a real section on the right topic; `docking_common.py` and `validate_one.py`
+tested. (Pre-existing uncommitted files in the working tree at the start of this pass —
+`README.md`, `environment-validation.yml`, `pyproject.toml`, `structure_alignment.py`,
+`uv.lock`, the `scripts/colab_*`/`requirements-colab*` files — are unrelated in-flight
+work the user asked to leave alone; "clean tree" is not a gate for this pass.)

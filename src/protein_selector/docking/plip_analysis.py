@@ -1,36 +1,16 @@
 """ex04 docking validator, piece 2: PLIP interaction analysis (PLAN.md §4a/§10 step 4).
 
-A self-dock RMSD close to the crystal pose (``vina_docking.py``) is
-necessary but not sufficient -- PLAN.md §4a's easy-signal also wants
-"interactions make biological sense." This module runs the real PLIP
-(Protein-Ligand Interaction Profiler) analysis on a docked complex and
-reports whether it finds any interpretable interaction at all (hydrogen
-bonds, hydrophobic contacts, pi-stacking, salt bridges, halogen bonds,
-water bridges) -- a pose with zero interactions of any kind is not a
-teachable example regardless of how low its RMSD is.
+A self-dock RMSD close to the crystal pose (``vina_docking.py``) is necessary but not
+sufficient -- this module runs the real PLIP (Protein-Ligand Interaction Profiler) analysis
+on a docked complex and reports whether it finds any interpretable interaction at all
+(hydrogen bonds, hydrophobic contacts, pi-stacking, salt bridges, halogen bonds, water
+bridges); a pose with zero interactions of any kind is not a teachable example regardless
+of RMSD.
 
-Requires the validation conda environment's ``plip`` package. **Not
-pip-installable in this project's base/`.venv`**: verified live
-(2026-07-05) -- ``pip wheel plip`` fails during its build step, which
-shells out to install `openbabel` via pip and that itself fails without
-system Boost/openbabel C++ libs present (the same class of build-time
-native-dependency problem as ``vina``, not a stub gap). conda-forge ships
-prebuilt ``plip``/``openbabel`` packages instead -- see
-``environment-validation.yml``. Lazily imported inside the one function
-that needs it, same reason as this domain's other conda-only modules.
-
-**Live-verified (2026-07-06)** in a throwaway `micromamba` env bootstrapped
-from `environment-validation.yml`, against a real docked complex (1UBQ +
-a real Vina-docked ethanol pose): `PDBComplex.ligands`, `characterize_complex`,
-`interaction_sets` (keyed by exactly `f"{hetid}:{chain}:{position}"`, e.g.
-`"UNL:X:1"`), and every attribute name in `_INTERACTION_ATTRIBUTES` below
-(`hbonds_pdon`/`hbonds_ldon`/`hydrophobic_contacts`/`pistacking`/etc.) all
-confirmed real, not guessed. **One real bug caught and fixed by this
-verification, in the caller** (`docking_validation.py`, not this module):
-a blank ligand chain-ID column made `PDBComplex.ligands` silently return
-`[]` -- PLIP requires a real, non-blank chain ID to detect the ligand at
-all. See `docking_validation.py`'s `_pdbqt_pose_to_pdb_hetatm_block`
-docstring for the fix.
+Requires the validation conda environment's ``plip`` package -- not pip-installable (its
+build tries to pip-install openbabel, which needs system Boost/C++ libs). Lazily imported.
+A blank ligand chain-ID column silently makes `PDBComplex.ligands` return `[]` -- see
+``.claude/CLAUDE.md`` bug 3 (the caller-side fix, in `docking_validation.py`).
 """
 
 from __future__ import annotations

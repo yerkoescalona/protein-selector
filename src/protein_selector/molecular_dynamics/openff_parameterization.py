@@ -1,34 +1,15 @@
 """OpenFF ligand parameterization: can this ligand be force-fielded for an OpenMM MD run?
 
-Per PLAN.md §10 step 4, this is now sequenced ahead of the ex04 docking
-validator: the actual pedagogical end goal is a protein + relevant-ligand MD
-simulation (extending ``md_validation.py`` beyond the apo protein), not just
-a docking test-run, so this check comes first.
+Per PLAN.md §10 step 4, sequenced ahead of the ex04 docking validator -- the pedagogical
+end goal is a protein + ligand MD simulation, not just a docking test-run.
 
-This is a **different toolchain from `docking/meeko_parameterization.py`**,
-even though both start from a ligand SMILES: Meeko/PDBQT parameterizes a
-ligand for Vina (docking), while this module parameterizes it for the
-*OpenMM* force field (MD) via OpenFF's SMIRNOFF small-molecule force fields.
-A ligand can pass one and fail the other -- they exercise different code
-paths (atom typing/charge assignment differ completely), so don't assume
-one implies the other.
+A **different toolchain from `docking/meeko_parameterization.py`**: that module
+parameterizes a ligand for Vina (Meeko/PDBQT); this one parameterizes it for the *OpenMM*
+force field via OpenFF's SMIRNOFF small-molecule force fields. A ligand can pass one and
+fail the other -- atom typing/charge assignment differ completely.
 
-Requires the validation conda environment (``openff-toolkit``, see
-``environment-validation.yml``'s header for why it has no usable pip
-release). Lazily imported inside the one function that needs it, same
-reason as ``md_validation.py``: keeps this module (and anything that
-transitively imports it, e.g. ``store.py``) loadable without the conda env
-installed.
-
-**Live-verified (2026-07-06)** in a throwaway `micromamba` env bootstrapped
-from `environment-validation.yml` (this sandbox has no conda by default;
-same bootstrap approach as `md_validation.py`'s own live verification):
-`check_ligand_openff_parameterizable` run for real against glucose's SMILES
-(the same molecule `docking/parameterizability.py`'s tests use) -- parses,
-embeds a conformer, and the SMIRNOFF `openff-2.1.0.offxml` force field
-builds a real OpenMM `System` from it, no errors. The documented
-`Molecule.from_smiles`/`generate_conformers`/`ForceField.create_openmm_system`
-API used below is confirmed correct as written, not guessed.
+Requires the validation conda environment (``openff-toolkit`` has no usable pip release);
+lazily imported.
 """
 
 from __future__ import annotations

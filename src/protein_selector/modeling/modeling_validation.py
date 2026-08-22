@@ -1,33 +1,10 @@
 """modeling validator: compose the AlphaFold DB lookup into one ValidationResult.
 
-Per PLAN.md §10 step 5's easy-signal ("DB entry exists, crisp single domain,
-high pLDDT, low PAE"), this checks two things using
-``alphafold_lookup.fetch_alphafold_entry``'s summary fields (see that
-module's docstring for why full PAE-matrix/domain analysis is deliberately
-not attempted here):
-
-1. Does an AlphaFold DB entry exist at all for this candidate's UniProt
-   accession?
-2. Is enough of the structure confidently modeled (low
-   ``fraction_plddt_very_low``/``fraction_plddt_low``) to be a good
-   teaching example, rather than a mostly-floppy prediction?
-
-Reports one ``{status, effort, failure_mode, notes}`` record via the shared
-``core.validation_result`` contract, keyed by ``EXERCISE_NAME`` -- same shape
-as the ``md_simulation``/``docking`` validators. **Naming (PLAN.md §7b):**
-this module OWNS the ``"modeling"`` name -- every downstream consumer
-(the ``validation`` table's ``exercise`` column, ``core/report.py``'s CSV
-columns, ``core/difficulty.py``'s weights) references ``EXERCISE_NAME``
-rather than re-declaring the string, so there is exactly one place this
-label is decided. **Deliberately named ``"modeling"``, not
-``"modeling_lookup"``** (renamed 2026-07-09): this validator only does a
-fetch-only AlphaFold DB lookup today, but the exercise *slot* it validates
-is the broader modeling domain -- a future revision could run a real
-prediction here without needing to rename the exercise identifier again
-(``pipeline.ModelingLookupConfig`` keeps the narrower "Lookup" name, since
-that config class does accurately describe what it controls right now).
-Corresponds to the course's "ex02" exercise slot (PLAN.md §4a) -- that
-numbering is course context, not this module's own name.
+Per PLAN.md §10 step 5's easy-signal, checks (1) does an AlphaFold DB entry exist for this
+candidate's UniProt accession, and (2) is enough of it confidently modeled to be a good
+teaching example. Reports one ``ValidationResult``, keyed by ``EXERCISE_NAME = "modeling"``
+(the course's ex02 slot) -- deliberately not "modeling_lookup", since the exercise *slot*
+this validates is the broader modeling domain, even though today it's fetch-only.
 """
 
 from __future__ import annotations

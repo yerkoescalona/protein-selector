@@ -1,47 +1,17 @@
 """Parameterizability ligand check, stage 2: real Meeko/AutoDock parameterization.
 
-``parameterizability.py``'s RDKit sanitization is necessary but not
-sufficient: a ligand can parse and sanitize fine and still fail real
-force-field parameterization (e.g. 3D embedding failure, an unusual
-functional group Meeko's atom typer can't assign charges/types to). This
-module runs the real, heavier check Vina docking actually depends on:
-SMILES -> 3D conformer -> Meeko ``MoleculePreparation`` -> PDBQT.
+``parameterizability.py``'s RDKit sanitization is necessary but not sufficient -- this
+module runs the real, heavier check Vina docking actually depends on: SMILES -> 3D
+conformer -> Meeko ``MoleculePreparation`` -> PDBQT.
 
-Requires the `validate` extra (`uv sync --extra validate`); `rdkit` and
-`meeko` are imported lazily inside the check function, same reason as
-``parameterizability.py`` -- keeps `store.py` (which every layer needs)
-importable without the extra installed.
+Requires the `validate` extra; `rdkit`/`meeko` are imported lazily, same reason as
+``parameterizability.py``. `meeko` needs `scipy`/`numpy`/`gemmi` transitively without
+declaring them -- pinned explicitly in the `validate` extra.
 
-`meeko` needs `scipy`, `numpy`, and `gemmi` transitively, none of which it
-declares as dependencies (a real, live-discovered gap, not something to
-guess around) -- all three are pinned explicitly in this project's
-`validate` extra for that reason. `openmm` is separately included per
-PLAN.md's Meeko/OpenFF parameterization goal but not yet used by this
-module -- OpenFF-side (MD, not docking) parameterization is a further step,
-not started here.
-
-Call sequence below was run live against a real SMILES (2026-07-05,
-ethanol and phosphate) to confirm the actual meeko API, not inferred from
-its docstrings alone:
-
-    mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
-    AllChem.EmbedMolecule(mol, randomSeed=...)   # returns 0 on success, -1 on failure
-    setups = MoleculePreparation().prepare(mol)  # a list; empty list on failure
-    pdbqt_string, is_ok, err = PDBQTWriterLegacy.write_string(setups[0])
-
-**Real, live-discovered bug (2026-07-06), fixed here:** ``AllChem.EmbedMolecule``
-can hang indefinitely, not just fail fast, on certain real bound ligands --
-confirmed live running the real pipeline against a random hard-filters
-sample: HEM (heme) hung for minutes with no CPU-bound progress (its
-iron-coordination bonds are a known real limitation of RDKit's ETKDG
-embedding algorithm, not a bug in this code). There is no in-process,
-reliable way to interrupt a hung native (C-extension) call from Python --
-``signal.alarm`` does not reliably interrupt code that never returns to the
-Python bytecode dispatch loop. ``filter_meeko_parameterizable`` therefore
-runs each ligand's check in its own subprocess (``multiprocessing``, spawn
-context) with a real wall-clock timeout, killing and recording a timeout
-failure for any ligand that hangs, rather than letting one bad ligand stall
-an entire batch/pipeline run indefinitely.
+Each ligand runs in its own subprocess with a wall-clock timeout -- ``AllChem.EmbedMolecule``
+can hang indefinitely (not just fail) on some real ligands (e.g. HEM); see
+``.claude/CLAUDE.md`` bugs 6-8 for the three real, silent failure modes this discipline
+was built to catch.
 """
 
 from __future__ import annotations
@@ -164,22 +134,9 @@ def _interpret_process_result(
 ) -> MeekoParameterizationResult:
     """Turn a joined subprocess's outcome into a result -- never blocks, never raises.
 
-    Split out from ``_check_meeko_parameterizable_with_timeout`` so the two
-    real failure modes below are independently unit-testable without needing
-    to reproduce a real hang or a real crash in an actual subprocess.
-
-    **Real, live-discovered bug, fixed here (2026-07-06):** a joined process
-    can be *not alive* for two different reasons -- it timed out and was
-    terminated (handled below), or it exited on its own WITHOUT ever putting
-    anything on the queue (e.g. an unhandled exception inside
-    ``check_meeko_parameterizable`` that ``_run_check_into_queue`` doesn't
-    catch -- concretely, an ``ImportError`` if meeko/rdkit somehow aren't
-    importable in the child's own environment). The original code called
-    ``queue.get()`` unconditionally once ``process.is_alive()`` was ``False``,
-    silently assuming that meant "finished normally with a result" -- for the
-    crash case it actually blocks forever with no exception and no timeout,
-    indistinguishable from a hang. Guarded with ``queue.empty()`` instead of
-    trusting exit implies a result.
+    Split out from ``_check_meeko_parameterizable_with_timeout`` so its two failure modes
+    (timeout vs. a crashed child that queued nothing) are independently testable. See
+    ``.claude/CLAUDE.md`` bug 7 for why ``queue.empty()`` matters here.
     """
     if process.is_alive():
         process.terminate()
@@ -212,11 +169,8 @@ def _check_meeko_parameterizable_with_timeout(
 ) -> MeekoParameterizationResult:
     """Run ``check_meeko_parameterizable`` in its own process, killing it on a real hang.
 
-    See the module docstring for why: ``AllChem.EmbedMolecule`` can hang
-    indefinitely on some real ligands (live-confirmed on HEM), and there is
-    no reliable in-process way to interrupt a hung native call. Uses the
-    ``spawn`` start method deliberately (not the default ``fork`` on Linux) --
-    safer around native extensions that may hold locks/threads at fork time.
+    See the module docstring. Uses ``spawn`` deliberately (not the default ``fork`` on
+    Linux) -- safer around native extensions that may hold locks/threads at fork time.
     """
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue[MeekoParameterizationResult] = ctx.Queue()
@@ -232,28 +186,11 @@ def filter_meeko_parameterizable(
 ) -> tuple[list[str], list[MeekoParameterizationResult]]:
     """Apply the parameterizability stage-2 check to a batch of ``{ligand_id: smiles}`` pairs.
 
-    ``smiles`` may be ``None`` -- see ``parameterizability.filter_parameterizable``'s
-    docstring for why (straight from ``ligands.fetch_smiles_for_ccd_codes``);
-    ``check_meeko_parameterizable`` already handles it as a real failure.
-
-    Each ligand is checked in its own subprocess with a real wall-clock
-    ``timeout_seconds`` -- see ``_check_meeko_parameterizable_with_timeout``'s
-    docstring for why (a live-confirmed hang on HEM, not a guessed risk).
-
-    **Real, live-discovered bug, fixed here (2026-07-06):** ``rdkit``/``meeko``
-    are only imported lazily *inside the subprocess* (``check_meeko_parameterizable``),
-    which means a missing install used to only surface as a raw traceback
-    dumped to stderr by ``multiprocessing`` from inside a doomed child
-    process -- once per ligand in the batch, and NOT as a catchable
-    ``ImportError`` in this process, so callers like
-    ``pipeline.py``'s ``try: ... except ImportError`` (which wraps the
-    module *import statement*, not a call into it) never actually caught
-    this case; that guard was effectively dead code for "meeko/rdkit not
-    installed." Fixed by checking importability once, here, in the parent
-    process before spawning anything -- fails fast with the same clean
-    ``ImportError`` message ``check_meeko_parameterizable`` raises when
-    called directly (single-item, no subprocess), instead of N slow,
-    doomed subprocesses each producing scary but uninformative output.
+    ``smiles`` may be ``None`` -- ``check_meeko_parameterizable`` handles it as a real
+    failure. Each ligand is checked in its own subprocess with a real wall-clock
+    ``timeout_seconds``. Checks rdkit/meeko importability once here, in the parent process,
+    before spawning anything -- see ``.claude/CLAUDE.md`` bug 8 for why deferring that check
+    into the subprocess silently broke every caller's `except ImportError` guard.
 
     Returns (ligand IDs that passed, results for every ligand) -- mirrors
     ``parameterizability.filter_parameterizable``'s shape.

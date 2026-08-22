@@ -1,47 +1,12 @@
 """docking validator: compose the Vina self-dock + PLIP checks into one ValidationResult.
 
-fpocket pocket detection and ligand parameterization are already handled
-(and persisted) upstream, in the parameterizability stage -- this module is
-just the composition PLAN.md §10 step 4 calls "the remaining piece": run a
-real Vina test-dock (``vina_docking.py``), then PLIP interaction analysis
-(``plip_analysis.py``) on the resulting complex, and report one combined
-``{status, effort, failure_mode, notes}`` record via the shared
-``core.validation_result`` contract -- same shape as ``md_validation.py``'s
-md_simulation validator, keyed by ``EXERCISE_NAME`` in the shared
-``validation`` table (``core.validation_store``). **Naming (PLAN.md §7b):**
-this module OWNS the ``"docking"`` name -- downstream consumers reference
-``EXERCISE_NAME`` rather than re-declaring the string. Corresponds to the
-course's "ex04" exercise slot (PLAN.md §4a) -- that numbering is course
-context, not this module's own name.
+Runs a real Vina test-dock (``vina_docking.py``), then PLIP interaction analysis
+(``plip_analysis.py``) on the resulting complex, and reports one combined
+``ValidationResult`` (``EXERCISE_NAME = "docking"``, the course's ex04 slot).
 
-**Live-verified end-to-end (2026-07-06)** in a throwaway `micromamba` env
-bootstrapped from `environment-validation.yml`: a real receptor (1UBQ,
-prepped via `obabel -xr`), a real ligand (ethanol, via
-`meeko_parameterization.py`'s pipeline), a real Vina dock, and real PLIP
-analysis, composed through `run_docking_validation` end to end, returning
-`ValidationStatus.SUCCESS` with a 0.04 Å self-dock RMSD and one real PLIP
-water-bridge interaction. **Two real bugs were caught and fixed by this
-verification, both silent (no exception, just a wrong/empty answer):**
-
-1. **Blank ligand chain ID.** Meeko's PDBQT output leaves the chain-ID
-   column blank; PLIP's ligand finder silently returns zero ligands for a
-   blank chain, which would have looked exactly like "no interpretable
-   interactions" (a false ``DOCKING_QUALITY``) rather than the real cause.
-   Fixed in ``_pdbqt_pose_to_pdb_hetatm_block``, which now always forces a
-   real chain ID (``_LIGAND_CHAIN_ID``) into that column.
-2. **Records after ``END``.** A real RCSB-fetched receptor PDB already
-   ends with its own ``END``/``MASTER`` records; naively appending the
-   ligand's ``HETATM`` lines after those produced a file with atom records
-   after ``END`` -- invalid PDB that also made PLIP silently see zero
-   ligands. Fixed in ``_assemble_complex_pdb``, which strips the
-   receptor's own trailing ``END``/``MASTER`` lines before appending the
-   ligand and adding exactly one final ``END``.
-
-Both are the kind of bug this repo's testing discipline explicitly warns
-about (see ``.claude/CLAUDE.md``'s "Bugs found via live verification"): a
-mocked/monkeypatched unit test that encodes the same wrong assumption the
-code makes will never catch it -- these two were only found by running the
-real external packages.
+Live-verified end-to-end (1UBQ + ethanol, 2026-07-06) against real Vina/PLIP -- see
+``.claude/CLAUDE.md``'s "Bugs found via live verification" (items 3-5) for three silent
+bugs this project's live-verification discipline caught here that mocked tests didn't.
 """
 
 from __future__ import annotations
@@ -72,18 +37,9 @@ logger = logging.getLogger(__name__)
 
 EXERCISE_NAME = "docking"
 
-DEFAULT_DOCKING_STRUCTURES_DIR = CACHE_STRUCTURES_DIR  # PLAN.md §22c: same stated
-# exception to §4b's "no archive-wide structure mirror" rule as `md_validation.py`'s
-# relaxed-structure directory, for the same reason: small (one file per attempted
-# candidate+ligand, not per-conformer), and load-bearing for debugging -- without it, the
-# native crystal pose and the Vina-docked pose only ever existed inside a
-# `tempfile.TemporaryDirectory()` that was gone by the time anyone could inspect a
-# surprising result (e.g. good RMSD/affinity yet a recorded failure). Written for every
-# attempted dock, pass or fail, as soon as both poses exist -- including the
-# heavy-atom-count-mismatch case -- so the file itself is part of the debugging signal, not
-# just a reward for success. Scoped by CCD code (`cache/structures/{pdb_id}/{ccd_code}/`,
-# see `core.paths`) rather than living flat under a candidate-only path, since one
-# candidate can have several bound ligands and this keeps them from colliding.
+DEFAULT_DOCKING_STRUCTURES_DIR = CACHE_STRUCTURES_DIR  # PLAN.md §22c: written for every
+# attempted dock, pass or fail, so the native/docked poses are inspectable after the run,
+# not lost inside a TemporaryDirectory.
 
 
 _LIGAND_CHAIN_ID = "X"  # a chain ID distinct from any real receptor chain, so PLIP/
@@ -96,22 +52,9 @@ _NATIVE_LIGAND_CHAIN_ID = "N"  # distinct from both the receptor's own chains an
 def _force_chain_id(pdb_text: str, chain_id: str) -> str:
     """Extract ATOM/HETATM lines only, forcing PDB column 22 (0-indexed offset 21) to ``chain_id``.
 
-    Same fixed-column technique as ``_pdbqt_pose_to_pdb_hetatm_block``, applied to
-    already-valid PDB text (not PDBQT) -- used so the native and docked ligand blocks in
-    ``ligand_comparison_pdb_path``'s output never share a chain ID, regardless of what
-    chain the crystal structure originally assigned the ligand.
-
-    **Real, live-discovered bug, fixed here (2026-07-20):** the aligned native-ligand block
-    (``align_ligand_into_md_frame``'s output) carries its own trailing ``CONECT``/``END``
-    records. Passing those through unchanged (the previous behavior, which kept every
-    non-ATOM/HETATM line as-is) put a premature ``END`` in the middle of
-    ``_write_ligand_comparison_pdb``'s combined file -- PyMOL's ``load`` auto-splits a file
-    with two ``END`` records into two separate objects, silently breaking the
-    ``chain N``/``chain X`` selections `write_ligand_comparison_pml`'s script depends on
-    (confirmed live: PyMOL reported "loaded 2 objects from" and every subsequent
-    ``create native_ligand, ligand_poses and chain N`` failed with
-    "Invalid selection name"). Now drops every non-ATOM/HETATM line instead of passing it
-    through -- only coordinate lines belong in a multi-pose comparison file.
+    Used so the native and docked ligand blocks in ``ligand_comparison_pdb_path``'s output
+    never share a chain ID. Drops non-ATOM/HETATM lines (e.g. trailing ``CONECT``/``END``)
+    rather than passing them through -- see ``.claude/CLAUDE.md`` bug 5 for why that matters.
     """
     lines = []
     for line in pdb_text.splitlines():
@@ -221,21 +164,10 @@ def _pdbqt_pose_to_pdb_hetatm_block(
 ) -> str:
     """Convert a Vina-output pose's ATOM/HETATM lines into minimal PDB HETATM lines.
 
-    PDBQT shares PDB's fixed-column layout through column 66 (occupancy/
-    temp-factor) and only appends AutoDock-specific partial-charge/atom-type
-    columns after that -- truncating there and forcing the record name to
-    ``HETATM`` is sufficient for PLIP/OpenBabel's PDB parser, which reads
-    coordinates/resName/chain/resSeq from that same fixed-column region.
-
-    **Live-verified bug, fixed here (2026-07-06):** Meeko's PDBQT output
-    leaves the chain-ID column (PDB column 22, 0-indexed offset 21) blank.
-    A blank chain ID makes PLIP's ligand finder silently return **zero**
-    ligands for the whole complex (confirmed live: `PDBComplex.ligands == []`
-    with a blank chain, populated correctly once a real chain ID is forced
-    in) -- not a crash, just silent non-detection, so it would have looked
-    like "no interpretable interactions" (a false ``DOCKING_QUALITY``
-    failure) rather than the real cause. This function must always force a
-    real chain ID into that column.
+    PDBQT shares PDB's fixed-column layout through column 66; truncating there and forcing
+    the record name to ``HETATM`` is sufficient for PLIP/OpenBabel's PDB parser. Always
+    forces a real chain ID into column 22 -- Meeko's own output leaves it blank, which
+    makes PLIP silently detect zero ligands (``.claude/CLAUDE.md`` bug 3).
     """
     lines = []
     for line in pose_pdbqt_text.splitlines():
@@ -248,14 +180,9 @@ def _pdbqt_pose_to_pdb_hetatm_block(
 def _assemble_complex_pdb(receptor_pdb_text: str, pose_pdbqt_text: str) -> str:
     """Build a single-file complex PDB: receptor structure + docked ligand pose.
 
-    **Live-verified bug, fixed here (2026-07-06):** a real RCSB-fetched PDB
-    file already ends with its own ``END``/``MASTER`` records -- naively
-    appending the ligand's ``HETATM`` lines *after* those records produces a
-    PDB file with atom records after ``END``, which is invalid PDB and made
-    PLIP's parser silently see **zero ligands** (confirmed live against a
-    real 1UBQ.pdb + a real Vina-docked pose). Strip the receptor's own
-    trailing ``END``/``MASTER`` lines before appending the ligand, then add
-    exactly one final ``END``.
+    Strips the receptor's own trailing ``END``/``MASTER`` records before appending the
+    ligand -- records after ``END`` are invalid PDB and made PLIP silently see zero ligands
+    (``.claude/CLAUDE.md`` bug 4).
     """
     receptor_lines = [
         line
@@ -362,20 +289,9 @@ def run_docking_validation(
     total_elapsed = time.monotonic() - start
 
     if not plip_result.passed:
-        # scripts/ligand_filter_fix_brief.md, Problem 2 (2026-07-19): NOT every
-        # `plip_result.passed is False` means the same thing. `plip_analysis.py`'s
-        # `interaction_counts` is `{}` only when PLIP genuinely couldn't analyze the
-        # complex (no ligand detected, or no interaction set for the binding site -- a
-        # real pipeline malfunction, the same failure class the chain-ID/END-record bugs
-        # this module already fixed once belonged to). It's a real, non-empty dict
-        # (every `_INTERACTION_ATTRIBUTES` key present, just all zero) when PLIP ran fine
-        # and genuinely found no interactions -- a legitimate chemistry result for an
-        # otherwise well-posed dock (confirmed live: 186L/1JJ9/2B03 all have excellent
-        # self-dock RMSD, 0.65-1.65 Å, yet zero PLIP interactions of any kind -- including
-        # `hydrophobic_contacts`, implausible for e.g. 186L, a T4 lysozyme hydrophobic-
-        # cavity-binding structure). Treated as a soft pass, not `docking_quality` --
-        # PLIP's interaction analysis is a descriptive complement to a good RMSD fit, not
-        # an independent pass/fail gate PLAN.md never asked for as a hard requirement.
+        # A non-empty (all-zero) interaction_counts means PLIP ran fine and genuinely found
+        # no interactions -- a legitimate chemistry result (PLAN.md §19), soft pass not
+        # DOCKING_QUALITY. An empty {} means PLIP itself malfunctioned (real failure).
         if plip_result.interaction_counts:
             logger.info(
                 "⚠️ %s: ex04 succeeded (RMSD %.2f Å) but PLIP found zero interactions "
@@ -389,8 +305,7 @@ def run_docking_validation(
                 notes=[
                     f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms), within {rmsd_threshold_angstrom} Å",
                     "PLIP found zero interpretable interactions of any kind "
-                    "(soft caveat, not treated as a failure -- see "
-                    "scripts/ligand_filter_fix_brief.md Problem 2)",
+                    "(soft caveat, not treated as a failure -- see PLAN.md §19)",
                 ],
             )
         logger.info("❌ %s: ex04 failed after %.1fs: %s", pdb_id, total_elapsed, plip_result.reasons)

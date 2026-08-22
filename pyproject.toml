@@ -3,7 +3,7 @@ name = "protein-selector"
 version = "0.1.0"
 description = "Instructor tool: find and a-priori validate candidate proteins for structural bioinformatics exercises"
 authors = [{ name = "Yerko Escalona" }]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 readme = "README.md"
 dependencies = [
@@ -12,6 +12,17 @@ dependencies = [
     "biopython>=1.84",
     "rcsb-api>=1.7.3",
     "tqdm>=4.66",
+    # Real, live-discovered undeclared dependency (2026-08-02): `scripts/validate_one.py`
+    # -- a documented, first-class CLI (README: `uv run --extra validate python
+    # scripts/validate_one.py 1UBQ`) -- imports `yaml` to read workflow/config.yaml, but
+    # nothing declared it. That exact documented command failed with
+    # `ModuleNotFoundError: No module named 'yaml'` on a clean `uv sync --extra validate`;
+    # it only ever worked when `--group workflow` happened to also be synced, since
+    # snakemake pulls pyyaml in transitively. Same class of bug as the meeko/gemmi
+    # undeclared-transitive-dep gap documented in .claude/CLAUDE.md. Belongs in the BASE
+    # deps, not the workflow group, because the documented invocation above doesn't
+    # include that group.
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -28,12 +39,26 @@ dependencies = [
 # that OpenFF-side work starts; do not add it back as a pip dependency.
 # structure_alignment.py (PLAN.md §18, switched to PyMOL's cealign 2026-07-20): the
 # docking receptor is the MD run's own relaxed structure, not a freshly-fetched one — the
-# crystal ligand's coordinates must be superposed into that frame first. This is done by
-# shelling out to the system `pymol` binary (cealign), not a pip/conda dependency of
-# either environment — see structure_alignment.py's module docstring. mdanalysis was
+# crystal ligand's coordinates must be superposed into that frame first. mdanalysis was
 # tried first (a hand-matched (chain, resid, icode) CA correspondence + Kabsch fit) and
 # dropped after two separate live-discovered atom-matching bugs; cealign's own structural
 # correspondence removes that whole bug class.
+# **`pymol-open-source` is now a REAL pip dependency (2026-08-02), reversing the previous
+# "system binary only, not installable via pip" note here and in structure_alignment.py.**
+# PyPI now ships manylinux wheels for cp39–cp313 (verified), so PyMOL no longer has to be
+# installed by hand at the OS level. Live-confirmed: `cealign` ran for real from the pip
+# wheel on Google Colab, which had no system PyMOL at all (0.28 Å over 80 residues on
+# 2PK4), and `import pymol` works from this repo's own venv interpreter after `uv sync
+# --extra validate`.
+# Note on the local test suite: adding this did NOT change the pass/skip counts on the
+# original dev machine, because that machine already had a system PyMOL
+# (/usr/bin/pymol + /usr/lib/python3/dist-packages/pymol), so
+# test_structure_alignment.py's `shutil.which("pymol")` guard was already satisfied there.
+# The point of declaring the dependency is that the repo no longer DEPENDS on that
+# happening to be true — a fresh machine or CI runner now gets a working cealign from
+# `uv sync` alone.
+# Caveat: every published release is an alpha (3.2.0a0 is current) — that is upstream's
+# own versioning, not a pre-release pin chosen here.
 validate = [
     "rdkit>=2024.3",
     "meeko",
@@ -42,6 +67,7 @@ validate = [
     "openmm>=8.5.2",
     "gemmi>=0.7.5",
     "openmmforcefields>=0.15.1",
+    "pymol-open-source>=3.2.0a0",
 ]
 
 [dependency-groups]
@@ -73,7 +99,7 @@ build-backend = "hatchling.build"
 packages = ["src/protein_selector"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 88
 exclude = [
     ".git",
@@ -91,6 +117,12 @@ exclude = [
     "workflow",  # Snakemake `script:` targets (PLAN.md §15) -- thin glue only,
     # same "not linted" treatment as app/; the logic they call into
     # (src/protein_selector/pipeline.py, core/report.py) is linted normally.
+    "scripts/colab_*.py",  # `# %%`-cell scripts meant to be pasted into / converted to
+    # Google Colab notebooks. Same "not linted" treatment as notebooks/ and for the same
+    # reason: the cell format puts imports mid-file by design (E402 throughout), and the
+    # cells deliberately import conda-only packages (openff, openmmforcefields) that are
+    # not installed in this repo's own venv. Non-cell scripts in scripts/ (e.g.
+    # benchmark_pipeline.py, validate_one.py) stay linted normally.
 ]
 
 [tool.ruff.lint]
@@ -124,7 +156,11 @@ root = ["src", "tests"]
 # `workflow/` (PLAN.md §15): Snakemake injects a `snakemake` object into each
 # `script:` target's global namespace at run time -- same "not statically
 # resolvable" reason as notebooks' `display()`.
-exclude = ["notebooks", "app", "workflow"]
+# `scripts/colab_*.py`: `# %%`-cell scripts for Google Colab -- they deliberately import
+# conda-only packages (openff, openmmforcefields) that are absent from this repo's venv by
+# design, so every such import is an unresolvable-by-construction diagnostic here. Excluded
+# from ruff for the same reason (see [tool.ruff]'s exclude).
+exclude = ["notebooks", "app", "workflow", "scripts/colab_*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

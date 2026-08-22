@@ -1,0 +1,66 @@
+# Input for the FROZEN Colab pip stack -- edit this, never requirements-colab.txt.
+#
+# Covers Part A of scripts/colab_standalone_2pk4.py (fetch -> apo MD -> cealign -> Vina +
+# PLIP). Part B (GAFF2/AMBER complex MD) is NOT here and cannot be: openff-toolkit and
+# ambertools have no pip release at all, so that stage is conda-only and freezes
+# separately (see the note at the bottom).
+#
+# Regenerate the lock with, from this directory:
+#
+#   rm -f requirements-colab.txt   # uv reads an existing output file as version
+#                                  # PREFERENCES -- without deleting it, a previously
+#                                  # resolved pre-release sticks around forever (this
+#                                  # really happened: a stale openmm==8.6.0b0 survived
+#                                  # a recompile until the file was removed)
+#   uv pip compile requirements-colab.in \
+#       --python-version 3.12 \
+#       --python-platform x86_64-manylinux_2_35 \
+#       -o requirements-colab.txt
+#
+# Both flags are load-bearing, not decoration:
+#   --python-version 3.12          Colab's runtime (3.12.13); resolving on the host's own
+#                                  Python would pin wheels for the wrong ABI tag.
+#   --python-platform ...2_35      Colab is Ubuntu 22.04 = glibc 2.35. uv's default linux
+#                                  target is an older manylinux baseline, under which
+#                                  pymol-open-source resolves as UNSATISFIABLE even though
+#                                  it installs fine on Colab.
+#
+# Install on Colab (into the running interpreter, not a venv -- the notebook kernel is
+# what needs these):
+#
+#   !pip install -q uv
+#   !uv pip install --system -r requirements-colab.txt
+#
+# `--system` matters: without it uv targets a virtualenv the kernel isn't using.
+
+requests
+numpy
+scipy
+gemmi
+rdkit
+openmm
+pdbfixer
+vina
+plip
+openbabel
+
+# Pinned to an exact pre-release ON PURPOSE. Upstream publishes pymol-open-source ONLY as
+# alphas (3.1.0a0, 3.2.0a0 -- there is no stable release to pin to), and 3.2.0a0 is the
+# first with cp312 wheels. Naming the exact pre-release here scopes it to this package.
+# Do NOT reach for a global `--prerelease=allow` instead: that leaks into everything and
+# silently pulled openmm==8.6.0b0 (beta) and lxml==7.0.0a3 (alpha) into an earlier
+# revision of this lock.
+pymol-open-source==3.2.0a0
+
+# ---------------------------------------------------------------------------------------
+# Freezing the CONDA half (Part B) is a separate mechanism -- conda envs are not
+# describable by a pip requirements file. Once the env is built, snapshot it with:
+#
+#   /opt/conda/envs/psval/bin/conda list --explicit > environment-validation.lock.txt
+#
+# and rebuild it byte-identically later with:
+#
+#   conda create -p <prefix> --file environment-validation.lock.txt
+#
+# `--explicit` records exact package URLs + build hashes, unlike environment-validation.yml,
+# which only names packages and re-solves (so it drifts between runs).

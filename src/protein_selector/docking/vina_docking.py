@@ -1,47 +1,13 @@
 """ex04 docking validator, piece 1: a real Vina self-dock test (PLAN.md §4a/§10 step 4).
 
-fpocket pocket detection (`pocket.py`) and ligand parameterization
-(`parameterizability.py`/`meeko_parameterization.py`) are already built and
-persisted from the parameterizability stage; this module is the remaining
-"real test-dock" piece PLAN.md calls for -- redock the ligand into its own
-crystal pocket with AutoDock Vina and check whether the top pose reproduces
-the crystal binding mode (the standard "self-docking" validation used to
-sanity-check a docking protocol).
+Redocks the ligand into its own crystal pocket with AutoDock Vina and checks whether the
+top pose reproduces the crystal binding mode (standard "self-docking" validation).
 
-Requires the validation conda environment's ``vina`` package (AutoDock
-Vina's official Python bindings). **Not pip-installable in this project's
-base/`.venv`**: verified live (2026-07-05) -- ``pip download vina`` has no
-wheel for this platform/Python at all, only an sdist, and building it fails
-with ``ValueError: Boost library location was not found!`` (a real build
-requirement, not a stub gap). conda-forge ships a prebuilt ``vina`` package
-instead -- see ``environment-validation.yml``. Lazily imported inside the
-one function that needs it, same reason as ``md_validation.py``'s
-``pdbfixer``/``openmm`` imports.
-
-**Self-dock RMSD, and its real limitation:** the RMSD below is computed
-by index-order coordinate comparison between the docked pose's heavy atoms
-(read back from Vina's output PDBQT) and ``reference_ligand_pdb_block``'s
-heavy atoms (in file order), NOT a symmetry-aware/substructure-matched
-RMSD. This is only correct if the two atom orderings actually correspond
-(true when ``ligand_pdbqt_path`` and the reference block both trace back to
-the same RDKit-embedded conformer's atom order, e.g. this repo's own
-`meeko_parameterization.py` pipeline) -- correspondence is NOT verified
-here. A mismatched atom order will silently produce a meaningless RMSD
-rather than an error. If this ever needs to support ligands whose reference
-block comes from an independent source (not the same embed), switch to a
-proper substructure-matched RMSD (e.g. RDKit's
-``rdMolAlign.CalcRMS``/``GetBestRMS`` with template bond-order assignment)
-instead of this index-order shortcut.
-
-**Live-verified (2026-07-06)** in a throwaway `micromamba` env bootstrapped
-from `environment-validation.yml`: `dock_top_pose` run for real -- a real
-receptor PDBQT (1UBQ, prepped with `obabel -xr`), a real ligand PDBQT
-(ethanol, via `meeko_parameterization.py`'s own pipeline), and a real
-`vina` install. `set_receptor`/`set_ligand_from_file`/`compute_vina_maps`/
-`dock`/`write_poses` all worked exactly as transcribed, and
-`_parse_heavy_atom_coords` correctly extracted heavy-atom coordinates from
-the real output PDBQT (3 heavy atoms, hydrogen skipped) -- confirming both
-the Vina API and the RMSD math against a real docking run, not guessed.
+Requires the validation conda environment's ``vina`` package -- not pip-installable
+(no wheel for this platform; building from source needs Boost). Lazily imported inside the
+one function that needs it. Self-dock RMSD is atom-name-matched, not symmetry-aware -- see
+``.claude/CLAUDE.md`` bug 9 for the real bug that drove this and PLAN.md §22a for the
+threshold relaxation it also motivated.
 """
 
 from __future__ import annotations
@@ -62,16 +28,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_BOX_SIZE = (20.0, 20.0, 20.0)
 _DEFAULT_EXHAUSTIVENESS = 8
 _DEFAULT_N_POSES = 9
-_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 2.5  # relaxed from the literature-standard 2.0 A
-# cutoff (2026-07-20, user decision) -- live-verified real self-dock (1A7E, OFO ligand)
-# landed at 2.04 A, a near-perfect redock, and was scored a hard `docking_quality`
-# failure purely for being 0.04 A over 2.0. That margin is well within this pipeline's
-# own real noise floor: `_rmsd` is an index-order heavy-atom comparison, not a
-# symmetry-aware one (see this module's own docstring), so even a chemically identical
-# pose can read a few tenths of an Angstrom higher than a symmetry-matched RMSD would
-# report -- 2.0 was too tight to absorb that. Not a PLAN.md-mandated number either way,
-# adjust per course needs (`DockingConfig.rmsd_threshold_angstrom` /
-# `workflow/config.yaml`'s `dock_rmsd_threshold`).
+_DEFAULT_RMSD_THRESHOLD_ANGSTROM = 2.5  # relaxed from the literature-standard 2.0 Å --
+# see PLAN.md §22a for why. Not PLAN.md-mandated; adjust via DockingConfig.rmsd_threshold_angstrom.
 
 
 def _parse_heavy_atom_coords(pdb_or_pdbqt_text: str) -> list[tuple[float, float, float]]:
@@ -80,10 +38,7 @@ def _parse_heavy_atom_coords(pdb_or_pdbqt_text: str) -> list[tuple[float, float,
     for line in pdb_or_pdbqt_text.splitlines():
         if not (line.startswith("ATOM") or line.startswith("HETATM")):
             continue
-        # Column-position slicing (PDB spec, 1-indexed columns 13-16 element/name,
-        # 31-38/39-46/47-54 coordinates) is more robust than the atom-name regex
-        # above once whitespace varies -- use it directly instead.
-        atom_name = line[12:16].strip()
+        atom_name = line[12:16].strip()  # PDB spec fixed columns 13-16
         if atom_name[:1].upper() == "H" or atom_name[:2].upper() == "HH":
             continue  # skip hydrogens -- self-dock RMSD is conventionally heavy-atom only
         try:
@@ -131,24 +86,9 @@ def rmsd_by_atom_name(
 ) -> tuple[float, int] | None:
     """Self-dock RMSD matched by atom NAME, not by file order.
 
-    **Real, live-discovered bug this replaces (2026-07-20):** ``dock_top_pose``'s pose text
-    and ``reference_ligand_pdb_block`` do NOT reliably share atom order, even when they
-    describe the exact same ligand with the exact same atom names -- confirmed live (2R43,
-    ligand G3G): both blocks had the identical 41 heavy-atom names, but in a completely
-    different order (the native crystal block in the CIF's own atom order; the Vina-docked
-    pose in whatever order ``native_ligand.prepare_ligand_pdbqt``'s `obabel` conversion
-    emitted them). The old index-order ``_rmsd(zip(...))`` compared atom N of one pose to
-    atom N of the other regardless of what those atoms actually were -- silently comparing
-    unrelated atoms and reporting a meaningless RMSD (6.09 Å for what a direct PyMOL
-    overlay showed was a near-perfect redock). This function matches atoms by their shared
-    PDB atom NAME instead (both poses trace back to the same source ligand's atom naming,
-    unlike a symmetry problem across truly different conformer-generation pipelines) and
-    returns ``None`` if the two poses share no atom names at all (a real correspondence
-    failure, distinct from "RMSD happens to be large").
-
-    Returns ``(rmsd, n_matched_atoms)``. Callers should treat a low ``n_matched_atoms``
-    relative to either pose's total atom count as its own warning sign (see
-    ``run_docking_validation``'s notes).
+    Two poses of the same ligand do not reliably share atom order (see ``.claude/CLAUDE.md``
+    bug 9). Returns ``(rmsd, n_matched_atoms)``, or ``None`` if the two poses share no atom
+    names at all (a real correspondence failure, distinct from "RMSD happens to be large").
     """
     docked_atoms = _parse_heavy_atoms_by_name(docked_pdb_or_pdbqt_text)
     reference_atoms = _parse_heavy_atoms_by_name(reference_pdb_or_pdbqt_text)
@@ -170,19 +110,10 @@ def dock_top_pose(
 ) -> str:
     """Run Vina and return the top-scoring pose as PDBQT text.
 
-    Lower-level building block shared by ``run_self_dock`` (which also
-    computes the self-dock RMSD) and ``docking_validation.py`` (which also
-    needs the raw pose to build a complex PDB for PLIP). Requires the
-    validation conda environment (``vina``); raises ``ImportError`` with an
-    install hint if unavailable, or ``RuntimeError`` if the docking run
-    itself fails.
-
-    **No tqdm progress bar here, unlike ``md_validation.run_test_md``'s
-    chunked MD loop, and that's deliberate, not an oversight:** confirmed by
-    inspecting the real ``vina.Vina`` class's public API (`dock`,
-    `compute_vina_maps`, etc.) -- there is no per-iteration callback or
-    chunking hook exposed, `v.dock(...)` is one opaque call into Vina's C++
-    core with no way to report incremental progress from the outside.
+    Lower-level building block shared by ``run_self_dock`` and ``docking_validation.py``.
+    Requires the validation conda environment (``vina``); raises ``ImportError`` with an
+    install hint if unavailable, or ``RuntimeError`` if the docking run itself fails. No
+    tqdm progress bar -- Vina's Python API exposes no per-iteration callback.
     """
     try:
         from vina import Vina  # ty: ignore[unresolved-import]

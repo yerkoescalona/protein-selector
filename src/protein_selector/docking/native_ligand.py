@@ -1,22 +1,10 @@
 """Native (crystal) ligand selection + prep for the `dock_validate` rule (PLAN.md §17/§18).
 
-Resolves the decisions PLAN.md §17a settled: dock the CRYSTAL pose (not Meeko's
-SMILES-embedded conformer, which is in an arbitrary frame -- see
-``docking_validation.py``'s module docstring for why that distinction matters), pick the
-largest organic (Meeko-parameterizable) ligand when a structure has several, and prepare
-that ligand's own PDBQT straight from its real bound-pose coordinates via `obabel` (not
-via `meeko_parameterization.py`'s pipeline, which is a parameterizability *gate*, not a
-coordinate source -- its persisted pass/fail is reused here, its embedded conformer is
-not).
-
-**PLAN.md §18 (2026-07-19): extraction + alignment now live in
-``molecular_dynamics.structure_alignment.align_ligand_into_md_frame``**, via MDAnalysis --
-this module previously hand-rolled the crystal HETATM extraction
-(``extract_ligand_hetatm_block``) and a "strip this ligand from the receptor"
-(``strip_ligand_records``) step, both removed once the receptor became the MD-relaxed
-structure directly (already heterogen-free, no stripping needed) and ligand extraction
-moved to MDAnalysis (which also handles the crystal-to-MD-frame alignment in the same
-step, more robustly than the hand-rolled version did).
+Docks the CRYSTAL pose (not Meeko's SMILES-embedded conformer, which is in an arbitrary
+frame), picks the largest organic (Meeko-parameterizable) ligand when a structure has
+several, and prepares that ligand's PDBQT straight from its bound-pose coordinates via
+`obabel`. Extraction + alignment into the MD-relaxed frame live in
+``molecular_dynamics.structure_alignment.align_ligand_into_md_frame`` (PLAN.md §18/§21).
 """
 
 from __future__ import annotations
@@ -32,18 +20,9 @@ from protein_selector.docking.vina_docking import _parse_heavy_atom_coords
 
 logger = logging.getLogger(__name__)
 
-# scripts/ligand_filter_fix_brief.md, Problem 1 (2026-07-19): "passed Meeko
-# parameterization" is NOT sufficient to mean "a meaningful biological ligand" -- small
-# polyatomic crystallization ions/cryoprotectants (nitrate, sulfate, phosphate, ...) have
-# real covalent bonds and pass Meeko's chemistry checks cleanly, even though they aren't
-# real binding-site ligands. Confirmed live: 1LKS/1V7S (both nitrate-only structures) were
-# picked as "organic" and reached `docking: success`. Same list as
-# `scripts/course_candidates.sql`'s `excluded_ccd_codes` CTE (kept in sync by hand -- one
-# is SQL, one is Python, no shared source; re-verify both stay identical if either changes)
-# -- a judgment call, not derived from any schema field: crystallization
-# additives/cryoprotectants, bare metal ions (real biology, but not a real
-# protein-ligand *interaction* worth docking), and metal clusters/covalently-tricky
-# cofactors "too difficult to parametrize" per the instructor's explicit ask.
+# "Passed Meeko" is not sufficient for "meaningful biological ligand" -- see PLAN.md §19.
+# Same list as scripts/course_candidates.sql's excluded_ccd_codes CTE (kept in sync by hand
+# -- one is SQL, one is Python, no shared source).
 _EXCLUDED_CCD_CODES = frozenset(
     {
         "SO4", "CL", "NA", "GOL", "EDO", "PO4", "FMT", "PEG", "TRS",
@@ -104,30 +83,10 @@ def ligand_bounding_box(
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
     """PLAN.md §20: the self-dock Vina box, built from the LIGAND's own aligned coordinates.
 
-    **Real design fix, replacing §17a.3/§17b's fpocket-pocket-derived box.** The self-dock
-    validation question is "can Vina reproduce the experimentally observed pose" -- so the
-    search box must be centered on and sized to that pose directly, not on whatever pocket
-    fpocket's independent alpha-sphere clustering happens to carve out nearby. fpocket can
-    legitimately return a pocket that geometrically *contains* the ligand centroid while
-    being a small, low-quality artifact (confirmed live, PDB 3DAU: the containing pocket
-    had `druggability_score` 0.0, volume 187 Å³, while a real 1571 Å³/druggability-0.581
-    pocket sat ~15 Å away, uninvolved because it didn't happen to contain the centroid
-    point) -- handing Vina that small/wrong box, not the real binding-site geometry, then
-    silently miscredits an off-target search as "the receptor changed" or "Vina is
-    inaccurate" when the actual cause is upstream box selection. fpocket/pocket_detection
-    stays a real, persisted, independently useful signal (a legitimate "did blind pocket
-    detection also find the true site, unprompted" comparison worth discussing with
-    students) -- it just no longer gates or defines the Vina search box.
-
-    Per-axis (anisotropic) bounding box of the ligand's own heavy-atom coordinates, each
-    axis padded independently by ``padding_angstroms`` -- NOT the isotropic
-    max-pairwise-vertex-distance cube ``pocket._parse_vertex_extent`` uses for fpocket
-    alpha spheres (that shape suits a roughly spherical pocket; a real bound ligand is
-    frequently elongated, and an anisotropic box wastes less of Vina's search volume on
-    empty space while still comfortably containing the true pose). Returns ``None`` if no
-    heavy atoms parse (same failure signal as ``ligand_centroid``) -- callers already
-    require a real centroid before reaching this point, so ``None`` here at that stage
-    would indicate an internal inconsistency, not a normal candidate-level failure.
+    Not fpocket's pocket -- see PLAN.md §20 for why. Per-axis (anisotropic) bounding box of
+    the ligand's own heavy-atom coordinates, each axis padded independently -- an elongated
+    ligand wastes less of Vina's search volume this way than an isotropic cube would.
+    Returns ``None`` if no heavy atoms parse.
     """
     coords = _parse_heavy_atom_coords(ligand_pdb_block)
     if not coords:
@@ -153,23 +112,14 @@ def pick_largest_organic_ligand(
     meeko_results: Mapping[str, MeekoParameterizationResult],
     smiles_by_ccd: Mapping[str, str | None],
 ) -> str | None:
-    """PLAN.md §17a.2: among a candidate's bound ligands, pick the largest ORGANIC one.
+    """PLAN.md §17a.2/§19: among a candidate's bound ligands, pick the largest ORGANIC one.
 
-    "Organic, not an ion/cofactor that's hard to parametrize" is operationalized as
-    ``is_dockable_ligand_code`` -- NOT on the crystallization-additive/ion denylist AND
-    passed the real Meeko/AutoDock parameterization check. **Real, live-discovered gap,
-    fixed 2026-07-19 (scripts/ligand_filter_fix_brief.md, Problem 1): "passed Meeko" alone
-    is NOT sufficient.** Small polyatomic ions (nitrate, sulfate, phosphate, ...) have real
-    covalent bonds and pass Meeko's chemistry checks cleanly despite not being meaningful
-    biological ligands -- confirmed live: 1LKS/1V7S (both nitrate-only structures) were
-    picked as "organic" this way and reached `docking: success`. The denylist check now
-    runs FIRST, regardless of what Meeko says. "Largest" is heavy-atom count from RDKit on
-    the persisted SMILES (same SMILES source ``meeko``/``parameterizability`` already
-    used). Ties broken by CCD code alphabetically, for determinism. Returns ``None`` if no
-    candidate ligand is dockable.
+    "Organic" is ``is_dockable_ligand_code`` -- not on the ion/additive denylist AND passed
+    real Meeko parameterization (see PLAN.md §19 for why "passed Meeko" alone isn't
+    sufficient). "Largest" is heavy-atom count from RDKit on the persisted SMILES. Ties
+    broken by CCD code alphabetically. Returns ``None`` if no candidate is dockable.
 
-    Requires the `validate` extra (rdkit); raises ``ImportError`` with that hint if
-    unavailable, same pattern as every other rdkit-touching function in this package.
+    Requires the `validate` extra (rdkit).
     """
     candidates = [code for code in ccd_codes if is_dockable_ligand_code(code, meeko_results)]
     if not candidates:
@@ -199,21 +149,11 @@ def pick_largest_organic_ligand(
 def prepare_ligand_pdbqt(ligand_pdb_block: str, dest_path: Path) -> Path:
     """Convert the extracted native-ligand HETATM block into a Vina-ready ligand PDBQT.
 
-    Uses `obabel` directly on the crystal coordinates -- deliberately NOT
-    ``meeko_parameterization.py``'s SMILES -> RDKit-embed -> Meeko pipeline, which builds
-    a conformer in an arbitrary frame unrelated to the receptor's own coordinate system
-    (useless both as a docking-box-relative starting ligand and as an RMSD reference, see
-    PLAN.md §17a.1). No `-xr` flag (that's ``receptor_prep.py``'s "rigid receptor" option;
-    the ligand must stay flexible for Vina to search torsions).
-
-    **Same real footgun as ``receptor_prep.prepare_receptor_pdbqt`` (2026-07-08 finding,
-    applies here unverified but by the same mechanism):** `obabel` can exit 0 while
-    writing an empty output file on a bad/unparseable input. Checked by file
-    existence+size, not return code, same discipline.
-
-    **Not yet live-verified** (no `obabel` binary in this sandbox) -- confirm a real
-    extracted HETATM block round-trips through `obabel` to a real, loadable PDBQT before
-    trusting this in a live run.
+    Uses `obabel` directly on the crystal coordinates -- not Meeko's SMILES-embedded
+    conformer, which is in an arbitrary frame (PLAN.md §17a.1). No `-xr` flag (the ligand
+    must stay flexible for Vina). Same obabel exit-0-on-empty-output footgun as
+    ``receptor_prep.prepare_receptor_pdbqt`` -- checked by file existence+size, not return
+    code.
     """
     with tempfile.TemporaryDirectory() as tmp_dir:
         src_path = Path(tmp_dir) / "ligand.pdb"

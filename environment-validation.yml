@@ -44,15 +44,61 @@
 name: protein-selector-validation
 channels:
   - conda-forge
+#
+# ===========================================================================
+# VERSIONS ARE PINNED (2026-08-02) -- do not "clean up" these `=x.y.z` suffixes.
+# ===========================================================================
+# Every version below is the one a real `micromamba create` from THIS file actually
+# resolved on Google Colab (Ubuntu 22.04 / glibc 2.35 / linux-64, python 3.12.13), read
+# straight out of that env's own `micromamba list`. Nothing here is a guess or a
+# "latest known good" -- it is a transcript of a working environment.
+#
+# WHY pinning became necessary: this file previously named packages without versions, so
+# conda re-solved against conda-forge on every build and produced a DIFFERENT environment
+# each time. Measured, same file, three builds:
+#
+#     package           Colab (notebook)   Colab (/opt/conda)   local miniconda
+#     python            3.12.13            3.12.13              3.11.15
+#     ambertools        24.8               26.0                 -
+#     rdkit             2025.09.5          2026.03.1            2024.03.5
+#     vina              1.2.7              1.2.7                1.2.5
+#     openff-toolkit    0.18.1             0.18.1               0.18.0
+#
+# That is not cosmetic drift: ambertools supplies `sqm`, which computes the AM1-BCC
+# partial charges the complex-MD stage depends on, so a major-version difference can
+# change real numbers in the output.
+#
+# NOTE these are VERSION pins, not BUILD pins. Build strings (e.g.
+# `py312h3ecb6ed_0`) are architecture-specific and would make this file unusable off
+# linux-64. For byte-identical reproduction on the same platform, generate a real lockfile
+# instead -- it records exact URLs and hashes:
+#
+#     conda list --explicit > environment-validation.lock.txt
+#     conda create -p <prefix> --file environment-validation.lock.txt
+#
+# To move to newer versions deliberately: drop the pins, rebuild, then re-pin from the
+# new env's `conda list` -- rather than letting it drift silently.
 dependencies:
-  - python=3.11
-  - openmm
-  - openff-toolkit
-  - openmmforcefields
-  - pdbfixer
-  - rdkit
-  - vina
-  - plip
-  - openbabel
-  - fpocket
-  - meeko
+  # 3.12.13 exactly = Google Colab's own interpreter, so the validators run on the same
+  # Python students/Colab use. Also satisfies this repo's `requires-python = ">=3.12"`.
+  - python=3.12.13
+  - openmm=8.5.2
+  - openff-toolkit=0.18.1
+  - openmmforcefields=0.16.0
+  - pdbfixer=1.12
+  - rdkit=2025.09.5
+  - vina=1.2.7
+  - plip=3.0.1
+  - openbabel=3.1.1
+  - fpocket=4.2.2
+  - meeko=0.7.1
+  # GAFF2/AMBER complex-MD stage (PLAN.md §23a, molecular_dynamics/complex_md_validation.py
+  # -- AM1-BCC charges via ambertools' `sqm`, called internally by openff-toolkit). Was
+  # previously only in README's manual incremental-install walkthrough, never in this
+  # tracked file -- `conda env create -f environment-validation.yml` alone did not give a
+  # working complex-MD env. See README's "don't `conda install` on top of a populated env"
+  # gotcha if adding this to an already-built env instead of a fresh one.
+  # Pinned to 24.8 (what Colab resolved) rather than 26.0 (what a separate /opt/conda build
+  # picked the same day) -- the two coexist on conda-forge and the solver's choice between
+  # them was not deterministic, which is precisely the problem this pin removes.
+  - ambertools=24.8

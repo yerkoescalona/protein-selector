@@ -73,6 +73,6 @@ LEFT JOIN validation dock   ON dock.pdb_id = c.pdb_id AND dock.exercise = 'docki
 LEFT JOIN validation cmd    ON cmd.pdb_id = c.pdb_id AND cmd.exercise = 'complex_md_simulation'
 WHERE s.passed = 1
   AND md.status = 'success'          -- comment out to include not-yet-simulated candidates
-  -- AND dock.status = 'success'     -- uncomment for ONLY full-pipeline-confirmed candidates
-  -- AND cmd.status = 'success'      -- uncomment for ONLY complex-MD-confirmed candidates
+  AND dock.status = 'success'        -- full-pipeline-confirmed candidates (comment out for a looser tier)
+  AND cmd.status = 'success'         -- ALSO require complex-MD success (used to build scripts/candidates_table_2026-07-20.md's 2026-07-22 revision, 38 rows)
 ORDER BY c.n_residues ASC;

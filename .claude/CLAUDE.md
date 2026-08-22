@@ -93,7 +93,11 @@ src/protein_selector/
                                  contract, PLAN.md §4a), validation_store.py (upsert/load
                                  for the shared validation-results table), difficulty.py
                                  (pure per-exercise difficulty scoring, PLAN.md §5),
-                                 report.py (the cross-stage join + CSV writer, PLAN.md §8)
+                                 report.py (the cross-stage join + CSV writer, PLAN.md §8),
+                                 report_schema.py (SSOT column list/order for report.py's
+                                 output, PLAN.md §7b), paths.py (shared per-candidate
+                                 structure directory layout under `cache/structures/`,
+                                 PLAN.md §22c)
   structural_biology/            candidates.py (hard-filters search/fetch), composition.py
                                  (assembly/entity-level fetches: oligomeric state,
                                  non-standard residues), simulability.py (simulability checks,
@@ -136,7 +140,8 @@ src/protein_selector/
                                  binaries** (none available in the environment this was
                                  built in) — every new function's docstring states this
                                  explicitly; re-verify before trusting a real run (PLAN.md
-                                 §17g).
+                                 §17g). `receptor_prep.py` (`obabel -xr` wrapper producing
+                                 the Vina-ready receptor PDBQT ex04 needed and didn't have).
   molecular_dynamics/            md_validation.py (ex03 MD validator, needs
                                  `environment-validation.yml`, NOT the `validate` extra) +
                                  openff_parameterization.py (OpenFF ligand parameterization
@@ -145,7 +150,12 @@ src/protein_selector/
                                  protein — a different toolchain from `docking/`'s
                                  Meeko/PDBQT; a ligand can pass one and fail the other) +
                                  store.py (persists `openff_parameterization`, keyed by
-                                 `ligand_id`).
+                                 `ligand_id`) + structure_alignment.py (PyMOL `cealign`
+                                 wrapper, superposes a candidate's native ligand into the
+                                 MD-relaxed receptor's frame, PLAN.md §21) +
+                                 complex_md_validation.py (GAFF2/AMBER receptor+ligand
+                                 complex MD, needs `ambertools` in the conda env, PLAN.md
+                                 §24).
   modeling/                      ex02 validator: alphafold_lookup.py (fetch-only —
                                  `fetch_alphafold_entry` calls the real AlphaFold DB REST
                                  API, live-verified; deliberately never runs a new
@@ -179,17 +189,15 @@ src/protein_selector/
                                  `docking_shortlist.py`'s batch gate and `docking.py`'s
                                  per-candidate `run_docking_stage`, so the two can never
                                  silently disagree).
-  legacy/                        find_small_proteins_with_ligands.py (v0 seed, superseded)
   pipeline.py                    run_pipeline() -- the original end-to-end orchestrator
-                                 (PLAN.md §7/§10). **Superseded and orphaned (§16/§22a):** the
-                                 Snakefile no longer wraps it -- every rule calls a
-                                 `stages/run_<stage>_stage(...)` function directly. §16 Phase C
-                                 (migrate its `TestRunPipeline*` behaviors onto the stage
-                                 functions, then delete this file) is NOT done: the file still
-                                 exists and `tests/test_pipeline.py` + `notebooks/
-                                 run_real_pipeline.ipynb` still import it, while the Snakefile
-                                 docstring already asserts it's gone. Resolve that drift (finish
-                                 the migration or correct the docstring) -- see PLAN.md §22a.
+                                 (PLAN.md §7/§10). **Superseded but not yet deleted (§16 Phase
+                                 C, §25c'):** the Snakefile no longer wraps it -- every rule
+                                 calls a `stages/run_<stage>_stage(...)` function directly --
+                                 but the file still exists, still works, and is still used by
+                                 `tests/test_pipeline.py` (17 passing tests) and
+                                 `notebooks/run_real_pipeline.ipynb`. Migrating those onto the
+                                 stage functions and deleting this file is open, tracked work,
+                                 not done -- see PLAN.md §25c'.
 Snakefile                       Snakemake DAG (PLAN.md §16, one rule per cheap-lane stage —
                                  supersedes §15's black-box `metadata_lane`): `search_candidates`
                                  -> `simulability` -> `ligands`/`literature`/`modeling` (run
@@ -369,6 +377,17 @@ it's mocking will never catch that assumption being wrong.
 If you touch `_ENTRY_RETURN_FIELDS`, `_parse_entry`, or `search_candidate_ids` again,
 re-verify live against a real PDB ID before trusting the change.
 
+**A related but distinct bug, fixed 2026-07-18:** conflating "per-request page size" with
+"total result cap" also broke the *high* end. RCSB's Search API itself rejects a single
+request's `rows` above 10,000 (live-verified: `rows=10_000` returns 200, `rows=15_000`
+returns 400 "JSON schema validation failed") — so a caller asking `search_candidate_ids`
+for more than 10,000 total results (e.g. a large random-sample pool, PLAN.md §16) crashed
+with `HTTPStatusError`, with no way to ask for more at all. Fixed: `search_candidate_ids`
+now always requests RCSB's own max page size per request (`_RCSB_MAX_ROWS_PER_QUERY`) and
+lets `Session`'s auto-pagination keep fetching subsequent pages until `rows` total items
+are collected — `rows=50_000` now genuinely returns up to 50,000 ids (five page fetches),
+not a crash or a silent 10,000 clamp.
+
 **Two more, caught 2026-07-06 in `docking/docking_validation.py`** by bootstrapping a
 throwaway `micromamba` env from `environment-validation.yml` and running the ex04
 docking validator against a real receptor (1UBQ) + real docked ligand pose. Same lesson:
@@ -394,6 +413,53 @@ would have caught either.
 Regression tests lock both in (`TestPdbqtPoseToPdbHetatmBlock`/`TestAssembleComplexPdb` in
 `test_docking_validation.py`). If you touch either function again, re-verify live against
 a real docked complex before trusting the change.
+
+5. **CONECT/END mid-file, caught 2026-07-20 in `_force_chain_id`.** The aligned
+   native-ligand block passed its own trailing `CONECT`/`END` records through unchanged,
+   putting a premature `END` in the middle of `ligand_comparison_pdb_path`'s combined
+   file. PyMOL's `load` auto-splits a file with two `END` records into two objects,
+   silently breaking the `chain N`/`chain X` selections `write_ligand_comparison_pml`
+   depends on (confirmed live: PyMOL reported "loaded 2 objects from", every subsequent
+   `create ... and chain N` failed with "Invalid selection name"). Fixed: `_force_chain_id`
+   now drops every non-ATOM/HETATM line instead of passing it through. Regression test:
+   `TestForceChainId.test_drops_conect_and_end_records`.
+
+**Three more, caught 2026-07-06 in `docking/meeko_parameterization.py`** running the real
+pipeline against a random hard-filters sample.
+
+6. **`AllChem.EmbedMolecule` can hang indefinitely, not just fail fast.** Confirmed live:
+   HEM (heme) hung for minutes with no CPU-bound progress -- its iron-coordination bonds
+   are a known real limitation of RDKit's ETKDG embedding algorithm. There is no reliable
+   in-process way to interrupt a hung native (C-extension) call from Python (`signal.alarm`
+   doesn't reliably interrupt code that never returns to the bytecode dispatch loop). Fixed:
+   `filter_meeko_parameterizable` runs each ligand's check in its own subprocess (`spawn`
+   context) with a real wall-clock timeout, killing and recording a timeout failure for any
+   ligand that hangs.
+7. **A joined-but-not-alive subprocess doesn't always mean "finished with a result."** The
+   original code called `queue.get()` unconditionally once `process.is_alive()` was
+   `False`, assuming that meant "finished normally" -- but a process can also exit on its
+   own without ever queuing a result (e.g. an uncaught `ImportError` inside the child).
+   That case blocked forever with no exception and no timeout, indistinguishable from a
+   hang. Fixed: `_interpret_process_result` checks `queue.empty()` instead of trusting exit
+   implies a result.
+8. **A lazy import inside the subprocess swallowed `ImportError` as noise, not a catchable
+   exception.** `rdkit`/`meeko` were only imported lazily inside the child process, so a
+   missing install surfaced only as a raw traceback dumped to stderr by `multiprocessing`,
+   once per ligand -- never as a catchable `ImportError` in the parent, so callers wrapping
+   the import statement in `try/except ImportError` (not a call into it) never actually
+   caught this case; that guard was effectively dead code. Fixed: `filter_meeko_parameterizable`
+   checks importability once in the parent process before spawning anything.
+
+9. **Index-order RMSD silently compared unrelated atoms, caught 2026-07-20 in
+   `vina_docking.py`.** `dock_top_pose`'s pose text and the crystal reference block do not
+   reliably share atom order, even for the exact same ligand with the exact same atom
+   names. Confirmed live (2R43, ligand G3G): both blocks had the identical 41 heavy-atom
+   names, but in a completely different order (native block in the CIF's own order; docked
+   pose in whatever order `obabel` emitted them) -- the old index-order `_rmsd(zip(...))`
+   compared atom N of one pose to atom N of the other regardless of identity, reporting a
+   meaningless 6.09 Å RMSD for what a direct PyMOL overlay showed was a near-perfect
+   redock. Fixed: `rmsd_by_atom_name` matches atoms by shared PDB atom NAME instead,
+   returning `None` (a real correspondence failure) if the two poses share no atom names.
 
 ## Status
 
@@ -481,7 +547,20 @@ a real docked complex before trusting the change.
   not an edge case. **A real gap closed by this work:** there was no persisted
   `pdb_id → ligand CCD code` mapping anywhere before (`docking.ligands.fetch_ligand_ccd_codes`'s
   output was never cached) — added `ligand_ccd_codes` + its store functions so this report
-  stays a pure offline join.
+  stays a pure offline join. **Real gap, found and fixed (2026-07-06):** the report
+  originally only joined the cheap RDKit-sanitization result into
+  `ligand_rdkit_parameterizable` — the heavier, docking-relevant Meeko check (the one Vina
+  actually depends on) was persisted but never read here, so a ligand that sanitized fine
+  but genuinely couldn't be prepped for docking (e.g. HEM, which times out Meeko's real 3D
+  embed) silently showed as "parameterizable." Added `ligand_meeko_parameterizable` as its
+  own column (kept separate, not overwriting — the two checks answer different questions,
+  and a ligand can pass one and fail the other); `predict_docking_difficulty` now prefers
+  the Meeko verdict when both are available. **Real bug, found and fixed (2026-07-09,
+  PLAN.md §7b):** `nonstd_residues` used to be set to `not simulability.passed` — "did
+  simulability fail for *any* reason," never an actual read of
+  `check_non_standard_residues`'s own verdict, so a candidate that was simply oversized
+  showed `nonstd_residues=True`. Fixed by reading the real per-entity `nstd_monomer` flags
+  from `entity_composition` instead (`_has_non_standard_residues`).
 - **Validation (`core/validation_result.py` + `molecular_dynamics/md_validation.py`): ex02/ex03/ex04
   validators all done** (ex02/ex04 detailed further down; ex03 here first since it's the
   original). **Real correction (2026-07-06):** an earlier revision of this file wrongly
@@ -514,9 +593,10 @@ a real docked complex before trusting the change.
   `openff-toolkit` package. This sandbox has no conda by default; verified by
   bootstrapping a throwaway `micromamba` env (see the git history around this note for
   the exact commands) — do the same before trusting this module runs, don't assume.
-  Runs in vacuum (`NoCutoff`), not explicit solvent — see `md_validation.py`'s
-  docstring for the real measured wall-clock tradeoff this was chosen on (~2370s/ns for
-  a 1231-atom apo protein on CPU). **OpenFF ligand parameterization (MD side) is now
+  Runs in vacuum (`NoCutoff`), not explicit solvent — chosen on a real measured wall-clock
+  tradeoff (~2370s/ns for a 1231-atom apo protein on CPU; explicit solvation triples-or-more
+  the atom count and wall clock, against the "sized to the Colab time budget" goal, PLAN.md
+  §4a/§9). **OpenFF ligand parameterization (MD side) is now
   implemented** — `molecular_dynamics/openff_parameterization.py`:
   `check_ligand_openff_parameterizable`/`filter_openff_parameterizable` (SMILES →
   `Molecule.from_smiles` → conformer → SMIRNOFF `ForceField.create_openmm_system`),
@@ -560,11 +640,6 @@ a real docked complex before trusting the change.
   any one PDB entry). `protein_design/` (mutation-focused) remains deferred past v0
   entirely — not the same domain as this fetch-only lookup.
 - **Difficulty scoring, output table: implemented (2026-07-06), see "Report" above.**
-  `legacy/find_small_proteins_with_ligands.py` (the original v0 seed) still exists
-  unchanged and is superseded by `structural_biology/candidates.py`; it can be removed
-  once `candidates.py`'s UniProt cofactor-lookup path is confirmed no longer wanted
-  (everything else it did is now live-verified and superseded) — see `PLAN.md` §4/§10
-  step 1.
 - **Pipeline orchestration (`pipeline.py`): implemented, config grouped into dataclasses
   (2026-07-06).** `run_pipeline()` wires hard filters → simulability → ligand CCD/SMILES
   → RDKit parameterizability (+ best-effort Meeko) → literature → AlphaFold DB lookup →

@@ -21,13 +21,25 @@ comparison, so it never requires the two structures to have matching residue cou
 matching numbering, or matching insertion codes. This removes the whole class of
 "atom-matching key was wrong" bug rather than patching it a third time.
 
-Shells out to a system Python interpreter that has PyMOL installed (``<python3> -m
-pymol -cq <script>``) -- the same "external battle-tested tool via subprocess" pattern
-this repo already uses for ``fpocket`` (``docking/pocket.py``), not a pip dependency of
-either of this repo's own Python environments. PyMOL's own Python bindings are
-notoriously hard to get via pip (need conda-forge or a system package); a system PyMOL
-install (e.g. ``apt install pymol``, which also installs the ``python3-pymol`` package
-system Python imports it from) covers this without adding it to either environment.
+Shells out to an interpreter that has PyMOL installed (``<python> -m pymol -cq <script>``)
+-- the same "external battle-tested tool via subprocess" pattern this repo already uses
+for ``fpocket`` (``docking/pocket.py``).
+
+**Corrected 2026-08-02: PyMOL IS pip-installable now, and is a real dependency of this
+repo.** This docstring previously stated that PyMOL's Python bindings are "notoriously
+hard to get via pip (need conda-forge or a system package)" and that a system install was
+required. That is no longer true: PyPI's ``pymol-open-source`` ships manylinux wheels for
+cp39-cp313, and it is now declared in ``pyproject.toml``'s ``validate`` extra. Live
+confirmation, not an assumption: ``cealign`` ran for real from the pip wheel on Google
+Colab -- a machine with no system PyMOL whatsoever -- aligning PDB 2PK4 at 0.28 A over 80
+residues. A conda-forge or OS package still works (see ``_CANDIDATE_PYMOL_INTERPRETERS``'s
+fallbacks); it is simply no longer required.
+
+Caveat on local evidence: adding this dependency did NOT change the test suite's pass/skip
+counts on the original dev machine, because that machine already had a system PyMOL, so
+``test_structure_alignment.py``'s ``shutil.which("pymol")`` guard was already satisfied
+there. The value of declaring it is that this module no longer depends on that being true
+by luck -- a fresh checkout gets a working ``cealign`` from ``uv sync --extra validate``.
 """
 
 from __future__ import annotations
@@ -36,6 +48,7 @@ import functools
 import json
 import logging
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -53,7 +66,16 @@ logger = logging.getLogger(__name__)
 # `<that interpreter> -m pymol` ourselves. `python3 -m pymol` with a clean PATH needs no
 # `PYMOL_PATH`/`PYMOL_DATA`/etc. env vars either (live-verified) -- pymol's own package
 # init resolves its data/script dirs relative to its own install location.
-_CANDIDATE_PYMOL_INTERPRETERS = ["/usr/bin/python3", "python3"]
+_CANDIDATE_PYMOL_INTERPRETERS = [sys.executable, "/usr/bin/python3", "python3"]
+# `sys.executable` FIRST (added 2026-08-02, alongside making `pymol-open-source` a real
+# `validate`-extra dependency): the normal case is now that PyMOL lives in the SAME
+# interpreter that is running this code, so probe that one before anything PATH-dependent.
+# The two fallbacks remain for installs where PyMOL came from conda-forge or an OS package
+# instead. This ordering is deliberate, not cosmetic -- relying on a PATH-resolved
+# `python3` is exactly the assumption that broke on Google Colab, where `apt install pymol`
+# put the module under system Python 3.10 while the running interpreter was 3.12: the
+# `pymol` *binary* appeared on PATH (so a `shutil.which` check reported success) while
+# `import pymol` failed from every interpreter this list could reach.
 
 
 @functools.lru_cache(maxsize=1)
@@ -129,8 +151,13 @@ def align_ligand_into_md_frame(
     if pymol_interpreter is None:
         raise FileNotFoundError(
             "no python interpreter with an importable `pymol` package found (tried "
-            f"{_CANDIDATE_PYMOL_INTERPRETERS}); install PyMOL (e.g. `apt install "
-            "pymol` or `conda install -c conda-forge pymol-open-source`)."
+            f"{_CANDIDATE_PYMOL_INTERPRETERS}); install PyMOL via this repo's own "
+            "`validate` extra (`uv sync --extra validate`, which includes "
+            "`pymol-open-source`), or as a fallback `conda install -c conda-forge "
+            "pymol-open-source`. NOTE: `apt install pymol` is NOT reliable -- it targets "
+            "the system Python, which is frequently a different version than the one "
+            "running this code (real case: Colab's apt PyMOL landed under 3.10 while the "
+            "interpreter was 3.12), leaving the binary on PATH but the module unimportable."
         )
 
     with tempfile.TemporaryDirectory() as tmp_dir:

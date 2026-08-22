@@ -1,15 +1,8 @@
 """Simulability composition checks: oligomeric state + non-standard residues.
 
-Unlike simulability.py's size/resolution/completeness gate (pure logic on
-data the hard filters already fetch at the entry level), these two checks need RCSB
-data at the ASSEMBLY and POLYMER_ENTITY levels, which requires its own batched
-fetch -- the hard filters' entry-level query doesn't reach these fields.
-
-Field paths below are verified against LIVE data.rcsb.org / rcsb-api GraphQL
-responses (2026-07-04), not inferred from mmCIF documentation -- see
-candidates.py's ``_ENTRY_RETURN_FIELDS`` comment for a case where an assumed
-(never-verified) path was actually wrong and shipped silently for several
-commits because mocked tests encoded the same wrong assumption. Verified via:
+Unlike simulability.py's size/resolution/completeness gate (pure logic on entry-level data
+the hard filters already fetch), these two checks need RCSB data at the ASSEMBLY and
+POLYMER_ENTITY levels, requiring their own batched fetch. Verified live response shape:
 
     DataQuery(input_type="assembly", input_ids=["4HHB-1"],
               return_data_list=["pdbx_struct_assembly.oligomeric_details",

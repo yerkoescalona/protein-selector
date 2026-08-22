@@ -1,57 +1,15 @@
 """Join every domain's persisted tables into the §8 output table (PLAN.md §8, §10 step 5).
 
-This is the "not yet built" step ``core/db.py``'s module docstring and
-several domains' ``store.py`` docstrings point at: reading each stage's
-already-persisted table and joining them into one ranked row per candidate.
-Deliberately a pure join over persisted data -- it never calls a network API
-itself (unlike ``docking.ligands.fetch_ligand_ccd_codes``, whose output must
-already be persisted via ``docking.store.upsert_ligand_ccd_codes`` before a
-candidate's ligand columns can be populated here).
+Reads each stage's already-persisted table and joins them into one ranked row per
+candidate. Deliberately a pure join -- never calls a network API itself. See
+``core/report_schema.py`` for the canonical, checked column list, and ``.claude/CLAUDE.md``
+for two real, fixed bugs in this join (a missing Meeko-vs-RDKit distinction; a
+`nonstd_residues` column that read the wrong upstream flag).
 
-One row per candidate PDB, matching PLAN.md §8's column contract (column
-names updated 2026-07-09 per §7b's producer-owned-naming audit -- see
-``core/report_schema.py`` for the canonical, checked list):
-``pdb_id, uniprot_id, title, organism, n_residues, n_atoms, resolution,
-method, n_protein_entities, ligand_ccd, ligand_smiles,
-ligand_rdkit_parameterizable, pocket_druggable, pocket_druggability_score,
-completeness, nonstd_residues, literature_count`` plus the per-exercise
-``suitable_for``/``{modeling,md_simulation,docking}_status``/
-``..._difficulty``/``..._failure_mode``/``predicted_vs_measured_gap``/
-``tier_per_exercise``/``rationale_json`` block.
-
-**Real gap, found and fixed (2026-07-06):** this report originally only
-joined the cheap RDKit-sanitization result (``docking.parameterizability``)
-into ``ligand_rdkit_parameterizable`` -- the heavier, docking-relevant Meeko
-check (``docking.meeko_parameterization``, the one Vina actually depends on)
-was persisted (`meeko_parameterization` table) but never read here, so a
-ligand that sanitized fine but genuinely couldn't be prepped for docking
-(e.g. HEM, which times out Meeko's real 3D embed -- see
-``meeko_parameterization.py``'s docstring) silently showed as
-"parameterizable" in the report. Added ``ligand_meeko_parameterizable`` as
-its own column (kept separate from ``ligand_rdkit_parameterizable`` rather
-than overwriting it -- the two checks answer different questions, "can
-RDKit even parse this" vs. "can Meeko actually prep it for Vina", and a
-ligand can pass one and fail the other), and ``predict_docking_difficulty``
-now prefers the Meeko verdict over the RDKit one when both are available,
-since Meeko is the check that's actually relevant to docking difficulty.
-
-**Real bug, found and fixed (2026-07-09, PLAN.md §7b):** ``nonstd_residues``
-used to be set to ``not simulability.passed`` -- "did simulability fail for
-*any* reason" (size, resolution, completeness, oligomeric state, *or*
-non-standard residues), never actually reading
-``check_non_standard_residues``'s own verdict. A candidate that was simply
-oversized showed ``nonstd_residues=True``. Fixed by reading the real
-per-entity ``nstd_monomer`` flags from ``entity_composition`` instead (see
-``_has_non_standard_residues``).
-
-**Simplification, stated explicitly (not a silent shortcut):** a candidate
-can have multiple bound ligands; this report's flat per-row
-``ligand_ccd``/``ligand_smiles``/``ligand_rdkit_parameterizable`` columns
-describe only the *first* CCD code found for that ``pdb_id`` (sorted for
-determinism), matching §8's singular-column schema. This mirrors a real
-limitation of the output contract itself, not something invented here -- a
-future revision could widen those to lists if multi-ligand nuance turns out
-to matter for scoring.
+A candidate can have multiple bound ligands; the flat per-row ``ligand_ccd``/
+``ligand_smiles``/``ligand_rdkit_parameterizable`` columns describe only the first CCD code
+(sorted for determinism), matching §8's singular-column schema -- a real limitation of the
+output contract, not an oversight here.
 """
 
 from __future__ import annotations
@@ -170,15 +128,9 @@ def _best_pocket_druggability_score(pocket_result: PocketDetectionResult | None)
 def _has_non_standard_residues(entity_infos: list[EntityCompositionInfo] | None) -> bool | None:
     """Real non-standard-residue verdict, from ``entity_composition``'s own persisted rows.
 
-    **Real bug, fixed here (PLAN.md §7b):** this report used to set its
-    ``nonstd_residues`` column to ``not simulability.passed`` -- "did
-    simulability fail for *any* reason" (size, resolution, completeness,
-    oligomeric state, *or* non-standard residues), not an actual read of
-    ``check_non_standard_residues``'s own result. That's wrong regardless of
-    naming: a candidate that's simply oversized showed ``nonstd_residues=True``.
-    This reads the real per-entity ``nstd_monomer`` flags instead. ``None``
-    if entity-composition data hasn't been fetched for this candidate yet
-    (distinct from a confirmed "no non-standard residues found").
+    Reads the real per-entity ``nstd_monomer`` flags (see ``.claude/CLAUDE.md`` for why this
+    matters, not ``simulability.passed``). ``None`` if entity-composition data hasn't been
+    fetched yet, distinct from a confirmed "no non-standard residues found".
     """
     if entity_infos is None:
         return None
@@ -255,9 +207,7 @@ def build_candidate_report(
 
     predicted_modeling = predict_modeling_difficulty(alphafold_entry)
     predicted_md_simulation = predict_md_simulation_difficulty(candidate, weights)
-    # Prefer the Meeko verdict (the check Vina docking actually depends on)
-    # over the cheaper RDKit-sanitization one when both are available -- see
-    # this module's docstring for why the two can disagree (e.g. HEM).
+    # Prefer the Meeko verdict over RDKit-sanitization when both are available (.claude/CLAUDE.md).
     docking_parameterizable = (
         ligand_meeko_parameterizable
         if ligand_meeko_parameterizable is not None
@@ -391,10 +341,8 @@ def _flatten_row(row: CandidateReportRow) -> dict[str, object]:
     for exercise in _EXERCISE_FIELDS:
         assessment = flat.pop(exercise)
         for field_name, value in assessment.items():
-            # notes is list[str] -- JSON-dumped for the same reason
-            # suitable_for/rationale are below: a plain Python list would
-            # otherwise be written to CSV as a non-JSON repr string (a real
-            # inconsistency this used to have, fixed here -- PLAN.md §7b).
+            # notes is list[str] -- JSON-dumped, same as suitable_for/rationale below, so
+            # CSV never gets a non-JSON Python repr string.
             flat[f"{exercise}_{field_name}"] = (
                 json.dumps(value) if field_name == "notes" else value
             )

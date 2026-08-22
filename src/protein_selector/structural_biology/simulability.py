@@ -1,30 +1,15 @@
 """Simulability checks: cheap, metadata-only gates on hard-filters survivors.
 
-Per PLAN.md §3/§10 step 2, simulability tightens the hard filters' coarse SQL-side filters (resolution
-ceiling, atom-count ceiling), adds the residue-count window PLAN.md §13 assumes
-for the Colab compute budget (~100-300 aa), and checks completeness, oligomeric
-state, and non-standard residues.
+Per PLAN.md §3/§10 step 2, tightens the hard filters' coarse resolution/atom-count ceiling,
+adds the residue-count window PLAN.md §13 assumes for the Colab compute budget, and checks
+completeness, oligomeric state, and non-standard residues.
 
-All four checks implemented (2026-07-04, all field paths live-verified against
-data.rcsb.org -- see candidates.py and composition.py's module docstrings for
-the verification detail, including a real bug the verification caught):
-
-- Residue-count window + resolution ceiling (`check_size_and_resolution`) --
-  pure logic on `CandidateEntry` fields the hard filters already fetch, no new network call.
-- Completeness/gaps (`check_completeness`) -- also pure logic on `CandidateEntry`
-  fields (`n_modeled_residues`/`n_unmodeled_residues`), no new network call;
-  these were added to the hard filters' entry-level fetch since they're free (same query).
-- Oligomeric state (`check_oligomeric_state`) -- needs `composition.AssemblyInfo`
-  from `composition.fetch_oligomeric_state`'s separate assembly-level fetch.
-- Non-standard residues (`check_non_standard_residues`) -- needs
-  `composition.EntityCompositionInfo` from `composition.fetch_non_standard_residues`'s
-  separate polymer-entity-level fetch.
-
-`check_full_simulability` composes all four into one `SimulabilityResult`.
-Oligomeric state and non-standard-residue checks are **informational by
-default** (no ceiling / non-standard residues allowed) -- PLAN.md didn't
-specify a hard pedagogical rule for either, and many good teaching structures
-are dimers/tetramers or use minor substitutions (e.g. SeMet/MSE). Set
+Size/resolution/completeness are pure logic on `CandidateEntry` fields the hard filters
+already fetch. Oligomeric state and non-standard residues need `composition.py`'s separate
+assembly/entity-level fetches. `check_full_simulability` composes all four; the latter two
+are **informational by default** (no ceiling / non-standard residues allowed) -- PLAN.md
+specifies no hard pedagogical rule for either, and many good teaching structures are
+dimers/tetramers or use minor substitutions (e.g. SeMet/MSE). Set
 `max_oligomeric_count`/`allow_non_standard_residues` to actually gate on them.
 """
 

@@ -1,16 +1,9 @@
 """Real Meeko/PDBQT parameterizability (PLAN.md §16b's `meeko` rule).
 
 Best-effort: needs the `validate` extra (rdkit/meeko). A missing extra is caught and
-logged, not fatal -- the rest of the DAG must still run in a base-only env.
-
-Real, live-discovered bug, fixed 2026-07-06 (carried forward unchanged from
-``pipeline.py``): ``filter_meeko_parameterizable`` lazily imports rdkit/meeko itself
-(inside a subprocess, not this module), so ``meeko_parameterization.py``'s own top-level
-`import` statement always succeeds regardless of whether the `validate` extra is
-installed -- wrapping just that import statement in try/except ImportError (an earlier
-version of this code) never actually caught the real "meeko/rdkit not installed" case; it
-was dead code. The whole call must be inside the try, since that's where the real
-ImportError can now be raised (meeko_parameterization.py's own pre-flight check).
+logged, not fatal -- the rest of the DAG must still run in a base-only env. The whole
+``filter_meeko_parameterizable`` call must be inside the try (not just the import
+statement) -- see ``.claude/CLAUDE.md`` bug 8 for why.
 """
 
 from __future__ import annotations

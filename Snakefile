@@ -1,7 +1,10 @@
 """Snakemake DAG wrapping the pipeline stages directly (PLAN.md §16, supersedes §15c).
 
-Every rule calls a `stages.*` function directly -- none call `pipeline.run_pipeline`,
-which no longer exists (PLAN.md §16 retired it). Snakemake is the only orchestrator now.
+Every rule calls a `stages.*` function directly -- none call `pipeline.run_pipeline`.
+Snakemake is the intended sole orchestrator going forward (PLAN.md §16). `pipeline.py`
+itself is NOT deleted yet: `tests/protein_selector/test_pipeline.py` and
+`notebooks/run_real_pipeline.ipynb` still use it directly. Retiring it is tracked as an
+open migration step (PLAN.md §16 Phase C / §25c), not done -- don't assume it's gone.
 
 Rule DAG (batch rules, in dependency order; `md_validate`/`pocket_detect`/`dock_validate`
 are the three per-candidate exceptions, PLAN.md §16a/§17/§18):

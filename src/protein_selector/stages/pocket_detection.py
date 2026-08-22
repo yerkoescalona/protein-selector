@@ -1,16 +1,10 @@
 """Real fpocket pocket detection, per candidate (PLAN.md §18's `pocket_detect` rule).
 
-**PLAN.md §18 (2026-07-19): runs on the MD validator's own relaxed structure, not a
-freshly-downloaded crystal file.** For a detected pocket's ``box_center``/``box_size`` to
-actually correspond to the receptor `dock_validate` docks into, fpocket must see the SAME
-structure -- the crystal structure and the PDBFixer/OpenMM-repaired one are not in
-identical frames (added atoms/hydrogens, minimization drift, PDBFixer-inserted missing
-residues), so pocket detection on the crystal file would produce a box_center that doesn't
-reliably correspond to a cavity in the receptor actually being docked into. This makes
-pocket detection genuinely per-candidate (was previously a whole-shortlist batch rule) and
-dependent on `md_validate` having already succeeded for that candidate -- see this
-module's ``run_pocket_detection_stage`` for the three distinguishable outcomes that
-follow from that dependency.
+Runs on the MD validator's own relaxed structure, not a freshly-downloaded crystal file
+(PLAN.md §18) -- a detected pocket's box must correspond to the SAME receptor
+`dock_validate` docks into, and the crystal/PDBFixer-repaired frames aren't identical. This
+makes pocket detection genuinely per-candidate and dependent on `md_validate` having
+already succeeded -- see ``run_pocket_detection_stage`` for the three outcomes that follow.
 """
 
 from __future__ import annotations

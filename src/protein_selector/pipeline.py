@@ -1,116 +1,26 @@
 """End-to-end orchestration: hard filters -> ... -> report (PLAN.md §7/§10, §12).
 
-Per PLAN.md §7's decision ("script-first for hard filters through
-parameterizability; introduce Snakemake when validation lands"): this is
-deliberately a plain function, not a Snakemake DAG. Revisit if per-protein
-caching/resume across runs becomes a real pain point -- persistence in
-``core/db.py``'s SQLite tables already gives *most* of "don't recompute
-unchanged work" for free (every upsert is idempotent, keyed by
-pdb_id/ligand_id/uniprot_accession/etc.), which is weaker motivation for a
-full workflow engine than PLAN.md's §7 argument assumed before this pipeline
-existed.
+**Superseded but not yet deleted (PLAN.md §16 Phase C / §25c') -- the Snakefile no longer
+wraps this; every Snakemake rule calls a `stages/run_<stage>_stage(...)` function
+directly.** Still used by `tests/test_pipeline.py` and `notebooks/run_real_pipeline.ipynb`.
+Kept as a script-first alternative, not actively developed further.
 
-**Configuration is grouped into one dataclass per stage** (``CandidateSearchConfig``,
+Config is grouped into one dataclass per stage (``CandidateSearchConfig``,
 ``CandidateFilterConfig``, ``ModelingLookupConfig``, ``MdSimulationConfig``,
-``PocketDetectionConfig``) rather than one long flat parameter list -- each
-group is independently documented and defaulted, and it's clear at a call
-site which stage a given setting belongs to. ``CandidateSearchConfig`` vs.
-``CandidateFilterConfig`` split (PLAN.md §7a): a field belongs to search iff
-it's sent to RCSB as a query term (shapes what comes back); it belongs to
-filter iff it's checked client-side on metadata already fetched (or fetched
-via a necessarily-separate follow-up call, e.g. oligomeric state).
+``PocketDetectionConfig``) rather than one flat parameter list. The "ex02"/"ex03"/"ex04"
+labels are the literal persisted keys (PLAN.md §7b) -- public API/log messages/variable
+names describe what each stage does instead.
 
-**On "ex02"/"ex03"/"ex04" naming:** those short labels are still used
-internally as the literal string keys this project's shared ``validation``
-table and ``core/report.py``'s ``ex0X_*`` output columns are keyed by (an
-established, already-shipped contract -- renaming it would break every
-persisted db, every notebook, and the CSV column contract PLAN.md §8
-defines) -- but this module's own public API, config classes, log messages,
-and local variable names describe what each stage actually *does*
-(``ModelingLookupConfig``, "AlphaFold DB lookup"; ``MdSimulationConfig``,
-"MD simulation") instead of repeating that jargon. See each config
-dataclass's docstring for which persisted exercise label it corresponds to.
+Modeling lookup is on by default (cheap, fetch-only); MD simulation is off by default
+(needs the conda-only environment). Docking and fpocket pocket detection are deliberately
+NOT auto-wired here -- `docking.docking_validation.run_docking_validation` needs a
+prepared receptor/box this module doesn't build; call it directly with your own.
 
-**Stage coverage, stated explicitly:**
-
-- Hard filters -> simulability (incl. oligomeric-state/non-standard-residue
-  composition checks) -> ligand CCD/SMILES wiring -> RDKit parameterizability
-  -> literature counts: always run, all cheap/network-only, no conda needed.
-- Meeko real-parameterization: best-effort, needs the `validate` extra
-  (rdkit/meeko); a missing extra is caught and logged as skipped, not fatal.
-- Modeling lookup (persisted as exercise "ex02", real AlphaFold DB lookup):
-  on by default (``ModelingLookupConfig.enabled=True``) -- cheap, fetch-only,
-  no conda needed.
-- MD simulation (persisted as exercise "ex03", real OpenMM test-MD): off by
-  default (``MdSimulationConfig.enabled=False``) -- needs the conda-only
-  `environment-validation.yml` env; a missing ``openmm``/``pdbfixer``
-  install is caught on the *first* candidate and stops further attempts for
-  the rest of the run (there's no point retrying 20 candidates against an
-  environment that's already confirmed absent). Candidates that fail
-  simulability (including being oversized) or the ``methods`` subset check
-  are filtered out of the pool entirely right after simulability runs
-  (``CandidateFilterConfig``), before any stage -- not just this one -- ever
-  sees them; see that dataclass's docstring for why residue count, not atom
-  count, is the size gate.
-- **Docking (persisted as exercise "ex04") and fpocket-based pocket
-  detection are deliberately NOT auto-wired here, and that's a real, stated
-  gap, not an oversight:** ``docking.docking_validation.run_docking_validation``
-  needs a *prepared* receptor PDBQT (this repo has no receptor-preparation
-  wrapper -- the live verification in this project's history used
-  `obabel -xr` manually, not a module) and a docking-box center (fpocket's
-  `parse_fpocket_info` only returns score/druggability/volume, not
-  per-pocket 3D coordinates -- extracting a real box center needs parsing
-  fpocket's separate `pocket{N}_atm.pdb`/`_vert.pdb` output files, which no
-  module here does yet). Pocket *detection* itself only needs a plain
-  downloaded PDB file (fpocket operates directly on PDB, no PDBQT prep), so
-  it's wired here as ``PocketDetectionConfig`` (off by default, needs a
-  local `fpocket` binary) -- but running an actual test-dock is not. Call
-  `docking.docking_validation.run_docking_validation` directly with your own
-  prepared receptor/box until that wiring is built.
-
-Returns the final joined report rows (`core.report.CandidateReportRow`);
-optionally writes them to CSV.
-
-**Real gap, found and fixed (2026-07-06): incremental skip-if-already-persisted.**
-Earlier revisions of this function always recomputed every stage for every
-candidate the hard-filters search returned, on every call -- upserts made
-that safe (no duplicate rows), but not *efficient*: re-running against an
-unchanged candidate set repeated real RCSB/Europe PMC/AlphaFold network
-calls and real RDKit/Meeko checks for no reason, which matters a lot for
-Meeko in particular (real, sometimes tens-of-seconds-per-ligand work, see
-``meeko_parameterization.py``). Every per-ligand/per-candidate stage below
-now checks what's already in ``db_path`` first and skips only the
-already-covered subset, controlled by ``force_refresh`` (default ``False``):
-set it ``True`` to force a full recompute regardless of what's persisted
-(e.g. after changing a check's logic/thresholds and wanting fresh numbers).
-Hard filters' own metadata fetch is deliberately NOT skipped even when
-``force_refresh=False`` -- it's one cheap batched call regardless of
-candidate count, and every later stage depends on having a fresh
-``CandidateEntry`` list to iterate, so skipping it would save nothing while
-adding real complexity (partial entry lists to reconcile).
-
-**What gets saved, and when -- stated explicitly, since it's not obvious
-from reading the function top-to-bottom.** Every stage upserts to
-``db_path`` (SQLite, ``core/db.py``) as soon as it has a result, not once at
-the very end -- ``run_pipeline`` never holds results in memory only to
-write them all out on a clean return. Concretely: candidates are persisted
-right after the hard-filters/simulability filter (before parameterizability
-even starts); ligand CCD codes, RDKit/Meeko parameterizability, and
-literature counts are each persisted per-batch as soon as their fetch
-returns; modeling lookup, MD simulation, and pocket detection **persist
-per-candidate, immediately after each candidate's result is computed** --
-**a real gap, fixed here (2026-07-09):** these three used to accumulate
-results in a list and upsert once after their whole ``for`` loop finished,
-so an unhandled exception partway through (e.g. a network error on
-candidate 80 of 100) silently discarded every already-computed result for
-candidates 1-79, even though each one may have taken real minutes (MD in
-particular). Persisting inside the loop means a crash anywhere only costs
-the one in-flight candidate, and a re-run with ``force_refresh=False``
-picks up exactly where it left off. The only stage with no persisted output
-at all is the very first RCSB search call (``search_candidate_ids``) --
-if *that* fails (as it does for a real, live-verified reason: RCSB's Search
-API rejects `rows` over 10,000, see ``_RCSB_MAX_ROWS_PER_QUERY`` below),
-nothing has been fetched yet, so there is nothing to lose.
+Incremental by default (``force_refresh=False``): every stage upserts to ``db_path`` as
+soon as it has a result (not batched until the end), so a crash mid-run only costs the
+one in-flight candidate, and a re-run picks up where it left off. Hard filters' own
+metadata fetch is never skipped -- it's one cheap batched call every later stage depends
+on having fresh.
 """
 
 from __future__ import annotations

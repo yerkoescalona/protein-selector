@@ -1,19 +1,11 @@
 """Hard-filters candidate search: RCSB PDB Data/Search APIs via the official `rcsb-api` package.
 
-Replaces the v0 seed's (`find_small_proteins_with_ligands.py`) per-entry `requests` loop
-and manual pagination with:
-
-- a single structured search query for candidate PDB IDs (`rcsbapi.search`), whose
-  ``Session`` auto-paginates internally -- but only up to however many results are
-  actually consumed from it. See `search_candidate_ids`'s docstring for a real,
-  live-verified footgun here: materializing the full session via `list(session)`
-  fetches EVERY matching page, not just `rows`-many results.
-- one batched metadata fetch (`rcsbapi.data.DataQuery`), which chunks/rate-limits
-  internally rather than one HTTP round trip per PDB ID.
-
-Persistence lives in ``store.py`` (SQLite), not here -- see its module docstring.
-
-See ``PLAN.md`` §4 and §4b for the design rationale.
+A single structured search query for candidate PDB IDs (`rcsbapi.search`) plus one batched
+metadata fetch (`rcsbapi.data.DataQuery`). Persistence lives in ``store.py``, not here. See
+``.claude/CLAUDE.md``'s "Bugs found via live verification" for two real, non-obvious bugs
+this module's own history caught (wrong GraphQL field paths; a `Session` pagination
+footgun) -- re-verify live against a real PDB ID if you touch `_ENTRY_RETURN_FIELDS`,
+`_parse_entry`, or `search_candidate_ids` again.
 """
 
 from __future__ import annotations
@@ -41,25 +33,9 @@ class ExperimentalMethod(StrEnum):
     X_RAY_DIFFRACTION = "X-RAY DIFFRACTION"
 
 
-# Fields fetched per entry -- superset of what the v0 script's get_structure_details/
-# get_ligands issued one HTTP request per PDB ID for.
-#
-# IMPORTANT, learned the hard way (2026-07-04, live-verified against data.rcsb.org):
-# "rcsb_entry_container_identifiers.uniprot_ids" and "rcsb_entity_source_organism...."
-# (unqualified) are NOT valid entry-level paths -- both organism and uniprot_ids are
-# POLYMER-ENTITY-level fields, reached from an entry query only via the nested
-# "polymer_entities" list. The original (mocked-only) tests never caught this because
-# the mock fixtures encoded the same wrong assumption the code made, so parsing "passed"
-# against fabricated data that didn't match the real API shape. `rcsb-api` will silently
-# autocomplete an ambiguous/incomplete path and still return data (with a warning) --
-# don't rely on that; use the fully-qualified path so behavior doesn't depend on
-# "current schema uniqueness". See `_parse_entry`'s corresponding nested-list handling.
-#
-# deposited_modeled_polymer_monomer_count / deposited_unmodeled_polymer_monomer_count
-# and the assembly_ids/polymer_entity_ids container fields were added to support the
-# simulability completeness/oligomeric-state/non-standard-residue checks (PLAN.md §10 step 2) --
-# all field paths verified against a live data.rcsb.org response (2026-07-04). See
-# composition.py for the assembly/entity-level fetches these two ID lists feed.
+# organism/uniprot_ids MUST use the fully-qualified polymer_entities.* path -- they are
+# polymer-entity-level fields, not entry-level (.claude/CLAUDE.md bug 1). See
+# composition.py for the assembly/entity-level fetches the two *_ids lists feed.
 _ENTRY_RETURN_FIELDS = [
     "rcsb_id",
     "struct.title",
@@ -105,22 +81,14 @@ def build_hard_filters_query(
 ):
     """Build the hard-filters search query.
 
-    Mirrors the five filters the v0 script built as a hand-rolled dict
-    (protein entity present, non-polymer entity present, atom-count ceiling,
-    experimental method, resolution ceiling), expressed via rcsb-api's typed
-    ``Attr``/``AttributeQuery`` interface instead.
+    Protein entity present, non-polymer entity present, atom-count ceiling, experimental
+    method, resolution ceiling. Uses ``Attr(name, "text")`` directly rather than the
+    ``search_attributes`` proxy,
+    which resolves fields via runtime metaprogramming ty can't see through.
 
-    Uses ``Attr(name, "text")`` directly rather than the ``search_attributes``
-    convenience proxy: the proxy resolves fields via runtime metaprogramming
-    that static type checkers (ty) cannot see through, while ``Attr`` is a
-    plain, statically-checkable constructor for the same field.
-
-    ``methods`` accepts more than one value via ``Attr.in_()`` (an OR query,
-    live-verified: ``Attr(...).in_([...]).to_dict()`` produces
-    ``{"operator": "in", "value": [...]}}``) -- e.g. search for both X-ray and
-    NMR entries in one call, then narrow to just one method client-side later
-    (see ``pipeline.CandidateFilterConfig.methods``). ``None`` = only
-    ``ExperimentalMethod.X_RAY_DIFFRACTION``, this codebase's pre-existing default.
+    ``methods`` accepts more than one value via ``Attr.in_()`` (an OR query) -- narrow to
+    one method client-side later (``CandidateFilterConfig.methods``). ``None`` defaults to
+    ``ExperimentalMethod.X_RAY_DIFFRACTION``.
     """
     polymer_entity_count_protein = Attr(
         "rcsb_entry_info.polymer_entity_count_protein", "text"
@@ -142,12 +110,9 @@ def build_hard_filters_query(
     )
 
 
-_RCSB_MAX_ROWS_PER_QUERY = 10_000  # RCSB Search API's own real ceiling on a single
-# request's `rows` -- live-verified (2026-07-08): a direct query with rows=10_000 returns
-# 200, rows=15_000 returns 400 ("JSON schema validation failed"). This bounds the PAGE
-# size sent to RCSB per request, NOT the total number of results a caller can retrieve --
-# see search_candidate_ids's docstring for how a total larger than this is still fully
-# achievable via Session's own auto-pagination.
+_RCSB_MAX_ROWS_PER_QUERY = 10_000  # RCSB's own ceiling on a single request's `rows`
+# (rows=15_000 returns 400). Bounds the PAGE size per request, not the total a caller can
+# retrieve -- see search_candidate_ids and .claude/CLAUDE.md for why that distinction matters.
 
 
 def search_candidate_ids(
@@ -158,31 +123,11 @@ def search_candidate_ids(
 ) -> list[str]:
     """Run the hard-filters search and return at most ``rows`` matching PDB IDs.
 
-    ``rows`` is a genuine total cap on the returned list, however large -- it is NOT
-    passed straight through as the per-request page size sent to RCSB (that's a fixed,
-    separate concern: see ``_RCSB_MAX_ROWS_PER_QUERY``). **Real, live-discovered bug,
-    fixed 2026-07-18:** conflating these two meant a caller asking for more than 10,000
-    total results (e.g. a large sample pool for random selection, PLAN.md §16) crashed
-    with an ``HTTPStatusError``, since RCSB itself rejects a single request's ``rows``
-    above 10,000 -- callers used to have no way to ask for more than 10,000 total
-    candidates at all. Fixed by always requesting RCSB's own max page size per request
-    and letting ``Session``'s auto-pagination (below) keep fetching subsequent pages
-    until ``rows`` total items are collected or the real match count is exhausted,
-    whichever comes first -- so ``rows=50_000`` now genuinely returns up to 50,000 ids
-    (five real page fetches), not a crash or a silent 10,000 clamp.
-
-    CRITICAL, live-verified (2026-07-04): ``Session`` (returned by ``.exec()``)
-    auto-paginates through ALL matching results when fully materialized via
-    ``list(session)`` -- the ``rows`` passed to ``.exec()`` is the per-page size, NOT a
-    cap on the total results a caller gets back; iterating (or islicing) further than one
-    page transparently fetches subsequent pages. A query matching more entries than one
-    page's ``rows`` will keep fetching until the whole result set is exhausted, or the
-    caller's own ``itertools.islice`` stops pulling. Confirmed: ``list(session)`` on a
-    real query matching 3,785 entries with ``rows=5`` did not return within 30s (many
-    hundreds of sequential round trips); the identical query with
-    ``itertools.islice(session, 5)`` returned in 0.35s. Do not go back to plain
-    ``list(session)`` here -- it silently degrades from "instant" (the hard-filters
-    promise in PLAN.md §3) to potentially hours, with no error or warning.
+    ``rows`` is a genuine total cap on the returned list, however large -- NOT the
+    per-request page size sent to RCSB (see ``_RCSB_MAX_ROWS_PER_QUERY``). Uses
+    ``itertools.islice(session, rows)``, never plain ``list(session)`` -- see
+    ``.claude/CLAUDE.md``'s "Bugs found via live verification" (bug 2) for why plain
+    ``list(session)`` here silently degrades from instant to potentially hours.
     """
     query = build_hard_filters_query(
         max_atoms=max_atoms, max_resolution=max_resolution, methods=methods
@@ -195,9 +140,8 @@ def search_candidate_ids(
 def fetch_entry_metadata(pdb_ids: list[str]) -> list[CandidateEntry]:
     """Batch-fetch entry metadata for a list of PDB IDs via the Data API.
 
-    Passes the full ID list in a single ``DataQuery`` call; the package chunks
-    and rate-limits requests internally (see ``config.DATA_API_INPUT_ID_LIMIT``),
-    replacing the v0 script's one-HTTP-call-per-PDB-ID loop.
+    Passes the full ID list in a single ``DataQuery`` call; the package chunks and
+    rate-limits requests internally.
     """
     if not pdb_ids:
         return []

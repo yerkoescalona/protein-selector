@@ -34,15 +34,12 @@ def run_search_candidates_stage(
     candidate's ``CandidateEntry`` for ``stages.simulability`` to check and gate.
 
     A larger pool than ``max_candidates`` is fetched because RCSB's Search API has no
-    random-sort option: fetching exactly ``max_candidates`` matches would always return
-    the *same* leading ids (RCSB's own default ordering), not a random sample -- so a
-    wider pool (``sample_pool_size``, default ``max(max_candidates * 20, 200)``) is
-    fetched first and ``random.Random(random_seed)`` samples from it client-side.
-
-    No clamping happens here even if ``pool_size`` exceeds RCSB's real per-request `rows`
-    ceiling (10,000) -- fixed 2026-07-18: that ceiling is now handled transparently
-    inside ``search_candidate_ids`` itself (it paginates across multiple requests), so a
-    pool larger than 10,000 is fetched correctly rather than silently clamped down.
+    random-sort option: fetching exactly ``max_candidates`` matches would always return the
+    *same* leading ids (RCSB's own default ordering) -- a wider pool (``sample_pool_size``,
+    default ``max(max_candidates * 20, 200)``) is fetched first and
+    ``random.Random(random_seed)`` samples from it client-side. No clamping needed here even
+    if ``pool_size`` exceeds RCSB's per-request ceiling -- ``search_candidate_ids`` paginates
+    across multiple requests internally (``.claude/CLAUDE.md``).
     """
     pool_size = (
         candidate_search.sample_pool_size

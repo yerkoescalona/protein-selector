@@ -1,15 +1,13 @@
 """Parameterizability wiring: fetch a SMILES string per bound-ligand CCD code.
 
 ``candidates.py``'s hard-filters fetch only pulls non-polymer *entity IDs* (e.g.
-"4HHB_3"), not CCD codes or SMILES. Two RCSB Data API hops are needed to get
-from an entry's ligands to something ``parameterizability.py`` can sanitize:
+"4HHB_3"), not CCD codes or SMILES. Two RCSB Data API hops get from an entry's ligands to
+something ``parameterizability.py`` can sanitize:
 
     non_polymer_entity_ids -> (this module, step 1) -> CCD codes (e.g. "HEM")
     CCD codes -> (this module, step 2) -> SMILES
 
-Both hops verified LIVE against data.rcsb.org (2026-07-05), not inferred from
-docs -- see composition.py's header comment for why that distinction matters
-here:
+Verified live response shape:
 
     DataQuery(input_type="nonpolymer_entity", input_ids=["4HHB_3", "4HHB_4"],
               return_data_list=["pdbx_entity_nonpoly.comp_id"])

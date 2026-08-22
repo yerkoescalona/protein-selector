@@ -1,43 +1,19 @@
 """Docking-target resolution, shared by `docking_shortlist` and `dock_validate` (PLAN.md §17/§18/§20).
 
 ONE function decides "is this candidate dockable, and with which ligand/box", so the
-shortlist gate and the actual per-candidate docking run can never silently drift apart
-into two different answers for the same question.
+shortlist gate and the actual per-candidate docking run can never silently drift apart into
+two different answers for the same question.
 
-**PLAN.md §18 (2026-07-19): the docking receptor is the MD validator's own relaxed
-structure, not a freshly-fetched or freshly-PDBFixer-repaired-but-never-relaxed one.**
-Docking a candidate therefore requires ``md_simulation`` (ex03) to have already succeeded
-for it -- ``resolve_docking_target`` treats a missing relaxed structure the same as any
-other real "not dockable" outcome (``FailureMode.COMPLETENESS``), not a crash. Since the
-MD-relaxed structure has no ligand at all (PDBFixer strips every heterogen), the native
-ligand's real bound-pose coordinates (extracted from the raw crystal structure) are
-superposed into the MD-relaxed frame via ``molecular_dynamics.structure_alignment`` before
-anything downstream (the Vina box, the actual dock) can use them.
+Docking requires ``md_simulation`` (ex03) to have already succeeded: the receptor is the
+MD validator's own relaxed structure (PLAN.md §18), and since that structure has no ligand
+(PDBFixer strips heterogens), the native ligand's crystal-pose coordinates are superposed
+into the MD-relaxed frame via ``molecular_dynamics.structure_alignment`` first. The Vina
+box comes from the aligned native ligand's own coordinates, not fpocket -- see PLAN.md §20
+for why. ``pocket_detection`` is still computed per candidate but is informational only.
 
-**PLAN.md §20 (2026-07-19, real fix, reverses §17a.3/§17b): the Vina search box is now
-built directly from the aligned NATIVE LIGAND's own coordinates
-(``native_ligand.ligand_bounding_box``), not from an fpocket-detected pocket's geometry.**
-The self-dock question is "can Vina reproduce the experimentally observed pose" -- the box
-must therefore be centered on and sized to that pose itself. Using fpocket's pocket
-geometry instead was a real, live-diagnosed bug (not receptor drift, as first suspected):
-fpocket can return a pocket that geometrically *contains* the ligand centroid while being a
-small, low-quality artifact of its alpha-sphere clustering (confirmed on PDB 3DAU: the
-containing pocket had `druggability_score` 0.0 / volume 187 Å³, while a real
-1571 Å³/druggability-0.581 pocket sat ~15 Å away, never considered because it didn't happen
-to contain the centroid point) -- silently handing Vina a small, mis-centered search box and
-then reporting a low-RMSD self-dock "failure" that had nothing to do with docking accuracy
-or MD-induced receptor change. **`pocket_detection` is still computed and persisted per
-candidate (fpocket now runs on each candidate's own relaxed structure, §18) but is
-informational only** -- worth showing students as "did blind pocket detection also find the
-real site, unprompted" (`DockingTarget.nearby_pocket_druggability`), never a gate on whether
-docking is attempted or whether it counts as a success.
-
-Reads only already-persisted SQLite state (`ligand_ccd_codes`, `meeko_parameterization`,
-`pocket_detection` -- all populated by earlier stages) plus two small, already-established
-network calls this run also needs fresh: SMILES lookup (cheap, batched, same pattern as
-`workflow/scripts/meeko.py`/`parameterizability.py` -- SMILES itself is never persisted,
-see those scripts' docstrings for why) and a plain-PDB download (needed for the native
-ligand's real crystal-pose coordinates before alignment, PLAN.md §17a.1/§18).
+Reads persisted SQLite state (`ligand_ccd_codes`, `meeko_parameterization`,
+`pocket_detection`) plus two fresh calls: SMILES lookup and a plain-PDB download for the
+native ligand's crystal-pose coordinates.
 """
 
 from __future__ import annotations
@@ -101,18 +77,11 @@ def resolve_docking_target(
 
     Returns ``(target, reasons, failure_mode)``: on success, ``target`` is set and
     ``reasons``/``failure_mode`` are empty/``None``; on failure, ``target`` is ``None`` and
-    the other two explain why (``failure_mode`` lets callers persist a real
-    ``ValidationResult`` with a taxonomy-consistent failure, per
-    ``core.validation_result.FailureMode``).
+    the other two explain why, for a taxonomy-consistent persisted ``ValidationResult``.
 
-    **PLAN.md §20: the box is built from the aligned native ligand's own coordinates
-    (``ligand_bounding_box``), not from fpocket.** fpocket's ``pocket_detection`` results
-    are looked up only to attach an informational ``nearby_pocket_druggability`` value
-    (worth showing students) -- a missing/empty pocket_detection result no longer blocks
-    docking, unlike the pre-§20 behavior (``FailureMode.POCKET`` for "no fpocket pockets
-    persisted"/"no pocket contains the ligand" is retired; the only remaining
-    ``FailureMode.POCKET``-style failure would be a genuine centroid/geometry failure,
-    already covered above by the ``PARAMETERIZATION`` branch).
+    fpocket's ``pocket_detection`` result is looked up only for the informational
+    ``nearby_pocket_druggability`` value -- a missing/empty result no longer blocks docking
+    (PLAN.md §20).
     """
     ccd_codes = load_ligand_ccd_codes(db_path).get(pdb_id, [])
     if not ccd_codes:
