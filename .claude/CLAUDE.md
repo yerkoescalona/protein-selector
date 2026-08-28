@@ -98,10 +98,23 @@ src/protein_selector/
                                  output, PLAN.md §7b), paths.py (shared per-candidate
                                  structure directory layout under `cache/structures/`,
                                  PLAN.md §22c)
-  structural_biology/            candidates.py (hard-filters search/fetch), composition.py
-                                 (assembly/entity-level fetches: oligomeric state,
-                                 non-standard residues), simulability.py (simulability checks,
-                                 complete), store.py (persistence for this domain's tables)
+  structural_biology/            models.py (PLAN.md §27d W1.2, added 2026-08-23:
+                                 dependency-free CandidateEntry/ExperimentalMethod/
+                                 AssemblyInfo/EntityCompositionInfo dataclasses -- moved
+                                 here from candidates.py/composition.py because
+                                 rcsbapi.data/rcsbapi.search both fetch their GraphQL
+                                 schema over the network unconditionally at IMPORT time,
+                                 which was silently breaking core/report.py's "never
+                                 calls a network API itself" promise for anyone reading
+                                 an already-populated store; candidates.py/composition.py
+                                 still re-export both names for their own live-fetch
+                                 callers), candidates.py (hard-filters search/fetch),
+                                 composition.py (assembly/entity-level fetches:
+                                 oligomeric state, non-standard residues), simulability.py
+                                 (simulability checks, complete; imports its dataclasses
+                                 from models.py, not candidates.py/composition.py, to stay
+                                 network-free), store.py (persistence for this domain's
+                                 tables; same models.py-not-candidates.py import choice)
   bioinformatics/                literature.py (Europe PMC evidence count, complete),
                                  store.py
   docking/                       parameterizability.py + meeko_parameterization.py +
