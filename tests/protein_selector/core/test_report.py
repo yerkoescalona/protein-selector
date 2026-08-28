@@ -18,8 +18,10 @@ import pytest
 from protein_selector.bioinformatics.store import upsert_literature_counts
 from protein_selector.core.difficulty import ScoringWeights
 from protein_selector.core.report import (
+    CandidateReportRow,
     build_candidate_report,
     build_report_table,
+    rank_report_rows,
     rows_to_dataframe,
     write_report_csv,
 )
@@ -486,3 +488,59 @@ def test_build_report_table_never_imports_rcsbapi():
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
+
+
+class TestRankReportRows:
+    """PLAN.md §28 C.4 -- the table must actually be ranked, not pdb_id-sorted."""
+
+    @staticmethod
+    def _row(pdb_id, suitable, statuses, literature=None):
+        from protein_selector.core.difficulty import ExerciseAssessment
+
+        def assessment(status):
+            return ExerciseAssessment(
+                status=status, predicted_difficulty=None, measured_difficulty=None,
+                gap=None, tier=None, failure_mode=None, notes=[],
+            )
+
+        return CandidateReportRow(
+            pdb_id=pdb_id, uniprot_id=None, title=None, organism=None, n_residues=None,
+            n_atoms=None, resolution=None, method=None, n_protein_entities=None,
+            ligand_ccd=None, ligand_smiles=None, ligand_rdkit_parameterizable=None,
+            ligand_meeko_parameterizable=None, pocket_druggable=None,
+            pocket_druggability_score=None, completeness=None, nonstd_residues=None,
+            literature_count=literature, suitable_for=list(suitable),
+            modeling_alphafold_entry_id=None, modeling_alphafold_mean_plddt=None,
+            modeling_alphafold_low_confidence_fraction=None,
+            md_simulation_pdbfixer_repaired=None,
+            modeling=assessment(statuses[0]),
+            md_simulation=assessment(statuses[1]),
+            docking=assessment(statuses[2]),
+        )
+
+    def test_more_usable_candidates_rank_first(self):
+        one = self._row("AAAA", ["modeling"], ["pass", "fail", "fail"])
+        three = self._row("ZZZZ", ["modeling", "md_simulation", "docking"], ["pass"] * 3)
+        assert [r.pdb_id for r in rank_report_rows([one, three])] == ["ZZZZ", "AAAA"]
+
+    def test_evidence_outranks_absence_at_equal_usability(self):
+        validated = self._row("ZZZZ", [], ["fail", "fail", "fail"])
+        unvalidated = self._row("AAAA", [], ["not_run", "not_run", "not_run"])
+        ranked = rank_report_rows([unvalidated, validated])
+        assert [r.pdb_id for r in ranked] == ["ZZZZ", "AAAA"]
+
+    def test_literature_breaks_remaining_ties(self):
+        few = self._row("AAAA", ["modeling"], ["pass", "fail", "fail"], literature=2)
+        many = self._row("BBBB", ["modeling"], ["pass", "fail", "fail"], literature=99)
+        assert [r.pdb_id for r in rank_report_rows([few, many])] == ["BBBB", "AAAA"]
+
+    def test_unknown_literature_sorts_below_a_real_zero(self):
+        # "couldn't ask" must never be silently equal to "no papers" -- the same
+        # int | None discipline bioinformatics/literature.py itself keeps.
+        unknown = self._row("AAAA", [], ["pass", "fail", "fail"], literature=None)
+        zero = self._row("BBBB", [], ["pass", "fail", "fail"], literature=0)
+        assert [r.pdb_id for r in rank_report_rows([unknown, zero])] == ["BBBB", "AAAA"]
+
+    def test_ordering_is_deterministic(self):
+        rows = [self._row(p, [], ["pass", "fail", "fail"]) for p in ("CCCC", "AAAA", "BBBB")]
+        assert [r.pdb_id for r in rank_report_rows(rows)] == ["AAAA", "BBBB", "CCCC"]

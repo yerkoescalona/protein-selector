@@ -32,6 +32,7 @@ def run_meeko_stage(
         )
         from protein_selector.docking.store import (
             load_meeko_parameterization,
+            upsert_ligand_smiles,
             upsert_meeko_parameterization,
         )
 
@@ -49,10 +50,16 @@ def run_meeko_stage(
             return
         still_needed = [c for c in new_codes if c not in smiles_by_ccd_code]
         if still_needed:
-            smiles_by_ccd_code = {
-                **smiles_by_ccd_code,
-                **fetch_smiles_for_ccd_codes(still_needed),
-            }
+            fetched = fetch_smiles_for_ccd_codes(still_needed)
+            smiles_by_ccd_code = {**smiles_by_ccd_code, **fetched}
+            # PLAN.md §28 C.6: persist them. They were previously fetched here, used
+            # once, and dropped, leaving the report's ligand_smiles column empty for
+            # every row.
+            upsert_ligand_smiles(fetched, db_path=db_path)
+        upsert_ligand_smiles(
+            {c: smiles_by_ccd_code[c] for c in new_codes if c in smiles_by_ccd_code},
+            db_path=db_path,
+        )
         _, results = filter_meeko_parameterizable(
             {c: smiles_by_ccd_code.get(c) for c in new_codes}
         )

@@ -44,6 +44,7 @@ from protein_selector.docking.parameterizability import ParameterizabilityResult
 from protein_selector.docking.pocket import PocketDetectionResult
 from protein_selector.docking.store import (
     load_ligand_ccd_codes,
+    load_ligand_smiles,
     load_meeko_parameterization,
     load_parameterizability,
     load_pocket_detection,
@@ -299,6 +300,9 @@ def build_report_table(
     meeko_parameterizability_by_ligand = load_meeko_parameterization(db_path)
     pocket_results = load_pocket_detection(db_path)
     literature_counts = load_literature_counts(db_path)
+    # PLAN.md §28 C.6 -- previously never loaded here, so `ligand_smiles` was empty in
+    # every report this tool has ever produced.
+    ligand_smiles_by_ccd = load_ligand_smiles(db_path)
     alphafold_entries = load_alphafold_entries(db_path)
     modeling_results = load_validation_results(MODELING_EXERCISE, db_path)
     md_simulation_results = load_validation_results(MD_SIMULATION_EXERCISE, db_path)
@@ -313,6 +317,7 @@ def build_report_table(
                 simulability=simulability_results.get(pdb_id),
                 entity_infos=entity_infos_by_pdb_id.get(pdb_id),
                 ligand_ccd_codes=ligand_ccd_by_pdb_id.get(pdb_id),
+                ligand_smiles_by_ccd=ligand_smiles_by_ccd,
                 parameterizability_by_ligand=parameterizability_by_ligand,
                 meeko_parameterizability_by_ligand=meeko_parameterizability_by_ligand,
                 pocket_result=pocket_results.get(pdb_id),
@@ -326,7 +331,8 @@ def build_report_table(
                 weights=weights,
             )
         )
-    return rows
+    # PLAN.md §28 C.4: the table is now actually ranked, not pdb_id-sorted.
+    return rank_report_rows(rows)
 
 
 # The three ExerciseAssessment-valued CandidateReportRow fields, in the
@@ -334,6 +340,41 @@ def build_report_table(
 # explicit list (not re-derived from EXERCISE_NAME imports) so
 # core/report_schema.py's drift test has one place to check this against.
 _EXERCISE_FIELDS = ("modeling", "md_simulation", "docking")
+
+
+def rank_report_rows(rows: list[CandidateReportRow]) -> list[CandidateReportRow]:
+    """Order the report by usefulness to an instructor picking proteins (PLAN.md §28 C.4).
+
+    §1/§8, ``README.md`` and this module's own docstring have always promised a *ranked*
+    table; until now ``build_report_table`` returned candidates in ``pdb_id`` order, i.e.
+    alphabetically. The natural ranking key would have been the difficulty score, but
+    W3.2 retired two of its three predictors as non-discriminating (§27d), so ranking on
+    it would have meant ranking on a number that does not predict.
+
+    This key uses only what is actually measured, most significant first:
+
+    1. **How many exercises the candidate really passes** (``suitable_for``). A protein
+       usable for all three is worth more to a course than one usable for one.
+    2. **How much of it has actually been validated** -- an exercise with a real verdict
+       outranks one still ``not_run``, so evidence beats absence rather than tying with it.
+    3. **Literature richness** (Europe PMC count, descending). A well-studied protein is
+       better teaching material, and this is the first consumer this stage has ever had:
+       2,473 requests were being made per run and fed nothing (§28a F-C). ``None``
+       ("couldn't ask") sorts below a real ``0`` ("no papers"), never silently equal to it.
+    4. ``pdb_id``, purely so the order is deterministic.
+    """
+    def key(row: CandidateReportRow) -> tuple[int, int, int, str]:
+        n_validated = sum(
+            1
+            for field in _EXERCISE_FIELDS
+            if getattr(row, field).status != "not_run"
+        )
+        literature = -1 if row.literature_count is None else row.literature_count
+        return (-len(row.suitable_for), -n_validated, -literature, row.pdb_id)
+
+    return sorted(rows, key=key)
+
+
 
 
 def _flatten_row(row: CandidateReportRow) -> dict[str, object]:

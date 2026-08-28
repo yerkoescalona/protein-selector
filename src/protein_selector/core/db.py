@@ -263,6 +263,21 @@ CREATE TABLE IF NOT EXISTS ligand_ccd_codes (
 )
 """
 
+# Keyed by ccd_code, NOT (pdb_id, ccd_code) -- a chemical component's SMILES is a
+# property of the component itself, not of any entry that happens to bind it (same
+# reasoning as parameterizability/meeko_parameterization being keyed by ligand_id).
+# A NULL `smiles` means "asked, RCSB had none", which is a real answer and distinct
+# from an absent row ("never asked") -- the same int|None discipline as `literature`
+# (PLAN.md §28 C.6). Before this table existed, SMILES were fetched three separate
+# times and persisted nowhere, so the report's own `ligand_smiles` column was empty
+# for every row and S1.4's analysis had to re-fetch them live.
+_LIGAND_SMILES_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ligand_smiles (
+    ccd_code TEXT PRIMARY KEY,
+    smiles TEXT
+)
+"""
+
 # Keyed by uniprot_accession, NOT pdb_id -- an AlphaFold DB entry is a
 # property of the UniProt sequence, not any particular PDB entry (the same
 # accession can back multiple PDB entries, e.g. different crystal forms of
@@ -310,6 +325,7 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_VALIDATION_EXERCISE_INDEX_SCHEMA)
     _ensure_validation_run_id_column(conn)
     _ensure_validation_docking_detail_columns(conn)
+    conn.execute(_LIGAND_SMILES_TABLE_SCHEMA)
     conn.execute(_RUNS_TABLE_SCHEMA)
     try:
         yield conn

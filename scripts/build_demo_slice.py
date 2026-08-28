@@ -192,6 +192,21 @@ def build_demo_slice(
                         )
                     logger.info("  %-20s %d rows", table, len(rows))
 
+                # ligand_smiles is keyed by ccd_code alone (PLAN.md §28 C.6) -- same
+                # ligand-grain reachability, different column name, so it can't join
+                # the loop above.
+                smiles_rows = source_conn.execute(
+                    f"SELECT ccd_code, smiles FROM ligand_smiles WHERE ccd_code IN "
+                    f"({ligand_placeholders})",
+                    tuple(ligand_ids),
+                ).fetchall()
+                if smiles_rows:
+                    dest_conn.executemany(
+                        "INSERT INTO ligand_smiles (ccd_code, smiles) VALUES (?, ?)",
+                        smiles_rows,
+                    )
+                logger.info("  %-20s %d rows", "ligand_smiles", len(smiles_rows))
+
             # alphafold_entries is keyed by uniprot_accession, reached via candidates'
             # own uniprot_ids JSON column.
             import json

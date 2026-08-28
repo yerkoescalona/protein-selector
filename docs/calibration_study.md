@@ -38,7 +38,7 @@ full, non-demo-slice numbers on the one predictor (md_simulation) still live.
 - n_missing_predicted (decided, no predicted_difficulty): 0
 - n_scored (decided AND predicted_difficulty known -- used below): 299
 - base fail rate (over n_decided): 1.0%
-- discrimination (AUC, predicted_difficulty ranking fail above pass): **0.431** (95% CI [0.084, 0.685])
+- discrimination (AUC, predicted_difficulty ranking fail above pass): **0.431** (95% CI [0.088, 0.682])
 
 | tier | n | pass | fail | fail rate |
 |---|---|---|---|---|

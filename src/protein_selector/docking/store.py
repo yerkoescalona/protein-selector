@@ -7,6 +7,7 @@ upsert/load functions for tables this domain owns.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -198,3 +199,33 @@ def load_ligand_ccd_codes(db_path: Path = DEFAULT_DB_PATH) -> dict[str, list[str
     for pdb_id, ccd_code in rows:
         result.setdefault(pdb_id, []).append(ccd_code)
     return result
+
+
+def upsert_ligand_smiles(
+    smiles_by_ccd_code: Mapping[str, str | None], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Persist CCD code -> SMILES (PLAN.md §28 C.6).
+
+    ``None`` is stored as SQL NULL and means "asked, RCSB had none" -- a real answer,
+    distinct from an absent row ("never asked"). Upsert, like every other write here.
+    """
+    if not smiles_by_ccd_code:
+        return
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO ligand_smiles (ccd_code, smiles)
+            VALUES (?, ?)
+            ON CONFLICT(ccd_code) DO UPDATE SET smiles=excluded.smiles
+            """,
+            [(code, smiles) for code, smiles in smiles_by_ccd_code.items()],
+        )
+
+
+def load_ligand_smiles(db_path: Path = DEFAULT_DB_PATH) -> dict[str, str | None]:
+    """Load every persisted CCD code -> SMILES mapping."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute("SELECT ccd_code, smiles FROM ligand_smiles").fetchall()
+    return {row[0]: row[1] for row in rows}
