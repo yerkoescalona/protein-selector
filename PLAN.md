@@ -1687,13 +1687,17 @@ unchanged from §25d. 2,830 marker files in `results/`. The
 
 ### 28b. Gate A — land the tree
 
-- [ ] **A.1** Commit the in-flight work as logical commits: (i) provenance layer; (ii)
-      calibration + the `difficulty.py` retirements; (iii) demo slice + report script +
-      README/INSTALL split; (iv) citability (`LICENSE`, `CITATION.cff`, CI); (v) the
-      `models.py` network-at-import fix; (vi) infra (WAL, index, thread pool, fpocket
-      scratch cleanup). **Deliberately left for the user** — `.claude/CLAUDE.md` requires an
-      explicit per-turn commit instruction, and "execute the plan" is not one.
-      *Done when:* `git status` is clean except deliberately ignored artifacts.
+- [x] **A.1** (2026-08-29) Landed as 8 logical commits on branch
+      `audit/measurement-validity`: infra/perf (S3.1/S5.x/S7.1) -> provenance (W2.x)
+      -> calibration + retirements + the network-free join (W3.x/W1.2) -> demo slice
+      and zero-setup path (W1.x, D.1) -> citability + CI (W5.x, D.3) -> the §28
+      measurement fixes (B.1/B.2/B.3/C.1) -> this audit and task list -> the §25b file
+      moves. **Stated honestly:** three files (`core/db.py`, `core/validation_result.py`,
+      `core/validation_store.py`) carry both W2.x and §28 B.3 changes whose hunks
+      interleave, so they land whole in the provenance commit with the overlap named in
+      its message rather than being split by rewriting the same files twice.
+      **Done when verified:** `git status` clean, `make check` green on the committed
+      tree (405 passed, 2 skipped, ruff/ty clean).
 - [x] **A.2** (2026-08-28) `2r43.cif` moved to `cache/` (already gitignored); the three
       dated pipeline outputs moved from `scripts/` to `results/`. **Done when verified:**
       `ls scripts/` is 16 source files (`.py`/`.sql`/`.md` briefs/`requirements-colab.*`)
