@@ -187,14 +187,14 @@ src/protein_selector/
                                  designing/mutating one are different pedagogical
                                  purposes.
   stages/                         PLAN.md §16's per-stage decomposition — one
-                                 `run_<stage>_stage(config, db_path)` function per Snakemake
+                                 `run_<stage>_stage(config, db_path)` function per pipeline
                                  rule, each a thin, independently testable wrapper calling
                                  its domain function(s) directly (config.py holds the
                                  relocated `CandidateSearchConfig`/`CandidateFilterConfig`/
                                  `ModelingLookupConfig`/`MdSimulationConfig`/
                                  `PocketDetectionConfig`/`DockingConfig` dataclasses).
                                  `pipeline.py` still exists (§16 Phase C, deleting it, is
-                                 not done) but every Snakemake rule calls a `stages/`
+                                 not done) but every runner calls a `stages/`
                                  function directly, never `run_pipeline`. **PLAN.md §17
                                  additions:** `docking_common.py` (`resolve_docking_target`
                                  — the ONE function that decides "is this candidate
@@ -211,50 +211,29 @@ src/protein_selector/
                                  `notebooks/run_real_pipeline.ipynb`. Migrating those onto the
                                  stage functions and deleting this file is open, tracked work,
                                  not done -- see PLAN.md §25c'.
-Snakefile                       Snakemake DAG (PLAN.md §16, one rule per cheap-lane stage —
-                                 supersedes §15's black-box `metadata_lane`): `search_candidates`
-                                 -> `simulability` -> `ligands`/`literature`/`modeling` (run
-                                 concurrently) -> `parameterizability`/`meeko`/`pocket_detect`
-                                 (run concurrently) -> `docking_shortlist`, plus the two
-                                 per-candidate slow-lane rules `md_validate {pdb_id}` and
-                                 `dock_validate {pdb_id}` (PLAN.md §17), all feeding `report`
-                                 (core.report.build_report_table/write_report_csv). Snakemake
-                                 owns DAG/scheduling/resume; cache/protein_selector.db
-                                 (SQLite, unchanged) stays the actual result store — the
-                                 Snakefile only tracks *completion* via shortlist/marker
-                                 files, never duplicates a result into a data file (§15b).
-                                 `shortlist.txt`/`docking_shortlist.txt` are frozen
-                                 determinism anchors (§16c/§17c) for the two per-candidate
-                                 fan-outs, each needing a first invocation to exist before
-                                 `--config run_md=true`/`run_dock=true` expands the fan-out.
-                                 Config in workflow/config.yaml (db path, candidate-search/
-                                 filter overrides, dock_box_padding/dock_exhaustiveness);
-                                 run via `make workflow` or `snakemake --cores N`. Needs the
-                                 `workflow` dependency group (`uv sync --group workflow`),
-                                 not installed by a plain `uv sync` — same pattern as
-                                 `notebook`/`webapp`.
-workflow/scripts/               Snakemake `script:` targets, one per rule (search_candidates.py,
-                                 simulability.py, ligands.py, literature.py, modeling.py,
-                                 parameterizability.py, meeko.py, pocket_detect.py,
-                                 docking_shortlist.py, md_validate.py, dock_validate.py,
-                                 report.py) -- every rule uses `script:`, never `run:`: a real,
-                                 live-discovered incompatibility (see search_candidates.py's
-                                 docstring) where Snakemake 9.x's own asyncio event loop
-                                 conflicts with rcsb-api's internal `asyncio.run()` call if
-                                 the rule body executes in-process (`run:`). `script:` runs
-                                 each rule in its own subprocess instead. `md_validate.py`/
-                                 `dock_validate.py` additionally rely on `script:` for the
-                                 `conda:` directive (only applies to `shell:`/`script:`/
-                                 `wrapper:` rules) and both follow the same
-                                 marker-only-on-real-result discipline (no `touch()` on the
-                                 rule's `output:` — the script creates the marker itself,
-                                 only when a real ValidationResult was persisted, so a
-                                 genuinely unavailable conda env fails loudly via
-                                 `MissingOutputException` instead of caching a false "done").
-                                 Excluded from ruff/ty (see pyproject.toml) -- Snakemake
-                                 injects a `snakemake` object into each script's globals at
-                                 run time, not statically resolvable, same reason
-                                 notebooks/`display()` and app/ are excluded.
+runners/                        **The orchestrator (PLAN.md §31-§33).** `ray_runner.py`
+                                expresses the whole pipeline as a plain Python DAG on Ray
+                                Core -- `@ray.remote` tasks with ObjectRef dependencies,
+                                cheap lane then the per-candidate slow lanes (md ->
+                                pocket -> dock -> complex_md). NEVER `ray.workflow`, which
+                                is deprecated (§30c). `plan_pipeline`/`format_plan` are the
+                                dry run and need base deps only -- the plan is a query
+                                against the store, not a walk over file mtimes.
+                                `status_board.py` (§32) is a detached Ray actor giving the
+                                live per-step view the store structurally cannot: which
+                                step is running, which FAILED (a failure persists no row),
+                                and per-step timing. **The board is a view, never an
+                                authority -- nothing reads it to decide whether to run
+                                work.** Run via `make ray-plan`/`ray-run`/`ray-status`;
+                                needs the `ray` dependency group. Slow lanes need the
+                                driver launched from the validation conda env (workers
+                                inherit the driver's interpreter -- simpler than a
+                                per-rule env directive, live-verified §33).
+                                **Snakemake was REMOVED 2026-08-29 (§33)** after both
+                                runners were shown to produce byte-identical stores over
+                                the same inputs; resume never lived in the orchestrator
+                                (§31a), so the swap was safe. §15-§22 remain valid as
+                                design rationale, not as a runbook.
 scripts/                       benchmark_pipeline.py — manual live-API diagnostic, not a
                                 pytest test (see its docstring)
 notebooks/                     db_explorer.ipynb — a static (not a live dashboard) notebook
@@ -656,7 +635,7 @@ pipeline against a random hard-filters sample.
 - **Pipeline orchestration (`pipeline.py`): implemented, config grouped into dataclasses
   (2026-07-06).** `run_pipeline()` wires hard filters → simulability → ligand CCD/SMILES
   → RDKit parameterizability (+ best-effort Meeko) → literature → AlphaFold DB lookup →
-  the joined report/CSV, script-first per PLAN.md §7's decision (not Snakemake).
+  the joined report/CSV, script-first per PLAN.md §7's decision.
   **Real refactor, not just a rename:** the old flat parameter list (`run_ex02`,
   `run_ex03`, `ex03_n_steps`, ...) is now five per-stage dataclasses —
   `HardFilterConfig`, `SimulabilityConfig`, `ModelingLookupConfig`, `MdSimulationConfig`,

@@ -97,9 +97,6 @@ webapp = [
 ray = [
     "ray>=2.40",
 ]
-workflow = [
-    "snakemake>=9.23.1",
-]
 
 [build-system]
 requires = ["hatchling"]
@@ -124,7 +121,6 @@ exclude = [
     "app",  # thin Dash view script (PLAN.md §14) -- no business logic, same
     # "not linted" treatment as notebooks/; the logic it calls into
     # (src/protein_selector/webapp/) is linted/typed/tested normally.
-    "workflow",  # Snakemake `script:` targets (PLAN.md §15) -- thin glue only,
     # same "not linted" treatment as app/; the logic they call into
     # (src/protein_selector/pipeline.py, core/report.py) is linted normally.
     "scripts/colab_*.py",  # `# %%`-cell scripts meant to be pasted into / converted to
@@ -163,14 +159,7 @@ root = ["src", "tests"]
 # not resolvable statically -- same reason notebooks/ is excluded from ruff.
 # `app/` isn't under `root` (src, tests) above, so it's already out of scope
 # for ty -- listed here too for documentation, same as notebooks/.
-# `workflow/` (PLAN.md §15): Snakemake injects a `snakemake` object into each
-# `script:` target's global namespace at run time -- same "not statically
-# resolvable" reason as notebooks' `display()`.
-# `scripts/colab_*.py`: `# %%`-cell scripts for Google Colab -- they deliberately import
-# conda-only packages (openff, openmmforcefields) that are absent from this repo's venv by
-# design, so every such import is an unresolvable-by-construction diagnostic here. Excluded
-# from ruff for the same reason (see [tool.ruff]'s exclude).
-exclude = ["notebooks", "app", "workflow", "scripts/colab_*.py"]
+exclude = ["notebooks", "app", "scripts/colab_*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -77,7 +77,7 @@ make workflow-complex-md    # + GAFF2/AMBER receptor+ligand complex MD (PLAN.md 
                              #   needs `ambertools` in the conda env, off by default)
 ```
 
-For a single PDB ID, bypassing all Snakemake checkpoints entirely (PLAN.md §22):
+For a single PDB ID, bypassing the run graph entirely (PLAN.md §22):
 
 ```bash
 uv run --extra validate python scripts/validate_one.py 1UBQ

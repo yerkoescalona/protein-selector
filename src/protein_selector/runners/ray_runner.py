@@ -37,7 +37,11 @@ from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.stages.config import (
     CandidateFilterConfig,
     CandidateSearchConfig,
+    ComplexMdSimulationConfig,
+    DockingConfig,
+    MdSimulationConfig,
     ModelingLookupConfig,
+    PocketDetectionConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +61,23 @@ class RayPipelineConfig:
     # these ids are used. Re-sampling silently invalidates every candidate's cached work,
     # so freezing must stay possible -- it is a correctness property, not a convenience.
     candidate_ids: list[str] | None = None
+    # Slow lanes (PLAN.md §31e Y.1). All off by default, exactly as workflow/config.yaml
+    # had them: each needs the validation conda env, so a base-only run must never try.
+    md_simulation: MdSimulationConfig = field(default_factory=MdSimulationConfig)
+    pocket_detection: PocketDetectionConfig = field(default_factory=PocketDetectionConfig)
+    docking: DockingConfig = field(default_factory=DockingConfig)
+    complex_md_simulation: ComplexMdSimulationConfig = field(
+        default_factory=ComplexMdSimulationConfig
+    )
+    # Threads per slow-lane task. OpenMM and Vina each multithread internally, so
+    # (threads x concurrent tasks) must stay inside the physical core count -- the same
+    # oversubscription constraint that drove PLAN.md §15's scheduler requirement, now
+    # expressed as Ray's own `num_cpus` instead of Snakemake's `threads:`.
+    md_threads: int = 2
+    dock_threads: int = 2
+    # PLAN.md's restrict_md_to_dockable (scripts/ligand_filter_fix_brief.md, Problem 3):
+    # only run MD for candidates that have a dockable ligand at all.
+    restrict_md_to_dockable: bool = True
 
 
 @dataclass
@@ -201,7 +222,15 @@ def run_pipeline_on_ray(
     from protein_selector.runners.status_board import board_actor_name, create_board
 
     run_id = run_id or f"ray-{int(time.time())}"
-    steps = ["search", "simulability", "ligands", "literature", "modeling"]
+    steps = ["search", "simulability", "ligands", "literature", "modeling", "chemistry"]
+    if config.md_simulation.enabled:
+        steps.append("md_simulation")
+    if config.pocket_detection.enabled:
+        steps.append("pocket_detection")
+    if config.docking.enabled:
+        steps.append("docking")
+    if config.complex_md_simulation.enabled:
+        steps.append("complex_md_simulation")
     board = create_board(run_id, steps)
     if board is not None:
         logger.info("📋 status board: %s (run_id=%s)", board_actor_name(run_id), run_id)
@@ -271,14 +300,130 @@ def run_pipeline_on_ray(
         _report(board, "mark_completed", "modeling", f"{len(entries)} candidates")
         return len(entries)
 
-    # The whole DAG. Three tasks fan out concurrently from one dependency -- the
-    # Snakefile needs a rule block and an input declaration each to say this.
+    # ---- cheap lane ---------------------------------------------------------
+    # Three tasks fan out concurrently from one dependency. The Snakefile needs a rule
+    # block plus an input declaration each to say this; here it is three `.remote()`
+    # calls on one ObjectRef.
     survivors_ref = _simulability.remote(_search.remote())
-    ray.get([
-        _ligands.remote(survivors_ref),
-        _literature.remote(survivors_ref),
-        _modeling.remote(survivors_ref),
-    ])
+    ligands_ref = _ligands.remote(survivors_ref)
+    ray.get([ligands_ref, _literature.remote(survivors_ref), _modeling.remote(survivors_ref)])
+
+    # ---- ligand chemistry ---------------------------------------------------
+    @ray.remote
+    def _chemistry(_ligands_done: int) -> int:
+        """RDKit sanitization + Meeko parameterization over every persisted CCD code."""
+        from protein_selector.docking.ligands import fetch_smiles_for_ccd_codes
+        from protein_selector.docking.store import (
+            load_ligand_ccd_codes,
+            load_ligand_smiles,
+        )
+        from protein_selector.stages.meeko import run_meeko_stage
+        from protein_selector.stages.parameterizability import (
+            run_parameterizability_stage,
+        )
+
+        _report(board, "mark_running", "chemistry")
+        try:
+            codes = sorted({c for cs in load_ligand_ccd_codes(db_path).values() for c in cs})
+            smiles = load_ligand_smiles(db_path)
+            missing = [c for c in codes if c not in smiles]
+            if missing:
+                smiles = {**smiles, **fetch_smiles_for_ccd_codes(missing)}
+            run_parameterizability_stage(smiles, db_path, force_refresh=config.force_refresh)
+            run_meeko_stage(codes, smiles, db_path, force_refresh=config.force_refresh)
+        except Exception as exc:
+            _report(board, "mark_failed", "chemistry", f"{type(exc).__name__}: {exc}")
+            raise
+        _report(board, "mark_completed", "chemistry", f"{len(codes)} ligands")
+        return len(codes)
+
+    chemistry_ref = _chemistry.remote(ligands_ref)
+
+    # ---- per-candidate slow lanes ------------------------------------------
+    # The dependency chain the Snakefile encodes across three rules plus two checkpoints
+    # (PLAN.md §17c/§18) is just function calls here: md -> pocket -> dock -> complex_md,
+    # per candidate, with no marker files and no fan-out declarations.
+    @ray.remote(num_cpus=config.md_threads)
+    def _md(pdb_id: str, _gate: int) -> bool:
+        from protein_selector.stages.md_simulation import run_md_simulation_stage
+
+        result = run_md_simulation_stage(
+            pdb_id, config.md_simulation, db_path, force_refresh=config.force_refresh
+        )
+        return result is not None and result.status.value == "success"
+
+    @ray.remote
+    def _pocket(pdb_id: str, _md_ok: bool) -> bool:
+        from protein_selector.stages.pocket_detection import run_pocket_detection_stage
+
+        return run_pocket_detection_stage(
+            pdb_id, config.pocket_detection, db_path, force_refresh=config.force_refresh
+        ) is not None
+
+    @ray.remote(num_cpus=config.dock_threads)
+    def _dock(pdb_id: str, _md_ok: bool, _pocket_done: bool) -> bool:
+        from protein_selector.stages.docking import run_docking_stage
+
+        result = run_docking_stage(
+            pdb_id, config.docking, db_path, force_refresh=config.force_refresh
+        )
+        return result is not None and result.status.value == "success"
+
+    @ray.remote(num_cpus=config.md_threads)
+    def _complex_md(pdb_id: str, _dock_done: bool) -> bool:
+        from protein_selector.stages.complex_md_simulation import (
+            run_complex_md_simulation_stage,
+        )
+
+        result = run_complex_md_simulation_stage(
+            pdb_id, config.complex_md_simulation, db_path,
+            force_refresh=config.force_refresh,
+        )
+        return result is not None and result.status.value == "success"
+
     survivors = ray.get(survivors_ref)
-    logger.info("✅ ray cheap lane complete: %d simulability survivors", len(survivors))
+    gate = ray.get(chemistry_ref)
+
+    if config.md_simulation.enabled:
+        from protein_selector.stages.docking_candidates import (
+            run_docking_candidates_stage,
+        )
+
+        md_pool = (
+            run_docking_candidates_stage(survivors, db_path)
+            if config.restrict_md_to_dockable
+            else survivors
+        )
+        _report(board, "mark_running", "md_simulation")
+        md_refs = {p: _md.remote(p, gate) for p in md_pool}
+        md_ok = ray.get(list(md_refs.values()))
+        _report(board, "mark_completed", "md_simulation",
+                f"{sum(md_ok)}/{len(md_pool)} succeeded")
+
+        if config.pocket_detection.enabled:
+            _report(board, "mark_running", "pocket_detection")
+            n = sum(ray.get([_pocket.remote(p, md_refs[p]) for p in md_pool]))
+            _report(board, "mark_completed", "pocket_detection", f"{n}/{len(md_pool)} found")
+
+        if config.docking.enabled:
+            from protein_selector.stages.docking_shortlist import (
+                run_docking_shortlist_stage,
+            )
+
+            shortlist = run_docking_shortlist_stage(md_pool, db_path)
+            _report(board, "mark_running", "docking")
+            dock_refs = {
+                p: _dock.remote(p, md_refs[p], True) for p in shortlist if p in md_refs
+            }
+            dock_ok = ray.get(list(dock_refs.values()))
+            _report(board, "mark_completed", "docking",
+                    f"{sum(dock_ok)}/{len(dock_refs)} succeeded")
+
+            if config.complex_md_simulation.enabled:
+                _report(board, "mark_running", "complex_md_simulation")
+                n = sum(ray.get([_complex_md.remote(p, r) for p, r in dock_refs.items()]))
+                _report(board, "mark_completed", "complex_md_simulation",
+                        f"{n}/{len(dock_refs)} succeeded")
+
+    logger.info("✅ ray pipeline complete: %d simulability survivors", len(survivors))
     return survivors

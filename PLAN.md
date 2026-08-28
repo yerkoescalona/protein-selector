@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§33** | **Snakemake removed (2026-08-29).** Y.1 (slow lanes under Ray, conda-env driver) and Y.2 (both runners produce byte-identical stores) both passed first. 961 lines of orchestration → 643; 2,830 marker files gone. Open cost: Y.4, the SLURM shape. |
 | **§32** | **Run status board (2026-08-29).** The liveness view the store structurally cannot provide — which step is running, which *failed* (a failure persists no row), and per-step timing. Board is a view, never an authority. |
 | **§31** | **Ray runner built and live-verified (2026-08-29).** S4.2 gate passed — the store is a strict superset of the marker files. Cheap lane runs on Ray Core in 7.3 s with zero markers. Snakefile untouched; retirement gated on Y.2. |
 | **§30** | **Execution engine for the design-scale workload (2026-08-29).** **§30e: hardware resolved as SLURM, which demotes Ray** in favour of Snakemake's SLURM executor + sharding (both already planned). `ray.workflow` is deprecated (verified). Polars/Arrow/Spark/Nextflow rejected with measured numbers. Sequencing in §30d/§30e. |
@@ -1986,3 +1987,85 @@ unused and `effort_seconds` only covers validators, not the orchestration around
       per-candidate slow lanes with §31e **Y.1**, where liveness matters far more (hours,
       not seconds). *Done when:* an in-flight `md_validate`/`dock_validate` fan-out is
       visible per candidate.
+
+## 33. Snakemake removed (2026-08-29)
+
+Both gates §31e set were run before anything was deleted.
+
+### 33a. Y.1 — the slow lanes work under Ray
+
+The one real unknown was the conda environment: Snakemake needs a per-rule `conda:`
+directive because each rule is its own process. **Ray workers inherit the driver's
+interpreter**, so launching the driver from the validation env should make every slow-lane
+stage work with no per-task plumbing at all. Live-verified: 3 candidates with no existing
+`md_simulation` row, driven from
+`/home/yerko/miniconda3/envs/protein-selector-validation/bin/python`, produced real
+PDBFixer repair → ForceField → minimization → 50 MD steps in **parallel worker processes**,
+**3/3 succeeded**, rows persisted, board reporting per-step timings. The env question is
+settled and the answer is *simpler* than the Snakefile's.
+
+The full slow-lane chain is ported: `md → pocket → dock → complex_md` per candidate, with
+`restrict_md_to_dockable`, `num_cpus` for the oversubscription constraint that drove §15's
+scheduler requirement, and the §17c/§18 ordering — all as ordinary function calls rather
+than two checkpoints and three rules.
+
+### 33b. Y.2 — the two runners produce the same store
+
+The gate that licensed deletion. Same 25 frozen candidate ids, two copies of the real
+store, one run through Snakemake's cheap lane and one through the Ray runner, then every
+table diffed row-for-row:
+
+```
+alphafold_entries 989 | candidates 25 | entity_composition 25 | ligand_ccd_codes 53
+ligand_smiles 658 | literature 25 | meeko_parameterization 658 | oligomeric_state 25
+openff_parameterization 0 | parameterizability 658 | pocket_detection 17 | runs 0
+simulability 25 | validation 50
+                    ---- all 14 tables identical ----
+Y.2 VERDICT: STORES EQUIVALENT
+```
+
+**Found while setting this up, and worth keeping:** the Snakefile's per-candidate marker
+paths (`results/md/{pdb_id}.done`) are **hardcoded, not config-driven**, so an isolated
+experiment could not be run without touching the real `results/` tree. A small thing that
+neatly illustrates the coupling being removed.
+
+### 33c. What was deleted
+
+| removed | |
+|---|---|
+| `Snakefile` | 472 lines |
+| `workflow/scripts/` | 489 lines, 14 files |
+| `docs/snakemake-workflow.md` | — |
+| `results/{md,dock,pocket,complex_md,stages}/` | **2,830 marker files** |
+| `workflow` dependency group (snakemake) | plus its ruff/ty exclusions |
+| 5 `workflow*` Makefile targets | replaced by 3 `ray-*` |
+
+Kept deliberately: `workflow/config.yaml` (still the run config, read by
+`scripts/run_ray_pipeline.py` so the thresholds have one home) and
+`results/candidate_ids.txt` (the frozen sample, §16c).
+
+**961 lines of orchestration → 643**, and the 14-file script layer collapses to one module.
+The line count is the least of it: what goes with it is `--forcerun report` in every target,
+the `params:` block declared purely so a config flag would be noticed, checkpoint gymnastics
+for fan-out, `script:`-not-`run:` forced by an asyncio conflict with the scheduler's own
+event loop, and a marker/store split that had already drifted (2,357 vs 1,506).
+
+### 33d. On the §15–§22 citations
+
+185 `§15`–`§22` references remain in `src/`, `docs/` and `.claude/`. They are **not** stale:
+those sections record *design decisions* — SQLite as the sole store (§15b), the receptor
+identity (§18), the Vina box from the ligand's own coordinates (§20), the dockability
+predicate (§17a) — and every one of those still holds, because the Ray runner calls the
+same stage functions. Only the *runbook* parts died with the Snakefile's docstring.
+`CONTEXT.md` and `.claude/CLAUDE.md` now say this explicitly so a reader is not misled.
+
+### 33e. Open
+
+- [ ] **Y.4** SLURM shape (§30e): one `sbatch` allocation running head+workers, versus the
+      many small right-sized jobs Snakemake's executor would have submitted. *Done when:*
+      the trade-off is measured on the real cluster, not assumed. **This is the one place
+      the removal genuinely costs something**, and it is now unhedged.
+- [ ] **Y.5** `pipeline.py` (§25c') is now the only other orchestration path left. With
+      Snakemake gone the case for retiring it is stronger, not weaker. *Done when:* its 17
+      tests and `notebooks/run_real_pipeline.ipynb` are migrated onto the runner or the
+      stage functions.
