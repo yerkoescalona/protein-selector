@@ -21,7 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
-| **§30** | **Execution engine for the design-scale workload (2026-08-29).** Ray Core chosen as a future *second* runner (`ray.workflow` is deprecated — verified); Polars/Arrow/Spark/Nextflow rejected with measured numbers. Sequencing in §30d. |
+| **§30** | **Execution engine for the design-scale workload (2026-08-29).** **§30e: hardware resolved as SLURM, which demotes Ray** in favour of Snakemake's SLURM executor + sharding (both already planned). `ray.workflow` is deprecated (verified). Polars/Arrow/Spark/Nextflow rejected with measured numbers. Sequencing in §30d/§30e. |
 | **§29** | **Workflow audit + the stage contract (2026-08-29).** Is Snakemake used well, can a run be observed, and what is a stage's declared input/output? **§29e's P1 (observability) runs ahead of §28 Gate C** -- instrument before the B.5 recompute, not after. |
 | **§28** | **(2026-08-28)** Measurement-validity audit → refined plan (Gates A–E). It **withdraws §27d S2.4** and puts a new "validate the docking label" gate ahead of §27d Phase 3. Full detail: `docs/audit-2026-08-28.md`. |
 | §27d | The previous task list — Phases 0–2 are the completed record; Phases 3–5 are superseded in priority by §28's Gates B–E (Phase 4/5 content itself stands). |
@@ -1754,9 +1754,59 @@ image per worker type is required; and how Ray behaves when a task shells out to
 binary that itself multithreads — §15's Vina/OpenMM oversubscription problem does not
 disappear, it moves.
 
-**Open question that decides more than preference does:** what hardware the design course
-will actually have. University **SLURM** → Parsl or a Snakemake cluster profile (§27d S6.2);
-**standalone GPU boxes** → Ray; **cloud/K8s** → Dagster or Flyte. Worth answering before R.4.
+### 30e. RESOLVED (2026-08-29): the target is SLURM — which demotes Ray
+
+§30c's open hardware question is answered: **the design course will run on SLURM.** That
+changes the recommendation above, so it is revised here rather than left to be discovered.
+
+**Snakemake's SLURM executor plugin is the primary path, and it is already planned work.**
+Verified 2026-08-29 against the Snakemake plugin catalog: `snakemake-executor-plugin-slurm`
+is current and maintained, targets Snakemake >=8.6 (this repo runs 9.23.1), installs via
+pip, is invoked as `snakemake --executor slurm --jobs N`, and maps resources directly to
+`sbatch` — `mem_mb`->`--mem`, `runtime`->`--time` (minutes), `gpu`->`--gpus`,
+`slurm_partition`->`--partition`, `slurm_account`->`--account`. (`--mem` and
+`--mem-per-cpu` are mutually exclusive; declare only one per rule.)
+Source: <https://snakemake.github.io/snakemake-plugin-catalog/plugins/executor/slurm.html>
+
+**Three of Ray's four advantages evaporate on SLURM:**
+
+1. **GPU scheduling** — SLURM does this natively, and better on a *shared* cluster than a
+   Ray allocation nested inside it.
+2. **Weight residency, the strongest Ray argument, has a simpler SLURM answer: batching.**
+   One job loads the model once and processes N designs. That is exactly §27d **S4.1**
+   (shards of ~200), already planned for a different reason and now the right primitive for
+   GPU work too. It captures most of the actor benefit for none of the new machinery.
+3. **Ray-on-SLURM is awkward in practice** — you `sbatch` a static allocation, start
+   head+workers inside it, and Ray schedules within that block, so you hold nodes
+   regardless of utilisation and forfeit SLURM's own per-task queueing. Keeping an actor
+   alive to hold weights means holding a **GPU allocation idle**, which shared-cluster
+   QoS/time limits often penalise.
+
+**What still argues for Ray, honestly:** genuinely intra-round-dynamic loops, where the
+next batch's size and content depend on results computed moments earlier and per-round
+`sbatch` latency dominates. That is real for generative design — but the cruder
+"one job per round, loop in the submission script" is usually adequate, and should be
+shown inadequate *by measurement* before Ray is adopted.
+
+**Revised sequencing.** §30d's R.1/R.2/R.3 stand unchanged — they are the no-regret steps.
+**R.4's Ray spike is demoted below §27d S6.2**, and its trigger sharpens:
+
+- [ ] **R.5** §27d **S6.2** with the SLURM executor plugin, becomes the primary scaling
+      path. Needs real `resources:` numbers, which is §29e **P3**, which needs O.1's
+      `benchmark:` data — so the chain is **O.1 -> P3 -> R.5**, all already planned.
+      *Done when:* the same DAG runs unmodified on this laptop and on the cluster.
+- [ ] **R.6** Refine §27d **S6.1** for SLURM specifically: build the image OCI/Docker, ship
+      it as **Apptainer/Singularity** (`.sif`) — a shared cluster will not grant Docker's
+      root daemon — and drive it from Snakemake's `container:` directive with
+      `--software-deployment-method apptainer`. *Done when:* an MD and a docking job run
+      from the image on the cluster with no conda env built there.
+- [ ] **R.4 (revised, deferred)** Ray spike, only if R.5 is in place and per-round `sbatch`
+      latency or intra-round dynamism is *measured* to be the bottleneck. *Done when:* that
+      bottleneck is a number, not an expectation.
+
+**Net effect: the design course needs far less new architecture than §30c assumed** — a
+cluster profile, resource declarations, sharding, and an Apptainer image, all of which were
+already on the list for other reasons.
 
 **Scope guard (§26.5/§27f):** design work goes in a sibling pipeline sharing the core
 (store, provenance, `ValidationResult`, difficulty scoring), not by growing the screening
