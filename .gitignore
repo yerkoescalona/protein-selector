@@ -6,6 +6,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .ipynb_checkpoints/
+.coverage
 
 # generated candidate/validation output (per-run artifacts, not source)
 *.csv
@@ -16,3 +17,17 @@ cache/
 # Snakemake outputs (PLAN.md §15) -- shortlist/report/markers, not source
 results/
 .snakemake/
+
+# Exception: an accumulating, tracked benchmark log (PLAN.md §27d task S1.1) --
+# scripts/benchmark_pipeline.py appends to this on purpose so throughput is
+# visible over time in git history, unlike the *.csv rule above's per-run
+# scratch output.
+!docs/benchmark_history.csv
+
+# Exception: the committed demo slice (PLAN.md §27d W1.1) -- a real, few-hundred-row
+# sample of cache/protein_selector.db plus the report it produces, so a fresh clone has
+# something real to look at (`make demo`) without running the real pipeline first.
+# Rebuilt via `scripts/build_demo_slice.py`, not hand-edited; re-run and re-commit it
+# deliberately, don't add a second exception pattern here for future demo artifacts.
+!demo/protein_selector_demo.db
+!demo/report_demo.csv
