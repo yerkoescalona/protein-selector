@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "protein-selector"
+abstract: >-
+  An instructor tool for the Structural Bioinformatics Master's course
+  (FHWN Tulln) that finds candidate proteins for MD, docking, and
+  AlphaFold exercises and a-priori validates each candidate by running the
+  real exercise pipelines against it, rather than relying on metadata
+  proxies alone.
+authors:
+  - family-names: "Escalona"
+    given-names: "Yerko"
+version: 0.1.0
+date-released: "2026-08-23"
+repository-code: "https://github.com/yerkoescalona/protein-selector"
+license: MIT

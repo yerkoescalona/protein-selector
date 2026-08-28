@@ -1,0 +1,54 @@
+name: CI
+
+# PLAN.md §27d W5.2: ruff/ty/pytest on the base install -- "base" meaning no conda, not
+# zero extras. `--extra validate` (rdkit/meeko/openmm/pymol-open-source/...) is genuinely
+# pip-installable on a plain Linux runner (verified 2026-08-02, see pyproject.toml's
+# comment on pymol-open-source and scripts/report_versions.py's PACKAGES list) -- only
+# openff-toolkit/ambertools remain conda-only, and the two tests that need them already
+# skip gracefully (test_md_validation.py/test_openff_parameterization.py) rather than
+# failing, so this runner never touches conda at all. Matches this repo's own `make test`
+# convention (Makefile: `uv run --extra validate pytest -q`) -- a bare `uv sync` with zero
+# extras was never the supported/documented test invocation.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync (base + validate extra + dev group, no conda)
+        run: uv sync --extra validate
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Typecheck (ty)
+        run: uv run ty check
+
+      - name: Test (pytest)
+        run: uv run pytest -q
+
+      # PLAN.md §28 D.3. The zero-setup demo and the calibration study are the two
+      # artifacts §26.4 says never to cut, and until now nothing checked them: a schema
+      # change could leave the committed evidence stale and CI stayed green. Both
+      # regenerate from the committed demo slice with base deps only (no conda, no
+      # network), and both are deterministic (calibration's bootstrap takes a fixed
+      # seed), so a diff here is real drift, not flake.
+      - name: Demo artifact is reproducible and in sync
+        run: |
+          make demo
+          git diff --exit-code demo/report_demo.csv
+
+      - name: Calibration study is reproducible and in sync
+        run: |
+          make calibration
+          git diff --exit-code docs/calibration_study.md
