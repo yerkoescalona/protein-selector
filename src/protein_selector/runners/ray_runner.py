@@ -29,6 +29,7 @@ markers were not merely redundant but stale.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -142,10 +143,25 @@ def format_plan(plans: list[StagePlan]) -> str:
     return "\n".join(lines)
 
 
+def _report(board, method: str, *args) -> None:
+    """Send one status update, swallowing every failure (PLAN.md §32's fail-open rule).
+
+    The board is a view, never an authority: a run must behave identically if it is
+    missing, unreachable or broken. Losing status must never lose a run.
+    """
+    if board is None:
+        return
+    try:
+        getattr(board, method).remote(*args)
+    except Exception:  # pragma: no cover - defensive by design
+        pass
+
+
 def run_pipeline_on_ray(
     config: RayPipelineConfig | None = None,
     db_path: Path = DEFAULT_DB_PATH,
     num_cpus: int | None = None,
+    run_id: str | None = None,
 ) -> list[str]:
     """Run the cheap lane as a Ray DAG. Returns the simulability survivors.
 
@@ -179,37 +195,80 @@ def run_pipeline_on_ray(
     if not ray.is_initialized():
         ray.init(num_cpus=num_cpus, logging_level=logging.WARNING, include_dashboard=False)
 
+    # PLAN.md §32: a live view of in-flight work -- the one thing the store cannot report,
+    # since a row only appears once a stage has finished and a failure persists no row at
+    # all. Created best-effort; every subsequent call is fail-open via `_report`.
+    from protein_selector.runners.status_board import board_actor_name, create_board
+
+    run_id = run_id or f"ray-{int(time.time())}"
+    steps = ["search", "simulability", "ligands", "literature", "modeling"]
+    board = create_board(run_id, steps)
+    if board is not None:
+        logger.info("📋 status board: %s (run_id=%s)", board_actor_name(run_id), run_id)
+
     @ray.remote
     def _search() -> list[str]:
-        if config.candidate_ids is not None:
-            return list(config.candidate_ids)
-        entries = run_search_candidates_stage(config.candidate_search)
-        return [e.pdb_id for e in entries]
+        _report(board, "mark_running", "search")
+        try:
+            if config.candidate_ids is not None:
+                ids = list(config.candidate_ids)
+                _report(board, "mark_completed", "search", f"{len(ids)} frozen ids")
+                return ids
+            entries = run_search_candidates_stage(config.candidate_search)
+            _report(board, "mark_completed", "search", f"{len(entries)} fetched")
+            return [e.pdb_id for e in entries]
+        except Exception as exc:
+            _report(board, "mark_failed", "search", f"{type(exc).__name__}: {exc}")
+            raise
 
     @ray.remote
     def _simulability(pdb_ids: list[str]) -> list[str]:
+        _report(board, "mark_running", "simulability")
         entries = [e for p, e in load_candidates(db_path).items() if p in set(pdb_ids)]
-        survivors = run_simulability_stage(entries, config.candidate_filter, db_path)
+        try:
+            survivors = run_simulability_stage(entries, config.candidate_filter, db_path)
+        except Exception as exc:
+            _report(board, "mark_failed", "simulability", f"{type(exc).__name__}: {exc}")
+            raise
+        _report(board, "mark_completed", "simulability", f"{len(survivors)} survivors")
         # Return ids, not CandidateEntry objects: everything downstream re-reads from the
         # store anyway, and ids keep what crosses Ray's object store small and picklable.
         return [e.pdb_id for e in survivors]
 
     @ray.remote
     def _ligands(survivors: list[str]) -> int:
+        _report(board, "mark_running", "ligands")
         entries = [e for p, e in load_candidates(db_path).items() if p in set(survivors)]
-        run_ligands_stage(entries, db_path=db_path)
+        try:
+            run_ligands_stage(entries, db_path=db_path)
+        except Exception as exc:
+            _report(board, "mark_failed", "ligands", f"{type(exc).__name__}: {exc}")
+            raise
+        _report(board, "mark_completed", "ligands", f"{len(entries)} candidates")
         return len(entries)
 
     @ray.remote
     def _literature(survivors: list[str]) -> int:
-        run_literature_stage(survivors, db_path, force_refresh=config.force_refresh)
+        _report(board, "mark_running", "literature")
+        try:
+            run_literature_stage(survivors, db_path, force_refresh=config.force_refresh)
+        except Exception as exc:
+            _report(board, "mark_failed", "literature", f"{type(exc).__name__}: {exc}")
+            raise
+        _report(board, "mark_completed", "literature", f"{len(survivors)} candidates")
         return len(survivors)
 
     @ray.remote
     def _modeling(survivors: list[str]) -> int:
+        _report(board, "mark_running", "modeling")
         entries = [e for p, e in load_candidates(db_path).items() if p in set(survivors)]
-        run_modeling_stage(entries, config.modeling_lookup, db_path,
+        try:
+            run_modeling_stage(entries, config.modeling_lookup, db_path,
                            force_refresh=config.force_refresh)
+        except Exception as exc:
+            _report(board, "mark_failed", "modeling", f"{type(exc).__name__}: {exc}")
+            raise
+        _report(board, "mark_completed", "modeling", f"{len(entries)} candidates")
         return len(entries)
 
     # The whole DAG. Three tasks fan out concurrently from one dependency -- the

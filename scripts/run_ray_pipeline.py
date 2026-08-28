@@ -54,10 +54,29 @@ def main() -> None:
     parser.add_argument("--ids", type=Path, help="frozen candidate id list (PLAN.md §16c)")
     parser.add_argument("--plan", action="store_true", help="dry run: what would be done")
     parser.add_argument("--run", action="store_true", help="execute the Ray DAG")
+    parser.add_argument("--status", metavar="RUN_ID",
+                        help="print the live status board for a run (PLAN.md §32)")
+    parser.add_argument("--run-id", help="name this run, so --status can find its board")
     parser.add_argument("--cpus", type=int, default=None)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if args.status:
+        # Attaches to an existing cluster to read a detached board -- deliberately does
+        # not start one, so asking for status can never launch a cluster by accident.
+        import ray
+
+        from protein_selector.runners.status_board import format_board, get_board
+
+        ray.init(address="auto", logging_level=logging.WARNING)
+        board = get_board(args.status)
+        if board is None:
+            print(f"no status board found for run {args.status!r} "
+                  "(the run may have finished and its cluster shut down)")
+            return
+        print(format_board(ray.get(board.snapshot.remote())))
+        return
 
     if args.plan or not args.run:
         print(format_plan(plan_pipeline(args.db_path)))
@@ -76,6 +95,7 @@ def main() -> None:
         ),
         db_path=args.db_path,
         num_cpus=args.cpus,
+        run_id=args.run_id,
     )
     print(f"{len(survivors)} simulability survivors")
 

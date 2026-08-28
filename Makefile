@@ -1,4 +1,4 @@
-.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run workflow workflow-md workflow-dock workflow-all provenance clean
+.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-status workflow workflow-md workflow-dock workflow-all provenance clean
 
 # Base env + the validate extra (rdkit/meeko/...) + the webapp deps group --
 # what `make test`/`make serve` below both need. `uv sync` alone (no flags)
@@ -128,6 +128,13 @@ ray-plan:
 
 ray-run:
 	./.venv/bin/python scripts/run_ray_pipeline.py --run --ids results/candidate_ids.txt
+
+# PLAN.md §32: the live view of an in-flight run -- which step is running, which failed,
+# and how long each took. The store cannot answer any of those: a row only appears once a
+# stage FINISHES, and a failure persists no row at all. Needs a running cluster
+# (RUN=<run_id> must match the id the run was launched with).
+ray-status:
+	./.venv/bin/python scripts/run_ray_pipeline.py --status $(RUN)
 
 clean:
 	rm -rf .pytest_cache .ruff_cache

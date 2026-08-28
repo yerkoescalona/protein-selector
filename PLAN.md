@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§32** | **Run status board (2026-08-29).** The liveness view the store structurally cannot provide — which step is running, which *failed* (a failure persists no row), and per-step timing. Board is a view, never an authority. |
 | **§31** | **Ray runner built and live-verified (2026-08-29).** S4.2 gate passed — the store is a strict superset of the marker files. Cheap lane runs on Ray Core in 7.3 s with zero markers. Snakefile untouched; retirement gated on Y.2. |
 | **§30** | **Execution engine for the design-scale workload (2026-08-29).** **§30e: hardware resolved as SLURM, which demotes Ray** in favour of Snakemake's SLURM executor + sharding (both already planned). `ray.workflow` is deprecated (verified). Polars/Arrow/Spark/Nextflow rejected with measured numbers. Sequencing in §30d/§30e. |
 | **§29** | **Workflow audit + the stage contract (2026-08-29).** Is Snakemake used well, can a run be observed, and what is a stage's declared input/output? **§29e's P1 (observability) runs ahead of §28 Gate C** -- instrument before the B.5 recompute, not after. |
@@ -1903,3 +1904,85 @@ unverified. **Nothing is deleted:** the Snakefile is untouched and still the pro
 - [ ] **Y.4** SLURM shape for Ray (§30e): one `sbatch` allocation running head+workers, vs.
       Snakemake's many small jobs. *Done when:* the trade-off is measured on the real
       cluster, not assumed.
+
+## 32. Run status board (2026-08-29)
+
+### 32a. Why the store is not enough — a correction to §31's own reasoning
+
+§31a used the stale marker files to argue that a second source of run state is a mistake,
+and that argument was **over-applied**. It conflated two different questions.
+
+`cache/protein_selector.db` is the authority on what is **done**: a row appears when a
+stage finishes. That makes it unable to answer three things that matter while a run is in
+flight:
+
+1. **which step is running right now** — the store shows nothing until it finishes;
+2. **which step failed** — a failure persists *no row at all*, so the store shows an
+   absence that is indistinguishable from "never started". This is the important one:
+   the store structurally cannot represent failure;
+3. **how long each step took** — §29b already found there is no per-job runtime anywhere
+   (`.snakemake/metadata` timings were unusable: 1,120 of 1,509 `md_validate` records had
+   zero or negative durations).
+
+The marker files were a *completion ledger* competing with the store and they lost. A
+status board is a *liveness view* answering questions the store never claimed. Different
+thing.
+
+### 32b. The invariant that stops this becoming the marker files again
+
+> **The board is a VIEW, never an authority. Nothing may ever read it to decide whether
+> to run work.**
+
+Skip decisions stay exactly where they are — each stage asks the store (§31a). If the
+board is missing, unreachable, killed, or was never created, the run must behave
+identically. Every board call in the runner therefore goes through `_report`, which
+swallows all exceptions: **losing status must never lose a run.** Tests assert the
+degradation path directly (`get_board`/`create_board` return `None` rather than raising
+when Ray isn't running).
+
+### 32c. What was built
+
+- **`runners/status_board.py`** — `BoardState`, a plain-Python state machine with **no Ray
+  import**, so the whole thing is unit-testable without a cluster; `RunStatusBoard`, a thin
+  detached Ray actor wrapping it; `format_board` for rendering.
+- **Terminal states are locked.** Ray retries tasks, so late and duplicate reports are
+  expected rather than hypothetical: a finished step can never be flipped back to running,
+  and a failure is never overwritten by a later success report.
+- **`run_state` is computed, never stored** — any failed → `failed`; all completed →
+  `completed`; else `running`/`pending`. Storing it would create a fourth field to keep
+  consistent with the rows it summarises, which is the marker-file bug in miniature.
+- **`lifetime="detached"`** so the board outlives the driver script — the point is to be
+  able to ask "what happened" *after* a driver crash.
+- **`make ray-status RUN=<id>`** / `--status`, which attaches to an existing cluster and
+  never starts one, so asking for status cannot launch a cluster by accident.
+
+### 32d. Live verification
+
+Ran the Ray DAG over 50 frozen ids against a copy of the real store with
+`run_id="demo-run"`, then read the board **from a different process** via the named actor:
+
+```
+run demo-run -- completed
+step                      state         seconds  detail
+search                    ✔ completed       0.0  50 frozen ids
+simulability              ✔ completed       0.7  50 survivors
+ligands                   ✔ completed       0.8  50 candidates
+literature                ✔ completed       0.0  50 candidates
+modeling                  ✔ completed       0.0  50 candidates
+```
+
+That is the first per-step timing this project has ever had (§29b/§29a: `benchmark:` is
+unused and `effort_seconds` only covers validators, not the orchestration around them).
+
+### 32e. Known limits, stated rather than discovered later
+
+- [ ] **Z.1** The actor dies with the **cluster head**, not just the driver. Mirror
+      snapshots to storage so a post-mortem survives a cluster restart — writing to the
+      existing `runs` table rather than inventing a new file format. *Done when:* a board
+      readable after `ray stop`.
+- [ ] **Z.2** Ray never garbage-collects named actors. *Done when:* boards are removed at
+      run end, or a janitor reaps ones whose run is finished.
+- [ ] **Z.3** The board currently covers the five cheap-lane steps. Extend to the
+      per-candidate slow lanes with §31e **Y.1**, where liveness matters far more (hours,
+      not seconds). *Done when:* an in-flight `md_validate`/`dock_validate` fan-out is
+      visible per candidate.
