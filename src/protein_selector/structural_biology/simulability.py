@@ -17,9 +17,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from protein_selector.structural_biology.candidates import CandidateEntry
-from protein_selector.structural_biology.composition import (
+from protein_selector.structural_biology.models import (
     AssemblyInfo,
+    CandidateEntry,
     EntityCompositionInfo,
 )
 

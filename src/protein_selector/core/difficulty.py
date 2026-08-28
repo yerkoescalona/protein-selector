@@ -29,9 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
-from protein_selector.docking.pocket import PocketDetectionResult
-from protein_selector.modeling.alphafold_lookup import AlphaFoldEntry
-from protein_selector.structural_biology.candidates import CandidateEntry
+from protein_selector.structural_biology.models import CandidateEntry
 
 
 @dataclass
@@ -44,10 +42,6 @@ class ScoringWeights:
     md_simulation_size_weight: float = 1 / 3
     md_simulation_resolution_weight: float = 1 / 3
     md_simulation_completeness_weight: float = 1 / 3
-
-    # docking predicted-difficulty proxies.
-    docking_pocket_weight: float = 0.5
-    docking_parameterizability_weight: float = 0.5
 
     # Measured-difficulty effort ceilings (seconds) -- past this, measured
     # difficulty saturates at 1.0. Deliberately not derived from one
@@ -84,21 +78,25 @@ def _weighted_average(components: list[tuple[float | None, float]]) -> float | N
     return sum(value * weight for value, weight in present) / total_weight
 
 
-def predict_modeling_difficulty(alphafold_entry: AlphaFoldEntry | None) -> float | None:
-    """Predicted modeling difficulty: fraction of the AlphaFold model that's low-confidence.
+def predict_modeling_difficulty() -> float | None:
+    """Retired (PLAN.md §27d W3.2, confirmed circular by **A8**/W3.1) -- always ``None``.
 
-    Directly bounded [0, 1] already (it's a fraction), so no weighting is
-    needed here, unlike md_simulation/docking below. Returns ``None`` if no AlphaFold DB
-    entry exists at all -- that's a ``FailureMode.COMPLETENESS`` validation
-    failure (``modeling_validation.py``), not a difficulty *score*; the two
-    are deliberately distinct so a missing entry isn't silently treated as
-    either "easy" or "hard."
+    The original formula scored ``fraction_plddt_very_low + fraction_plddt_low`` from the
+    fetched ``AlphaFoldEntry``, but ``modeling_validation.run_modeling_validation`` (the
+    thing supposedly being predicted) fails exactly when that same sum crosses a fixed
+    threshold -- both read the same one AFDB record, so a perfect calibration AUC (1.000,
+    measured on both the demo slice and the real store) proved the two formulas agree, not
+    that the proxy predicts anything the validator doesn't already compute directly. There
+    is no meaningful *predicted* stage for modeling: by the time an ``AlphaFoldEntry`` is
+    fetched, the real answer already exists. Kept as a no-arg function (not deleted)
+    purely so ``core.report``'s call site and ``core.report_schema``'s symmetric
+    per-exercise column set don't need special-casing -- ``modeling_predicted_difficulty``
+    stays a real, always-empty column, an honest "not available" rather than a fabricated
+    number. The AlphaFold DB's own real, non-circular signals
+    (``modeling_alphafold_mean_plddt``, ``modeling_alphafold_low_confidence_fraction``)
+    remain first-class report columns -- only the derived, circular composite is gone.
     """
-    if alphafold_entry is None:
-        return None
-    return _clamp01(
-        alphafold_entry.fraction_plddt_very_low + alphafold_entry.fraction_plddt_low
-    )
+    return None
 
 
 def predict_md_simulation_difficulty(
@@ -139,38 +137,29 @@ def predict_md_simulation_difficulty(
     )
 
 
-def predict_docking_difficulty(
-    pocket_result: PocketDetectionResult | None,
-    ligand_parameterizable: bool | None,
-    weights: ScoringWeights | None = None,
-) -> float | None:
-    """Predicted docking difficulty: pocket druggability + ligand parameterizability.
+def predict_docking_difficulty() -> float | None:
+    """Retired (PLAN.md §27d W3.2, confirmed by **A8**/W3.1) -- always ``None``.
 
-    Returns ``None`` if neither a pocket result nor a parameterizability
-    verdict is available -- nothing to score. Either input missing on its
-    own just drops out of the weighted average (renormalized over what's
-    present), rather than forcing a guess.
+    The original formula weighted-averaged a pocket-druggability component (from fpocket,
+    already established purely descriptive and non-gating by §20/**A7**) with a ligand
+    Meeko-parameterizability component. Calibration (W3.1) found no real discrimination
+    for the combined formula on the real store (AUC 0.532, 95% CI [0.470, 0.592],
+    crossing 0.5). Live-verified before retiring, not assumed (W3.2, 2026-08-23): neither
+    component alone does any better -- pocket-only AUC 0.545 [0.487, 0.603],
+    parameterizability-only AUC 0.497 [0.451, 0.543] -- and two features S1.4 found
+    genuinely correlated with docking *effort* (heavy-atom count, rotatable-bond count;
+    live SMILES fetch + RDKit, same 407-ligand real population) turned out **not** to
+    predict pass/fail either: AUC 0.499 [0.441, 0.558] and 0.530 [0.474, 0.588]
+    respectively, both crossing 0.5. No available pre-validation signal discriminates
+    docking outcome. Per PLAN.md §26.3's own stated judgement ("publishing a negative
+    result and removing a feature is a stronger adoption signal than a plausible score
+    that does not survive its own data"), dropped rather than shipped with a fabricated
+    confidence. Kept as a no-arg function for the same report/schema-symmetry reason as
+    ``predict_modeling_difficulty``. The real, raw signals
+    (``pocket_druggability_score``, ``ligand_meeko_parameterizable``) remain first-class
+    report columns -- only the derived, non-discriminating composite is gone.
     """
-    weights = weights or ScoringWeights()
-
-    pocket_component = None
-    if pocket_result is not None and pocket_result.pockets:
-        druggability_scores = [
-            p.druggability_score for p in pocket_result.pockets if p.druggability_score is not None
-        ]
-        if druggability_scores:
-            pocket_component = _clamp01(1.0 - max(druggability_scores))
-
-    parameterizability_component = (
-        None if ligand_parameterizable is None else (0.0 if ligand_parameterizable else 1.0)
-    )
-
-    return _weighted_average(
-        [
-            (pocket_component, weights.docking_pocket_weight),
-            (parameterizability_component, weights.docking_parameterizability_weight),
-        ]
-    )
+    return None
 
 
 def measured_difficulty(

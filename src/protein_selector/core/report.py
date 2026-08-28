@@ -56,8 +56,10 @@ from protein_selector.modeling.store import load_alphafold_entries
 from protein_selector.molecular_dynamics.md_validation import (
     EXERCISE_NAME as MD_SIMULATION_EXERCISE,
 )
-from protein_selector.structural_biology.candidates import CandidateEntry
-from protein_selector.structural_biology.composition import EntityCompositionInfo
+from protein_selector.structural_biology.models import (
+    CandidateEntry,
+    EntityCompositionInfo,
+)
 from protein_selector.structural_biology.simulability import SimulabilityResult
 from protein_selector.structural_biology.store import (
     load_candidates,
@@ -205,15 +207,13 @@ def build_candidate_report(
         else None
     )
 
-    predicted_modeling = predict_modeling_difficulty(alphafold_entry)
+    # predict_modeling_difficulty/predict_docking_difficulty are retired (PLAN.md §27d
+    # W3.2, confirmed non-discriminating by A8/W3.1) -- both always return None now, kept
+    # as no-arg functions so this call site and report_schema's symmetric per-exercise
+    # column set don't need special-casing.
+    predicted_modeling = predict_modeling_difficulty()
     predicted_md_simulation = predict_md_simulation_difficulty(candidate, weights)
-    # Prefer the Meeko verdict over RDKit-sanitization when both are available (.claude/CLAUDE.md).
-    docking_parameterizable = (
-        ligand_meeko_parameterizable
-        if ligand_meeko_parameterizable is not None
-        else ligand_rdkit_parameterizable
-    )
-    predicted_docking = predict_docking_difficulty(pocket_result, docking_parameterizable, weights)
+    predicted_docking = predict_docking_difficulty()
 
     modeling = assess_exercise(
         predicted_modeling, modeling_result, weights.modeling_max_effort_seconds, weights

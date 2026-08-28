@@ -10,9 +10,9 @@ import json
 from pathlib import Path
 
 from protein_selector.core.db import DEFAULT_DB_PATH, connect
-from protein_selector.structural_biology.candidates import CandidateEntry
-from protein_selector.structural_biology.composition import (
+from protein_selector.structural_biology.models import (
     AssemblyInfo,
+    CandidateEntry,
     EntityCompositionInfo,
 )
 from protein_selector.structural_biology.simulability import SimulabilityResult

@@ -23,38 +23,14 @@ from protein_selector.core.validation_result import (
     ValidationResult,
     ValidationStatus,
 )
-from protein_selector.docking.pocket import PocketDetectionResult, PocketInfo
-from protein_selector.modeling.alphafold_lookup import AlphaFoldEntry
 from protein_selector.structural_biology.candidates import CandidateEntry
 
 
-def _alphafold_entry(low=0.0, very_low=0.0) -> AlphaFoldEntry:
-    return AlphaFoldEntry(
-        uniprot_accession="P00000",
-        entry_id="AF-P00000-F1",
-        mean_plddt=90.0,
-        fraction_plddt_very_low=very_low,
-        fraction_plddt_low=low,
-        fraction_plddt_confident=0.0,
-        fraction_plddt_very_high=1.0 - low - very_low,
-        pdb_url="https://example.org/model.pdb",
-        cif_url="https://example.org/model.cif",
-        pae_doc_url="https://example.org/pae.json",
-        model_created_date="2025-01-01T00:00:00Z",
-    )
-
-
 class TestPredictEx02Difficulty:
-    def test_no_entry_returns_none(self):
-        assert predict_modeling_difficulty(None) is None
-
-    def test_high_confidence_entry_is_low_difficulty(self):
-        entry = _alphafold_entry(low=0.007, very_low=0.0)
-        assert predict_modeling_difficulty(entry) == pytest.approx(0.007)
-
-    def test_low_confidence_entry_is_high_difficulty(self):
-        entry = _alphafold_entry(low=0.3, very_low=0.4)
-        assert predict_modeling_difficulty(entry) == pytest.approx(0.7)
+    def test_retired_always_returns_none(self):
+        # PLAN.md §27d W3.2: confirmed circular by A8/W3.1 (predict and validate both
+        # read the same AlphaFoldEntry) -- retired, always None.
+        assert predict_modeling_difficulty() is None
 
 
 class TestPredictEx03Difficulty:
@@ -101,40 +77,11 @@ class TestPredictEx03Difficulty:
 
 
 class TestPredictEx04Difficulty:
-    def test_no_inputs_returns_none(self):
-        assert predict_docking_difficulty(None, None) is None
-
-    def test_high_druggability_and_parameterizable_ligand_is_easy(self):
-        pocket = PocketDetectionResult(
-            pdb_id="1ABC",
-            passed=True,
-            pockets=[PocketInfo(pocket_number=1, druggability_score=0.9)],
-        )
-        result = predict_docking_difficulty(pocket, ligand_parameterizable=True)
-        assert result == pytest.approx((0.1 + 0.0) / 2)
-
-    def test_low_druggability_and_unparameterizable_ligand_is_hard(self):
-        pocket = PocketDetectionResult(
-            pdb_id="1ABC",
-            passed=False,
-            pockets=[PocketInfo(pocket_number=1, druggability_score=0.05)],
-        )
-        result = predict_docking_difficulty(pocket, ligand_parameterizable=False)
-        assert result == pytest.approx((0.95 + 1.0) / 2)
-
-    def test_pocket_only_renormalizes_over_available_component(self):
-        pocket = PocketDetectionResult(
-            pdb_id="1ABC",
-            passed=True,
-            pockets=[PocketInfo(pocket_number=1, druggability_score=0.8)],
-        )
-        result = predict_docking_difficulty(pocket, ligand_parameterizable=None)
-        assert result == pytest.approx(0.2)
-
-    def test_no_pockets_list_but_parameterizability_known(self):
-        pocket = PocketDetectionResult(pdb_id="1ABC", passed=False, pockets=[])
-        result = predict_docking_difficulty(pocket, ligand_parameterizable=True)
-        assert result == pytest.approx(0.0)
+    def test_retired_always_returns_none(self):
+        # PLAN.md §27d W3.2: confirmed non-discriminating by A8/W3.1 -- neither the
+        # combined formula, its individual components, nor S1.4's ligand-size features
+        # separated pass from fail on the real store. Retired, always None.
+        assert predict_docking_difficulty() is None
 
 
 class TestMeasuredDifficulty:

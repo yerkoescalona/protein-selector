@@ -22,30 +22,26 @@ for assemblies, "{pdb_id}_{entity_id}" for polymer entities.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from rcsbapi.data import DataQuery
 
-from protein_selector.structural_biology.candidates import CandidateEntry
+# AssemblyInfo/EntityCompositionInfo re-exported for backward compatibility -- moved to
+# models.py 2026-08-23 (PLAN.md §27d W1.2, same rationale as candidates.py's own
+# re-export: a caller reading an already-populated store shouldn't have to transitively
+# import rcsbapi.data, which fetches its GraphQL schema over the network unconditionally
+# at import time). This module's own fetch functions below still need the real
+# `rcsbapi.data.DataQuery` import, unchanged.
+from protein_selector.structural_biology.models import (
+    AssemblyInfo,
+    CandidateEntry,
+    EntityCompositionInfo,
+)
 
-
-@dataclass
-class AssemblyInfo:
-    """Oligomeric-state info for one entry's primary assembly."""
-
-    pdb_id: str
-    oligomeric_details: str | None = None
-    oligomeric_count: int | None = None
-
-
-@dataclass
-class EntityCompositionInfo:
-    """Non-standard-residue info for one polymer entity."""
-
-    pdb_id: str
-    entity_id: str
-    nstd_monomer: bool = False
-    non_std_monomer_count: int = 0
+__all__ = [
+    "AssemblyInfo",
+    "EntityCompositionInfo",
+    "fetch_non_standard_residues",
+    "fetch_oligomeric_state",
+]
 
 
 def _primary_assembly_compound_id(entry: CandidateEntry) -> str | None:

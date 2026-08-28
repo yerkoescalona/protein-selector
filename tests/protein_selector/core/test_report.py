@@ -124,6 +124,9 @@ class TestBuildCandidateReport:
         assert row.ligand_meeko_parameterizable is False
 
     def test_predict_docking_prefers_meeko_verdict_over_rdkit_when_both_present(self):
+        # docking.predicted_difficulty itself is retired (PLAN.md §27d W3.2, A8/W3.1
+        # confirmed no discrimination) -- this test now only covers the still-live
+        # Meeko-over-RDKit preference for the raw ligand_meeko_parameterizable column.
         pocket = PocketDetectionResult(
             pdb_id="4HHB", passed=True,
             pockets=[PocketInfo(pocket_number=1, druggability_score=0.9)],
@@ -140,10 +143,9 @@ class TestBuildCandidateReport:
             },
         )
 
-        # If RDKit's (passing) verdict were used, the parameterizability
-        # component would be 0.0; using Meeko's (failing) verdict instead
-        # makes it 1.0 -- confirm the harder, Meeko-driven number wins.
-        assert row.docking.predicted_difficulty == pytest.approx((0.1 + 1.0) / 2)
+        assert row.ligand_rdkit_parameterizable is True
+        assert row.ligand_meeko_parameterizable is False
+        assert row.docking.predicted_difficulty is None
 
     def test_falls_back_to_rdkit_when_meeko_result_absent(self):
         pocket = PocketDetectionResult(
@@ -160,7 +162,7 @@ class TestBuildCandidateReport:
         )
 
         assert row.ligand_meeko_parameterizable is None
-        assert row.docking.predicted_difficulty == pytest.approx((0.1 + 0.0) / 2)
+        assert row.docking.predicted_difficulty is None
 
     def test_suitable_for_lists_only_passing_exercises(self):
         row = build_candidate_report(
@@ -214,7 +216,11 @@ class TestBuildCandidateReport:
         row = build_candidate_report(_CANDIDATE)
         assert row.nonstd_residues is None
 
-    def test_pocket_and_alphafold_feed_predicted_difficulty(self):
+    def test_pocket_and_alphafold_feed_raw_columns_not_retired_predicted_difficulty(self):
+        # modeling.predicted_difficulty and docking.predicted_difficulty are both
+        # retired (PLAN.md §27d W3.2) -- pocket/AlphaFold data still feeds the raw
+        # report columns (pocket_druggability_score, modeling_alphafold_mean_plddt via
+        # the alphafold-columns test below), just not a derived composite score.
         pocket = PocketDetectionResult(
             pdb_id="4HHB",
             passed=True,
@@ -243,9 +249,8 @@ class TestBuildCandidateReport:
 
         assert row.pocket_druggable is True
         assert row.pocket_druggability_score == 0.9
-        assert row.modeling.predicted_difficulty is not None
-        assert row.modeling.predicted_difficulty < 0.1
-        assert row.docking.predicted_difficulty is not None
+        assert row.modeling.predicted_difficulty is None
+        assert row.docking.predicted_difficulty is None
 
     def test_alphafold_columns_split_out_of_modeling_notes(self):
         # PLAN.md §14b: the structured AlphaFoldEntry data was already
@@ -454,3 +459,30 @@ class TestRowsToDataframe:
         df = rows_to_dataframe([row])
 
         assert json.loads(df.loc[0, "md_simulation_notes"]) == ["no template found for HEM"]
+
+
+def test_build_report_table_never_imports_rcsbapi():
+    """PLAN.md §27d W1.2: reading an existing store must stay fully offline.
+
+    A subprocess, not sys.modules bookkeeping in-process -- another test may already
+    have imported structural_biology.candidates (which legitimately needs rcsbapi for
+    its own live-fetch functions), which would pollute sys.modules for the rest of this
+    process regardless of what build_report_table itself does. Only a fresh interpreter
+    proves the import chain report.py's own docstring promises ("never calls a network
+    API itself") holds all the way down, not just at report.py's own top level.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from protein_selector.core.report import build_report_table; "
+            "assert not any(m.startswith('rcsbapi') for m in sys.modules), sys.modules.keys()",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr

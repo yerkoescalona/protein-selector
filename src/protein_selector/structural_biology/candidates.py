@@ -11,26 +11,31 @@ footgun) -- re-verify live against a real PDB ID if you touch `_ENTRY_RETURN_FIE
 from __future__ import annotations
 
 import itertools
-from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
 
 from rcsbapi.data import DataQuery
 from rcsbapi.search import Attr
 
+# Re-exported for backward compatibility -- CandidateEntry/ExperimentalMethod used to be
+# defined here, moved to models.py 2026-08-23 (PLAN.md §27d W1.2) so a caller that only
+# needs the dataclass shape (reading an already-populated store) doesn't have to
+# transitively import rcsbapi.data/rcsbapi.search, which fetch their GraphQL schema over
+# the network unconditionally at import time -- see models.py's module docstring for the
+# live-discovered detail. Existing `from .candidates import CandidateEntry` call sites on
+# the live fetch path (this module's own functions below, pipeline.py, stages/*) keep
+# working unchanged.
+from protein_selector.structural_biology.models import (
+    CandidateEntry,
+    ExperimentalMethod,
+)
 
-class ExperimentalMethod(StrEnum):
-    """``exptl.method``'s value vocabulary -- closed, but only add members you've verified.
-
-    RCSB's ``exptl.method`` field is a fixed set of strings, but this repo's
-    anti-hallucination rule (PLAN.md §11) means members get added one at a
-    time, each checked against a live ``data.rcsb.org`` response first --
-    never bulk-guessed from memory. ``X_RAY_DIFFRACTION`` is the only member
-    verified so far (it's this codebase's pre-existing default, confirmed
-    live well before this enum existed -- see ``candidates.py``'s history).
-    """
-
-    X_RAY_DIFFRACTION = "X-RAY DIFFRACTION"
+__all__ = [
+    "CandidateEntry",
+    "ExperimentalMethod",
+    "build_hard_filters_query",
+    "fetch_entry_metadata",
+    "search_candidate_ids",
+]
 
 
 # organism/uniprot_ids MUST use the fully-qualified polymer_entities.* path -- they are
@@ -52,26 +57,6 @@ _ENTRY_RETURN_FIELDS = [
     "polymer_entities.rcsb_entity_source_organism.ncbi_scientific_name",
     "polymer_entities.rcsb_polymer_entity_container_identifiers.uniprot_ids",
 ]
-
-
-@dataclass
-class CandidateEntry:
-    """One PDB entry surviving the hard filters, with raw metadata attached."""
-
-    pdb_id: str
-    title: str | None = None
-    method: str | None = None
-    resolution: float | None = None
-    n_atoms: int | None = None
-    n_residues: int | None = None
-    n_modeled_residues: int | None = None
-    n_unmodeled_residues: int | None = None
-    n_protein_entities: int | None = None
-    uniprot_ids: list[str] = field(default_factory=list)
-    non_polymer_entity_ids: list[str] = field(default_factory=list)
-    polymer_entity_ids: list[str] = field(default_factory=list)
-    assembly_ids: list[str] = field(default_factory=list)
-    organism: str | None = None
 
 
 def build_hard_filters_query(
