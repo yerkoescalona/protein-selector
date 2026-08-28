@@ -1838,13 +1838,30 @@ Supersedes §27d Phase 3. **S2.4 is withdrawn** (F-B), not deferred.
       run capped at 25% of the pool returns measurably more completed validations than an
       unordered 25% on the same pool. (Weaker and more honest than S2.4: more results per
       CPU-hour, not better results.)
-- [ ] **C.4** Actually rank the table, or stop saying it is ranked (F-D). *Done when:*
-      `demo/report_demo.csv` is not in alphabetical `pdb_id` order and the ordering key is
-      named in `README.md`, **or** all nine "ranked" claims are corrected. Not both left.
+- [x] **C.4** (2026-08-29) `core/report.py` gained `rank_report_rows`, applied inside
+      `build_report_table` so every consumer (CSV, webapp) gets ranked output. The key
+      uses only what is actually measured, since W3.2 retired the difficulty score that
+      would have been the natural one: (1) how many exercises the candidate really passes,
+      (2) how much of it has a real verdict rather than `not_run` -- evidence beats
+      absence instead of tying with it, (3) Europe PMC literature count descending, with
+      `None` ("couldn't ask") sorting below a real `0` ("no papers"), (4) `pdb_id` for
+      determinism. **This also gives the literature stage its first consumer** -- 2,473
+      requests per run that fed nothing (F-C). **Done when verified:**
+      `demo/report_demo.csv` is no longer alphabetical (`1CTQ, 1RX7, 1D2S, 1W1D, 1KQU`),
+      its first row is `suitable_for = [modeling, md_simulation, docking]` and its last is
+      `[]`; 5 tests cover each tier of the key, including the None-vs-0 distinction.
 - [ ] **C.5** Emit the funnel table (§27d **S2.3**). *Done when:* `make funnel` reproduces
       §27a's gate-selectivity table from the store.
-- [ ] **C.6** Populate `ligand_smiles` (F-G) at the point they are already fetched.
-      *Done when:* the column is populated for every candidate with a resolved CCD code.
+- [x] **C.6** (2026-08-29) New `ligand_smiles` table keyed by `ccd_code` alone -- a
+      component's SMILES is a property of the component, not of any entry binding it (same
+      reasoning as `parameterizability` being keyed by `ligand_id`). NULL means "asked,
+      RCSB had none", distinct from an absent row ("never asked"), the same `int | None`
+      discipline `literature.py` keeps. Persisted at the point `stages/meeko.py` already
+      fetched them (previously used once and dropped), loaded by `build_report_table`, and
+      copied into the demo slice. **Done when verified:** backfilled the 658 distinct CCD
+      codes already in the real store (652 with a real SMILES, 6 genuinely absent);
+      `demo/report_demo.csv` now has **300/300 rows populated, was 0/300**.
+
 
 ### 28e. Gate D — make the evidence artifacts contain evidence (parallel to B)
 
