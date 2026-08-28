@@ -28,6 +28,16 @@ from pathlib import Path
 
 DEFAULT_DB_PATH = Path("cache/protein_selector.db")
 
+# WAL lets one writer and any number of readers proceed concurrently instead
+# of the default rollback journal's single-writer-blocks-everyone behavior --
+# real concern once the Snakemake per-candidate slow-lane rules (md_validate,
+# dock_validate) run as separate concurrent processes against the same db
+# (PLAN.md §27d S5.1). The busy timeout covers the remaining writer-vs-writer
+# case (two upserts landing in the same instant): retry internally for up to
+# this many ms instead of raising ``sqlite3.OperationalError: database is
+# locked`` immediately.
+_BUSY_TIMEOUT_MS = 30_000
+
 _CANDIDATES_TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS candidates (
     pdb_id TEXT PRIMARY KEY,
@@ -110,6 +120,84 @@ CREATE TABLE IF NOT EXISTS validation (
     PRIMARY KEY (pdb_id, exercise)
 )
 """
+
+# core.validation_store.load_validation_results filters on ``exercise``
+# alone -- not sargable against the (pdb_id, exercise) primary key, since
+# exercise is the PK's second column, so every call was a full table SCAN
+# (confirmed via EXPLAIN QUERY PLAN, PLAN.md §27d S5.3) despite being the
+# only WHERE-filtered query outside course_candidates.sql (whose joins
+# already match the PK's own column order and don't need this).
+_VALIDATION_EXERCISE_INDEX_SCHEMA = """
+CREATE INDEX IF NOT EXISTS idx_validation_exercise ON validation (exercise)
+"""
+
+# One row per stamped pipeline run (PLAN.md §27d W2.1) -- additive provenance,
+# never required. ``resolved_parameters``/``environment_fingerprint`` are
+# JSON blobs (the former: whatever stage config was actually used; the
+# latter: scripts/report_versions.py's own --json output), not normalized
+# into columns -- their shape varies run to run (which stages ran, which
+# packages exist) and nothing here needs to query into them, only display
+# them back via `make provenance` (W2.5).
+_RUNS_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    created_at_utc TEXT NOT NULL,
+    tool_version TEXT NOT NULL,
+    git_sha TEXT,
+    resolved_parameters TEXT NOT NULL DEFAULT '{}',
+    environment_fingerprint TEXT NOT NULL DEFAULT '{}'
+)
+"""
+
+
+def _ensure_validation_run_id_column(conn: sqlite3.Connection) -> None:
+    """Additive migration: add ``validation.run_id`` if this db predates it.
+
+    SQLite's ``CREATE TABLE IF NOT EXISTS`` can't add a column to an
+    already-existing table, so this is a real migration, not schema DDL --
+    but still additive-only per the DB safety rule (``.claude/CLAUDE.md``):
+    existing rows survive untouched with ``run_id`` NULL ("provenance
+    unknown" until re-validated under a stamped run, W2.3), never rewritten
+    or dropped.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(validation)")}
+    if "run_id" not in columns:
+        conn.execute("ALTER TABLE validation ADD COLUMN run_id TEXT")
+
+
+# PLAN.md §27d W2.2: these four were previously readable only as prose baked
+# into ``validation.notes`` (e.g. "self-dock RMSD 0.04 Å (41 matched
+# atoms)") -- exactly what made A9's row count "inferred, from prose-format
+# matching in notes" instead of a real query. Docking-only (``exercise !=
+# "docking"`` rows stay NULL); ``plip_interaction_counts`` stays JSON (a
+# variable-shaped dict of interaction type -> count) but is still queryable
+# via SQLite's ``json_extract``, no regex either way.
+_VALIDATION_DOCKING_DETAIL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("self_dock_rmsd_angstrom", "REAL"),
+    ("matched_atom_count", "INTEGER"),
+    ("rmsd_threshold_angstrom", "REAL"),
+    ("plip_interaction_counts", "TEXT"),
+    # PLAN.md §28 B.2/B.3 -- the confounds F-A found folded invisibly into the
+    # self-dock RMSD. `symmetry_corrected_rmsd_angstrom` is the graph-automorphism
+    # RMSD (`self_dock_rmsd_angstrom` stays the atom-name-matched one, so the two are
+    # comparable on the same poses); `reference_heavy_atom_count` is B.1's coverage
+    # denominator; `alignment_rmsd_angstrom` is the crystal->MD-relaxed superposition
+    # error (§21), previously discarded at logger.debug;
+    # `receptor_minimization_converged` records whether the receptor's MD run hit its
+    # minimization cap -- 0 for 100% of the pre-§28 store.
+    ("symmetry_corrected_rmsd_angstrom", "REAL"),
+    ("reference_heavy_atom_count", "INTEGER"),
+    ("alignment_rmsd_angstrom", "REAL"),
+    ("receptor_minimization_converged", "INTEGER"),
+)
+
+
+def _ensure_validation_docking_detail_columns(conn: sqlite3.Connection) -> None:
+    """Additive migration: add W2.2's docking-detail columns if this db predates them."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(validation)")}
+    for name, sql_type in _VALIDATION_DOCKING_DETAIL_COLUMNS:
+        if name not in columns:
+            conn.execute(f"ALTER TABLE validation ADD COLUMN {name} {sql_type}")
 
 # Keyed by pdb_id -- one primary-assembly oligomeric-state record per entry
 # (see structural_biology.composition.fetch_oligomeric_state).
@@ -205,6 +293,8 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
+    conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute(_CANDIDATES_TABLE_SCHEMA)
     conn.execute(_SIMULABILITY_TABLE_SCHEMA)
     conn.execute(_PARAMETERIZABILITY_TABLE_SCHEMA)
@@ -217,6 +307,10 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_LIGAND_CCD_TABLE_SCHEMA)
     conn.execute(_ALPHAFOLD_ENTRY_TABLE_SCHEMA)
     conn.execute(_VALIDATION_TABLE_SCHEMA)
+    conn.execute(_VALIDATION_EXERCISE_INDEX_SCHEMA)
+    _ensure_validation_run_id_column(conn)
+    _ensure_validation_docking_detail_columns(conn)
+    conn.execute(_RUNS_TABLE_SCHEMA)
     try:
         yield conn
         conn.commit()
