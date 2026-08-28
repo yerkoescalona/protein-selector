@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§30** | **Execution engine for the design-scale workload (2026-08-29).** Ray Core chosen as a future *second* runner (`ray.workflow` is deprecated — verified); Polars/Arrow/Spark/Nextflow rejected with measured numbers. Sequencing in §30d. |
 | **§29** | **Workflow audit + the stage contract (2026-08-29).** Is Snakemake used well, can a run be observed, and what is a stage's declared input/output? **§29e's P1 (observability) runs ahead of §28 Gate C** -- instrument before the B.5 recompute, not after. |
 | **§28** | **(2026-08-28)** Measurement-validity audit → refined plan (Gates A–E). It **withdraws §27d S2.4** and puts a new "validate the docking label" gate ahead of §27d Phase 3. Full detail: `docs/audit-2026-08-28.md`. |
 | §27d | The previous task list — Phases 0–2 are the completed record; Phases 3–5 are superseded in priority by §28's Gates B–E (Phase 4/5 content itself stands). |
@@ -1633,3 +1634,131 @@ recompute (~9 CPU-h) is exactly the run worth having instrumented -- doing it be
 wastes the best measurement opportunity this project has left. **P2 slots after §28 B.5/B.6**:
 it touches every stage entry point, and doing it mid-recompute risks the run. P3 waits for
 P1's data by construction.
+
+## 30. Execution engine for the design-scale workload (2026-08-29)
+
+Triggered by a stated change in scope: the author will take over an **AI protein design
+course**, so this tool has to extend past "screen existing PDB entries" into generative
+design. Records what was evaluated and why, so none of it is re-litigated from memory.
+§15a already rejected Nextflow once; this section is the second, larger pass.
+
+### 30a. The axis, measured — most of the candidates were the wrong kind of tool
+
+| quantity | measured |
+|---|---|
+| rows across all tables | 77,871 |
+| store size | 20 MB |
+| compute that produced it | 8.96 CPU-h |
+| ratio | **~1,600 CPU-seconds per MB** |
+| entire pandas surface | **0.072 s** of a 21,469 s run (0.00034%) |
+
+This workload is **compute-dense and data-sparse**. Polars, Arrow, Spark and DuckDB are
+data-scale tools; their design point is the inverse. **Rejected, with the number, not the
+preference:**
+
+- **Polars** — would optimise 0.072 s out of 8.96 CPU-h, and costs a rewrite of
+  `webapp/data.py` + `app/app.py` (Dash is pandas-shaped). Same reasoning §27f already
+  applied to replacing SQLite.
+- **Arrow** — a memory format, not an adoption; arrives implicitly with DuckDB/Polars if
+  ever needed. `pyarrow` is not even installed. The course-repo contract is a CSV **by
+  design** (§12) and CSV is right there: human-readable, diffable, tiny.
+- **Spark** — wrong axis (830 MB projected at 10⁵ candidates, §27f); its executor model is
+  hostile to shelling out to a native binary that runs for seconds-to-minutes per record;
+  JVM (§9); and it addresses neither GPU scheduling nor generative loops.
+- **Nextflow** — see §15a. Re-checked 2026-08-29: a JVM *is* now present on this machine, so
+  that leg is factually weaker, but the decisive objection is structural — Nextflow
+  processes wrap **shell commands** and exchange **files**, while §15b makes SQLite the sole
+  result store and the workflow a completion tracker only. 181 `§15`–`§22` citations
+  describe Snakemake rules. Its real advantage is observability defaults, which §29e P1
+  obtains for 1–2 days instead of a rewrite.
+
+**The trigger for revisiting a data tool, as a number:** a single analytical query over
+results becoming slower than tolerable, or the store outgrowing one machine. At that point
+reach for **DuckDB** first (SQL, reads SQLite/Parquet directly, one binary, no JVM), not
+Polars — it keeps one query dialect instead of introducing a third.
+
+### 30b. Why the design workload breaks the DAG assumption
+
+Snakemake and Nextflow are both DAG engines: "make this file from those files." Design work
+is not that shape, in three ways:
+
+1. **It is a loop.** design → fold → score → filter → redesign, until a criterion holds.
+   Neither tool expresses "repeat until"; the numbered-round-directory workaround is what
+   hurts at scale.
+2. **GPU is the scarce resource and the scheduling problem inverts.** §15's trigger was
+   pinning threads against oversubscription. The design problem is keeping GPUs saturated
+   and **not reloading multi-GB model weights per task** — which every per-task process
+   model (Snakemake `script:`, Nextflow processes) pays on every task.
+3. **Results become many-per-input** (thousands of designs per scaffold), not one row per
+   `pdb_id`. That is a schema question as much as an orchestrator one.
+
+### 30c. Ray — chosen as a FUTURE SECOND RUNNER, not a replacement
+
+**Ray Core**, explicitly **not `ray.workflow`.**
+
+- ⚠→**VERIFIED 2026-08-29: `ray.workflow` (Ray Workflows) is DEPRECATED.** Ray's own docs
+  state "The experimental Ray Workflows library has been deprecated and will be removed in
+  a future version of Ray", and Ray maintainer *eoakes* confirmed on the Ray forum: "We do
+  not plan to replace this functionality... we need to make some tough prioritization
+  decisions", pointing users at Airflow or Temporal, and noting the DAG API is only an API
+  frontend, not a replacement. **Do not build on `ray.workflow`.**
+  Sources: <https://docs.ray.io/en/latest/workflows/management.html>,
+  <https://discuss.ray.io/t/ray-workflows-deprecated/22132>.
+
+**That deprecation costs this repo almost nothing, and the reason is a real finding.** The
+durable-checkpointing Ray Workflows provided is **already implemented in the application
+layer**: every expensive stage skips work already persisted —
+`md_simulation`, `docking`, `complex_md_simulation`, `meeko`, `parameterizability`,
+`pocket_detection`, `docking_common`, `validate_one` all check the store first, and
+`literature`/`modeling`/`ligands` do the same behind `force_refresh`. **SQLite is already
+the ledger.** So the plain "simple DAG in Ray Core + SQL for durability" shape works, and
+is the supported, un-deprecated path.
+
+**What Ray Core gives the design workload:** actors holding model weights resident in VRAM
+across tasks (kills the per-task reload, usually the dominant cost); `num_gpus=`/fractional
+GPU scheduling; loops as ordinary Python; Ray Data for streaming batch inference; Ray Tune
+if design-space search becomes a search problem; pip-installable with **no JVM** (§9).
+
+**What is genuinely lost vs. Snakemake, stated plainly:** Ray Core's DAG is *implicit and
+dynamic*, so there is no `snakemake -n` dry run, no declared file-level dependency graph,
+and no `--rulegraph`. That is a regression for reproducible screening and a feature for
+design loops. **Hence two runners, not a migration:**
+
+```
+stages/registry.py        StageSpec: name, granularity, reads, writes, needs_gpu, resources
+   |- Snakemake runner    screening DAG (declarative, dry-runnable)          [today]
+   |- Ray runner          design loop (GPU, actors, dynamic)                 [when hardware exists]
+                                  -> one SQLite store, one provenance stamp
+```
+
+### 30d. Sequencing — every step useful whether or not Ray is adopted
+
+- [ ] **R.1** Do §27d **S4.2** first, and read it as the *precondition*, not housekeeping:
+      prove the store alone is a sufficient completion ledger. *Done when:* `results/` can be
+      deleted and a re-run recomputes nothing. A failure here reveals a hidden dependency on
+      the 2,830 marker files before Ray ever does.
+- [ ] **R.2** §29e **P2** registry, adding `needs_gpu` and `resources` fields now even
+      though nothing reads them. This is what makes Ray an addition rather than a rewrite.
+- [ ] **R.3** Promote §27d **S6.1** (container image) out of deferred Phase 5. RFdiffusion,
+      ProteinMPNN, AF2/Boltz pin conflicting CUDA/torch versions and will not co-install —
+      the same class of problem as §15e's conda solve that drove RAM under 1 GB. This is
+      orchestrator-independent and blocks all design work.
+- [ ] **R.4** Only then, a time-boxed **Ray spike (~2 d)** on real hardware: one
+      design→fold→score loop. *Done when:* one number is measured — **weight-reload time
+      saved by an actor pool vs. per-task processes**. That number decides adoption, not
+      architecture taste.
+
+**Still unverified, and to check before R.4** (Ray is not installed here): whether
+`runtime_env`'s per-task conda/pip is workable for this repo's env split or whether one
+image per worker type is required; and how Ray behaves when a task shells out to a native
+binary that itself multithreads — §15's Vina/OpenMM oversubscription problem does not
+disappear, it moves.
+
+**Open question that decides more than preference does:** what hardware the design course
+will actually have. University **SLURM** → Parsl or a Snakemake cluster profile (§27d S6.2);
+**standalone GPU boxes** → Ray; **cloud/K8s** → Dagster or Flyte. Worth answering before R.4.
+
+**Scope guard (§26.5/§27f):** design work goes in a sibling pipeline sharing the core
+(store, provenance, `ValidationResult`, difficulty scoring), not by growing the screening
+funnel to do both. `protein_design/` was already decided to stay separate from `modeling/`
+for the same reason; this scales that decision up rather than reversing it.
