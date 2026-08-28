@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§31** | **Ray runner built and live-verified (2026-08-29).** S4.2 gate passed — the store is a strict superset of the marker files. Cheap lane runs on Ray Core in 7.3 s with zero markers. Snakefile untouched; retirement gated on Y.2. |
 | **§30** | **Execution engine for the design-scale workload (2026-08-29).** **§30e: hardware resolved as SLURM, which demotes Ray** in favour of Snakemake's SLURM executor + sharding (both already planned). `ray.workflow` is deprecated (verified). Polars/Arrow/Spark/Nextflow rejected with measured numbers. Sequencing in §30d/§30e. |
 | **§29** | **Workflow audit + the stage contract (2026-08-29).** Is Snakemake used well, can a run be observed, and what is a stage's declared input/output? **§29e's P1 (observability) runs ahead of §28 Gate C** -- instrument before the B.5 recompute, not after. |
 | **§28** | **(2026-08-28)** Measurement-validity audit → refined plan (Gates A–E). It **withdraws §27d S2.4** and puts a new "validate the docking label" gate ahead of §27d Phase 3. Full detail: `docs/audit-2026-08-28.md`. |
@@ -1812,3 +1813,93 @@ already on the list for other reasons.
 (store, provenance, `ValidationResult`, difficulty scoring), not by growing the screening
 funnel to do both. `protein_design/` was already decided to stay separate from `modeling/`
 for the same reason; this scales that decision up rather than reversing it.
+
+## 31. Ray runner — built and live-verified (2026-08-29)
+
+§30 argued Ray should be a *second* runner. The stated goal is different and simpler: **be
+free of Snakemake.** This section is the first real step, taken rather than argued.
+
+### 31a. The gate passed, and the markers turned out worse than redundant
+
+§30e made §27d **S4.2** the go/no-go: is the store alone a sufficient completion ledger?
+Measured non-destructively against the real store — the store is a strict **superset** of
+the marker files in every stage:
+
+| stage | store knows | markers on disk |
+|---|---|---|
+| md_simulation | **2,357** | 1,506 |
+| pocket_detection | **2,029** | 1,173 |
+| docking | **407** | 140 |
+| complex_md | **296** | 5 |
+| literature / modeling / meeko / parameterizability | 2,473 / 2,445 / 658 / 658 | 1 each |
+
+So the 2,830 marker files were not merely duplicating the store, they were **stale**. The
+orchestrator was never holding state the store lacked. That is the green light: swapping
+runners is low-risk because resume never lived in Snakemake to begin with.
+
+### 31b. What was built
+
+- **`runners/ray_runner.py`** — the cheap lane as a plain Python DAG on **Ray Core**
+  (never `ray.workflow`, deprecated per §30c). `search → simulability → {ligands,
+  literature, modeling}` with the three-way fan-out expressed as three `.remote()` calls
+  on one `ObjectRef`; no rule blocks, no checkpoints, no markers.
+- **`plan_pipeline`/`format_plan`** — the `snakemake -n` replacement, and it needed no Ray
+  at all: each stage's own "already persisted?" query *is* the plan. Base dependencies
+  only, so a dry run works on a fresh clone with no conda and no network.
+- **`scripts/run_ray_pipeline.py`** + `make ray-plan` / `make ray-run`. `--config` reads
+  `workflow/config.yaml` so the two runners cannot drift apart on thresholds.
+- **`ray` dependency group** (not `ray[default]` — the dashboard/cluster-launcher extras
+  are unnecessary for a single-node DAG).
+
+### 31c. Live verification
+
+Run against a **copy** of the real 2,473-candidate store, 60 frozen ids, using
+`workflow/config.yaml`'s real filter (50–200 residues, ≤3.0 Å):
+
+- completed in **7.3 s**, returning **60 survivors**;
+- `candidates`/`validation`/`literature` row counts **identical to the source store**
+  afterwards — every stage correctly skipped already-persisted work. **Resume works with
+  zero marker files**, which is the whole claim.
+
+Real dry-run output on the live store, which also surfaced something Snakemake never
+showed: **265 dockable candidates have never been docked** (407 done of 672 eligible).
+
+### 31d. Two real bugs, both live-discovered
+
+1. **Ray's worker bootstrap fights `uv`'s project auto-sync.** Launching the driver with
+   `uv run` exports `VIRTUAL_ENV`; Ray packages the working directory as a runtime env,
+   and `uv` then re-creates a *fresh* venv inside Ray's session dir from the project's
+   default dependencies — which excludes the optional `ray` group. Every worker died with
+   `ModuleNotFoundError: No module named 'ray'` after a 60 s registration timeout. **Fix:
+   invoke `./.venv/bin/python` directly, never `uv run`.** Recorded in the script's
+   docstring and both Makefile targets, since the failure names the wrong culprit.
+2. **The first `plan_pipeline` overstated pending work by ~5x.** Using
+   `len(candidates)` as the denominator for the slow lanes reported **2,065** pending
+   docking jobs; docking only ever runs on candidates with a *dockable* ligand, so the
+   real number is **265**. Fixed by reusing `is_dockable_ligand_code` — the same predicate
+   the real docking path uses (§17a), so plan and execution cannot disagree. Locked by
+   `test_slow_lanes_use_their_own_eligible_pool_not_the_whole_store`. A dry run that
+   overstates work is worse than no dry run.
+
+### 31e. What is proven, and what is not
+
+**Proven:** the DAG shape, the fan-out, resume-from-store with no markers, the dry run,
+and that ~250 lines replace what the Snakefile needs 472 lines plus 489 lines of scripts to
+express for the same lane.
+
+**Not yet:** the slow lanes (`md_validate`/`dock_validate`/`pocket_detect`) are not ported.
+They need the conda validation env, which under Ray means running the *driver* from that env
+(workers inherit the driver's interpreter) — simpler than Snakemake's per-rule `conda:`, but
+unverified. **Nothing is deleted:** the Snakefile is untouched and still the production path.
+
+- [ ] **Y.1** Port the per-candidate slow lanes to the Ray runner, driver launched from the
+      validation conda env. *Done when:* one `md_validate` and one `dock_validate` complete
+      under Ray and persist a real `ValidationResult`.
+- [ ] **Y.2** Run both runners over the same frozen id list into two store copies and diff.
+      *Done when:* the two stores are equivalent, which is what licenses retiring the
+      Snakefile.
+- [ ] **Y.3** Only after Y.2: retire `Snakefile` + `workflow/scripts/` and the 2,830 marker
+      files, and update the 181 `§15`–`§22` citations that describe Snakemake rules.
+- [ ] **Y.4** SLURM shape for Ray (§30e): one `sbatch` allocation running head+workers, vs.
+      Snakemake's many small jobs. *Done when:* the trade-off is measured on the real
+      cluster, not assumed.

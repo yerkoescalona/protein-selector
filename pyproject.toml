@@ -89,6 +89,14 @@ webapp = [
     "dash-bootstrap-components>=2.0.4",
     "dash-cytoscape>=1.0.2",
 ]
+# PLAN.md §30/§31: the Ray runner, evaluated as a replacement for the Snakemake layer.
+# Its own group -- a plain `uv sync` must not pull ~500 MB of Ray for someone who only
+# wants to read an already-populated store (same rule as `workflow`/`webapp`/`notebook`).
+# Deliberately NOT `ray[default]`: the dashboard/cluster-launcher extras are not needed
+# for a single-node DAG, and `ray.workflow` is deprecated (§30c) so nothing here uses it.
+ray = [
+    "ray>=2.40",
+]
 workflow = [
     "snakemake>=9.23.1",
 ]

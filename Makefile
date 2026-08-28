@@ -1,4 +1,4 @@
-.PHONY: env test coverage lint typecheck check serve demo calibration workflow workflow-md workflow-dock workflow-all provenance clean
+.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run workflow workflow-md workflow-dock workflow-all provenance clean
 
 # Base env + the validate extra (rdkit/meeko/...) + the webapp deps group --
 # what `make test`/`make serve` below both need. `uv sync` alone (no flags)
@@ -116,6 +116,18 @@ workflow-complex-md:
 # stamped run instead. Read-only, no extras/conda env needed.
 provenance:
 	uv run python scripts/provenance.py $(RUN)
+
+# PLAN.md §31: the Ray runner, evaluated as a replacement for the Snakemake layer.
+# `ray-plan` is the `snakemake -n` equivalent and needs base deps only (the plan is a
+# query against the store, not a walk over file mtimes). Both invoke .venv/bin/python
+# DIRECTLY, not via `uv run`: uv exports VIRTUAL_ENV, which makes Ray'"'"'s worker bootstrap
+# re-sync a project venv without the optional `ray` group, killing every worker with
+# ModuleNotFoundError (live-discovered 2026-08-29).
+ray-plan:
+	./.venv/bin/python scripts/run_ray_pipeline.py --plan
+
+ray-run:
+	./.venv/bin/python scripts/run_ray_pipeline.py --run --ids results/candidate_ids.txt
 
 clean:
 	rm -rf .pytest_cache .ruff_cache
