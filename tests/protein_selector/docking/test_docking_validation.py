@@ -22,13 +22,21 @@ from protein_selector.docking.docking_validation import (
 )
 from protein_selector.docking.plip_analysis import PlipAnalysisResult
 
+# Four heavy atoms, not two: PLAN.md §28 B.1's coverage guard rejects an RMSD computed
+# over fewer than 3 corresponding atoms (or under half the reference ligand), so a
+# 2-atom fixture would now exercise the guard rather than the composition logic these
+# tests are about. TestRmsdCoverageGuard below covers the degenerate case on purpose.
 _REFERENCE_PDB_BLOCK = (
     "HETATM    1  C1  LIG A   1       1.000   2.000   3.000  1.00  0.00           C\n"
     "HETATM    2  O1  LIG A   1       4.000   5.000   6.000  1.00  0.00           O\n"
+    "HETATM    3  C2  LIG A   1       2.000   2.500   3.500  1.00  0.00           C\n"
+    "HETATM    4  N1  LIG A   1       3.000   3.500   4.500  1.00  0.00           N\n"
 )
 _MATCHING_POSE_PDBQT = (
     "ATOM      1  C1  LIG A   1       1.000   2.000   3.000  0.00  0.00     0.000 C\n"
     "ATOM      2  O1  LIG A   1       4.000   5.000   6.000  0.00  0.00     0.000 OA\n"
+    "ATOM      3  C2  LIG A   1       2.000   2.500   3.500  0.00  0.00     0.000 C\n"
+    "ATOM      4  N1  LIG A   1       3.000   3.500   4.500  0.00  0.00     0.000 N\n"
 )
 
 # Real Meeko output leaves the chain-ID column (index 21) blank -- unlike
@@ -74,13 +82,13 @@ class TestPdbqtPoseToPdbHetatmBlock:
     def test_converts_atom_lines_to_hetatm_and_truncates_autodock_columns(self):
         block = _pdbqt_pose_to_pdb_hetatm_block(_MATCHING_POSE_PDBQT)
         lines = block.splitlines()
-        assert len(lines) == 2
+        assert len(lines) == 4
         assert all(line.startswith("HETATM") for line in lines)
         assert all(len(line) == 66 for line in lines)
 
     def test_ignores_non_atom_lines(self):
         text = "REMARK VINA RESULT\n" + _MATCHING_POSE_PDBQT
-        assert len(_pdbqt_pose_to_pdb_hetatm_block(text).splitlines()) == 2
+        assert len(_pdbqt_pose_to_pdb_hetatm_block(text).splitlines()) == 4
 
     def test_forces_a_real_chain_id_even_when_source_is_blank(self):
         # Regression test for the live-verified bug: a blank chain-ID column
@@ -153,6 +161,8 @@ class TestRunDockingValidation:
         far_pose = (
             "ATOM      1  C1  LIG A   1     101.000   2.000   3.000  0.00  0.00     0.000 C\n"
             "ATOM      2  O1  LIG A   1     104.000   5.000   6.000  0.00  0.00     0.000 OA\n"
+            "ATOM      3  C2  LIG A   1     102.000   2.500   3.500  0.00  0.00     0.000 C\n"
+            "ATOM      4  N1  LIG A   1     103.000   3.500   4.500  0.00  0.00     0.000 N\n"
         )
         monkeypatch.setattr(docking_validation, "dock_top_pose", lambda *a, **k: far_pose)
 
@@ -169,6 +179,9 @@ class TestRunDockingValidation:
         assert result.status == ValidationStatus.FAILURE
         assert result.failure_mode == FailureMode.DOCKING_QUALITY
         assert "self-dock RMSD" in result.notes[0]
+        assert result.self_dock_rmsd_angstrom is not None
+        assert result.rmsd_threshold_angstrom is not None
+        assert result.self_dock_rmsd_angstrom > result.rmsd_threshold_angstrom
 
     def test_good_pose_but_zero_interactions_is_a_soft_success(self, monkeypatch, tmp_path):
         # scripts/ligand_filter_fix_brief.md Problem 2 (2026-07-19): a real, non-empty
@@ -205,6 +218,9 @@ class TestRunDockingValidation:
         assert result.status == ValidationStatus.SUCCESS
         assert result.failure_mode is None
         assert any("zero interpretable interactions" in note for note in result.notes)
+        # PLAN.md §27d W2.2: the soft-pass path still promotes real values, not just prose.
+        assert result.self_dock_rmsd_angstrom is not None
+        assert result.plip_interaction_counts == {"hydrogen_bonds": 0, "hydrophobic_contacts": 0}
 
     def test_plip_could_not_analyze_complex_still_fails(self, monkeypatch, tmp_path):
         # The genuine pipeline-malfunction case (empty interaction_counts, e.g. PLIP
@@ -272,3 +288,7 @@ class TestRunDockingValidation:
         assert result.status == ValidationStatus.SUCCESS
         assert result.failure_mode is None
         assert result.effort_seconds is not None
+        assert result.self_dock_rmsd_angstrom is not None
+        assert result.matched_atom_count is not None
+        assert result.rmsd_threshold_angstrom is not None
+        assert result.plip_interaction_counts == {"hydrogen_bonds": 2}

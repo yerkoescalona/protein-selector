@@ -29,8 +29,11 @@ from protein_selector.docking.vina_docking import (
     _DEFAULT_EXHAUSTIVENESS,
     _DEFAULT_N_POSES,
     _DEFAULT_RMSD_THRESHOLD_ANGSTROM,
+    count_heavy_atoms,
     dock_top_pose,
     rmsd_by_atom_name,
+    rmsd_coverage_is_sufficient,
+    symmetry_corrected_rmsd,
 )
 
 logger = logging.getLogger(__name__)
@@ -257,24 +260,51 @@ def run_docking_validation(
     _write_ligand_comparison_pdb(pdb_id, ccd_code, reference_ligand_pdb_block, pose_text)
 
     matched = rmsd_by_atom_name(pose_text, reference_ligand_pdb_block)
+    n_reference_heavy = count_heavy_atoms(reference_ligand_pdb_block)
     if matched is None:
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
-            failure_mode=FailureMode.DOCKING_QUALITY,
+            failure_mode=FailureMode.MEASUREMENT,
             effort_seconds=dock_elapsed,
+            reference_heavy_atom_count=n_reference_heavy,
             notes=[
                 "docked pose and reference ligand share no atom names -- cannot compute a "
                 "meaningful self-dock RMSD"
             ],
         )
-    rmsd, n_matched = matched
+    name_matched_rmsd, n_matched = matched
+    if not rmsd_coverage_is_sufficient(n_matched, n_reference_heavy):
+        # PLAN.md §28 B.1: too few corresponding atoms for the RMSD to mean anything.
+        # Recorded as a real outcome (never a silent pass/fail, never a gap), but as
+        # MEASUREMENT -- "we cannot say" -- not DOCKING_QUALITY.
+        return ValidationResult(
+            pdb_id=pdb_id,
+            status=ValidationStatus.FAILURE,
+            failure_mode=FailureMode.MEASUREMENT,
+            effort_seconds=dock_elapsed,
+            matched_atom_count=n_matched,
+            reference_heavy_atom_count=n_reference_heavy,
+            notes=[
+                f"self-dock RMSD not interpretable: only {n_matched} of "
+                f"{n_reference_heavy} reference heavy atoms corresponded -- recorded as a "
+                "measurement failure, not a docking-quality verdict"
+            ],
+        )
+
+    symmetry_rmsd = symmetry_corrected_rmsd(pose_text, reference_ligand_pdb_block)
+    rmsd = symmetry_rmsd if symmetry_rmsd is not None else name_matched_rmsd
     if rmsd > rmsd_threshold_angstrom:
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.DOCKING_QUALITY,
             effort_seconds=dock_elapsed,
+            self_dock_rmsd_angstrom=name_matched_rmsd,
+            symmetry_corrected_rmsd_angstrom=symmetry_rmsd,
+            matched_atom_count=n_matched,
+            reference_heavy_atom_count=n_reference_heavy,
+            rmsd_threshold_angstrom=rmsd_threshold_angstrom,
             notes=[
                 f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms) exceeds threshold "
                 f"{rmsd_threshold_angstrom} Å"
@@ -302,6 +332,12 @@ def run_docking_validation(
                 pdb_id=pdb_id,
                 status=ValidationStatus.SUCCESS,
                 effort_seconds=total_elapsed,
+                self_dock_rmsd_angstrom=name_matched_rmsd,
+                symmetry_corrected_rmsd_angstrom=symmetry_rmsd,
+                matched_atom_count=n_matched,
+                reference_heavy_atom_count=n_reference_heavy,
+                rmsd_threshold_angstrom=rmsd_threshold_angstrom,
+                plip_interaction_counts=plip_result.interaction_counts,
                 notes=[
                     f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms), within {rmsd_threshold_angstrom} Å",
                     "PLIP found zero interpretable interactions of any kind "
@@ -314,6 +350,11 @@ def run_docking_validation(
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.DOCKING_QUALITY,
             effort_seconds=total_elapsed,
+            self_dock_rmsd_angstrom=name_matched_rmsd,
+            symmetry_corrected_rmsd_angstrom=symmetry_rmsd,
+            matched_atom_count=n_matched,
+            reference_heavy_atom_count=n_reference_heavy,
+            rmsd_threshold_angstrom=rmsd_threshold_angstrom,
             notes=[f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms)", *plip_result.reasons],
         )
 
@@ -325,6 +366,12 @@ def run_docking_validation(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,
         effort_seconds=total_elapsed,
+        self_dock_rmsd_angstrom=name_matched_rmsd,
+        symmetry_corrected_rmsd_angstrom=symmetry_rmsd,
+        matched_atom_count=n_matched,
+        reference_heavy_atom_count=n_reference_heavy,
+        rmsd_threshold_angstrom=rmsd_threshold_angstrom,
+        plip_interaction_counts=plip_result.interaction_counts,
         notes=[
             f"self-dock RMSD {rmsd:.2f} Å, within {rmsd_threshold_angstrom} Å",
             f"PLIP interactions: {plip_result.interaction_counts}",

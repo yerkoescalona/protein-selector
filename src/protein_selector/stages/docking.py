@@ -113,6 +113,12 @@ def run_docking_stage(
                 exhaustiveness=docking.exhaustiveness,
                 rmsd_threshold_angstrom=docking.rmsd_threshold_angstrom,
             )
+        # PLAN.md §28 B.3: the two confounds resolve_docking_target already knows about
+        # travel onto the result here rather than being recomputed (or lost). Set after
+        # the fact because they describe the docking *inputs*, not anything
+        # run_docking_validation itself measures.
+        result.alignment_rmsd_angstrom = target.alignment_rmsd_angstrom
+        result.receptor_minimization_converged = target.receptor_minimization_converged
         if ligand_comparison_pdb_path(pdb_id, target.ccd_code).exists():
             # Referenced by its persistent path, not the tempdir copy above (gone once this
             # `with` block exits), so the generated `.pml` still resolves after the fact.

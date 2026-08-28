@@ -31,6 +31,14 @@ _DEFAULT_N_POSES = 9
 _DEFAULT_RMSD_THRESHOLD_ANGSTROM = 2.5  # relaxed from the literature-standard 2.0 Å --
 # see PLAN.md §22a for why. Not PLAN.md-mandated; adjust via DockingConfig.rmsd_threshold_angstrom.
 
+# PLAN.md §28 B.1. An RMSD over one or two corresponding atoms is a distance, not an
+# RMSD, and the pre-§28 store contains real pass/fail verdicts derived from exactly
+# that (min 1 matched atom; 11% of rows recording the count matched ≤5). A pose must
+# correspond over at least this many heavy atoms AND this fraction of the reference
+# ligand's heavy atoms before its RMSD is allowed to decide anything.
+_MIN_MATCHED_ATOMS = 3
+_MIN_MATCHED_FRACTION = 0.5
+
 
 def _parse_heavy_atom_coords(pdb_or_pdbqt_text: str) -> list[tuple[float, float, float]]:
     """Extract heavy-atom (x, y, z) coordinates from PDB/PDBQT ATOM/HETATM lines, in order."""
@@ -98,6 +106,83 @@ def rmsd_by_atom_name(
     docked_coords = [docked_atoms[name] for name in common_names]
     reference_coords = [reference_atoms[name] for name in common_names]
     return _rmsd(docked_coords, reference_coords), len(common_names)
+
+
+def count_heavy_atoms(pdb_or_pdbqt_text: str) -> int:
+    """Number of heavy atoms in a PDB/PDBQT block (the RMSD coverage denominator, §28 B.1)."""
+    return len(_parse_heavy_atom_coords(pdb_or_pdbqt_text))
+
+
+def rmsd_coverage_is_sufficient(
+    n_matched: int,
+    n_reference_heavy: int,
+    min_matched: int = _MIN_MATCHED_ATOMS,
+    min_fraction: float = _MIN_MATCHED_FRACTION,
+) -> bool:
+    """Is an atom correspondence broad enough for its RMSD to decide pass/fail (§28 B.1)?
+
+    Requires both an absolute floor and a fraction of the reference ligand -- either
+    alone lets a degenerate comparison through (3 of 40 atoms clears the floor; 2 of 2
+    clears the fraction).
+    """
+    if n_matched < min_matched:
+        return False
+    if n_reference_heavy <= 0:
+        return False
+    return (n_matched / n_reference_heavy) >= min_fraction
+
+
+def _pdb_block_for_rdkit(pdb_or_pdbqt_text: str) -> str:
+    """Truncate PDB/PDBQT ATOM/HETATM records to the 54-column PDB core RDKit can parse.
+
+    PDBQT's trailing partial-charge/atom-type columns are not valid PDB; columns 1-54
+    (record, serial, name, resName, chain, resSeq, x, y, z) are identical in both.
+    """
+    lines = [
+        line[:54]
+        for line in pdb_or_pdbqt_text.splitlines()
+        if line.startswith(("ATOM", "HETATM"))
+    ]
+    return "\n".join(lines) + "\nEND\n"
+
+
+def symmetry_corrected_rmsd(
+    docked_pdb_or_pdbqt_text: str, reference_pdb_or_pdbqt_text: str
+) -> float | None:
+    """Symmetry-aware (graph-automorphism) self-dock RMSD, computed in place (§28 B.2).
+
+    ``rmsd_by_atom_name`` cannot see that a flipped phenyl, carboxylate, nitro or
+    sulfonate is the same molecule in the same place, so it inflates RMSD in one
+    direction only and manufactures false ``DOCKING_QUALITY`` failures (§28a F-A/A2).
+    RDKit's ``CalcRMS`` enumerates the substructure automorphisms and takes the
+    minimum. ``CalcRMS`` -- not ``GetBestRMS`` -- because the latter also *superposes*
+    the two poses, which would discard exactly the displacement a redock is measuring.
+
+    Returns ``None`` (never a wrong number) if RDKit is unavailable or the two blocks
+    do not yield comparable molecular graphs; the caller falls back to the
+    atom-name-matched value.
+    """
+    try:
+        from rdkit import Chem, RDLogger
+        from rdkit.Chem import rdMolAlign
+    except ImportError:
+        return None
+
+    RDLogger.DisableLog("rdApp.*")  # ty: ignore[unresolved-attribute]
+    try:
+        probe = Chem.MolFromPDBBlock(
+            _pdb_block_for_rdkit(docked_pdb_or_pdbqt_text), sanitize=False, removeHs=True
+        )
+        reference = Chem.MolFromPDBBlock(
+            _pdb_block_for_rdkit(reference_pdb_or_pdbqt_text), sanitize=False, removeHs=True
+        )
+        if probe is None or reference is None:
+            return None
+        if probe.GetNumAtoms() != reference.GetNumAtoms():
+            return None
+        return float(rdMolAlign.CalcRMS(probe, reference))
+    except Exception:  # RDKit raises bare RuntimeError for a failed substructure match
+        return None
 
 
 def dock_top_pose(
@@ -186,23 +271,47 @@ def run_self_dock(
         )
 
     matched = rmsd_by_atom_name(pose_text, reference_ligand_pdb_block)
+    n_reference_heavy = count_heavy_atoms(reference_ligand_pdb_block)
     if matched is None:
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
-            failure_mode=FailureMode.DOCKING_QUALITY,
+            failure_mode=FailureMode.MEASUREMENT,
+            reference_heavy_atom_count=n_reference_heavy,
             notes=[
                 "docked pose and reference ligand share no atom names -- cannot compute a "
                 "meaningful self-dock RMSD"
             ],
         )
-    rmsd, n_matched = matched
+    name_matched_rmsd, n_matched = matched
+    if not rmsd_coverage_is_sufficient(n_matched, n_reference_heavy):
+        return ValidationResult(
+            pdb_id=pdb_id,
+            status=ValidationStatus.FAILURE,
+            failure_mode=FailureMode.MEASUREMENT,
+            matched_atom_count=n_matched,
+            reference_heavy_atom_count=n_reference_heavy,
+            notes=[
+                f"self-dock RMSD not interpretable: only {n_matched} of "
+                f"{n_reference_heavy} reference heavy atoms corresponded "
+                f"(need ≥{_MIN_MATCHED_ATOMS} and ≥{_MIN_MATCHED_FRACTION:.0%}) -- "
+                "recorded as a measurement failure, not a docking-quality verdict"
+            ],
+        )
+
+    symmetry_rmsd = symmetry_corrected_rmsd(pose_text, reference_ligand_pdb_block)
+    rmsd = symmetry_rmsd if symmetry_rmsd is not None else name_matched_rmsd
     if rmsd > rmsd_threshold_angstrom:
         logger.info("❌ %s: self-dock RMSD %.2f Å exceeds threshold %.2f Å", pdb_id, rmsd, rmsd_threshold_angstrom)
         return ValidationResult(
             pdb_id=pdb_id,
             status=ValidationStatus.FAILURE,
             failure_mode=FailureMode.DOCKING_QUALITY,
+            self_dock_rmsd_angstrom=name_matched_rmsd,
+            symmetry_corrected_rmsd_angstrom=symmetry_rmsd,
+            matched_atom_count=n_matched,
+            reference_heavy_atom_count=n_reference_heavy,
+            rmsd_threshold_angstrom=rmsd_threshold_angstrom,
             notes=[
                 f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms) exceeds threshold "
                 f"{rmsd_threshold_angstrom} Å"
@@ -213,5 +322,10 @@ def run_self_dock(
     return ValidationResult(
         pdb_id=pdb_id,
         status=ValidationStatus.SUCCESS,
+        self_dock_rmsd_angstrom=name_matched_rmsd,
+        symmetry_corrected_rmsd_angstrom=symmetry_rmsd,
+        matched_atom_count=n_matched,
+        reference_heavy_atom_count=n_reference_heavy,
+        rmsd_threshold_angstrom=rmsd_threshold_angstrom,
         notes=[f"self-dock RMSD {rmsd:.2f} Å ({n_matched} matched atoms), within {rmsd_threshold_angstrom} Å"],
     )

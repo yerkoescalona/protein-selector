@@ -216,3 +216,32 @@ class TestPrepareLigandPdbqt:
 
         assert result == dest
         assert dest.read_text() == "REMARK  fake pdbqt\n"
+
+
+class TestAdditiveDenylistExtension:
+    """PLAN.md §28 C.1 -- crystallization additives must not reach the expensive lane."""
+
+    @pytest.mark.parametrize(
+        "ccd_code, why",
+        [
+            ("P6G", "hexaethylene glycol -- a PEG crystallization additive"),
+            ("PG4", "tetraethylene glycol -- same family"),
+            ("NAG", "N-acetylglucosamine -- normally N-linked to the protein itself"),
+            ("HED", "2-hydroxyethyl disulfide -- a reducing agent, 12 candidates, 0 passed"),
+            ("EPE", "HEPES buffer"),
+            ("IMD", "imidazole -- buffer/additive"),
+            ("NO", "nitric oxide -- diatomic, no meaningful pose or RMSD"),
+        ],
+    )
+    def test_known_additives_are_never_dockable(self, ccd_code, why):
+        # Passes Meeko's own chemistry checks -- the denylist must still exclude it,
+        # which is exactly why the two gates are independent.
+        meeko = {ccd_code: MeekoParameterizationResult(ligand_id=ccd_code, passed=True, reasons=[])}
+        assert not is_dockable_ligand_code(ccd_code, meeko), why
+
+    def test_real_cofactors_are_still_dockable(self):
+        # The measurement that justified the additions also showed nucleotide cofactors
+        # dock WELL (22/31, 71%) -- they are real ligands and must not be swept up.
+        for code in ("GNP", "GDP", "NDP", "ACO"):
+            meeko = {code: MeekoParameterizationResult(ligand_id=code, passed=True, reasons=[])}
+            assert is_dockable_ligand_code(code, meeko), code

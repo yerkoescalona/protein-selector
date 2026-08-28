@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import requests
 
 from protein_selector.core.validation_result import FailureMode
+from protein_selector.core.validation_store import load_validation_results
 from protein_selector.docking.ligands import fetch_smiles_for_ccd_codes
 from protein_selector.docking.native_ligand import (
     ligand_bounding_box,
@@ -36,6 +38,9 @@ from protein_selector.docking.store import (
     load_ligand_ccd_codes,
     load_meeko_parameterization,
     load_pocket_detection,
+)
+from protein_selector.molecular_dynamics.md_validation import (
+    EXERCISE_NAME as MD_EXERCISE_NAME,
 )
 from protein_selector.molecular_dynamics.md_validation import relaxed_structure_path
 from protein_selector.molecular_dynamics.structure_alignment import (
@@ -68,6 +73,31 @@ class DockingTarget:
     box_center: tuple[float, float, float]
     box_size: tuple[float, float, float]
     nearby_pocket_druggability: float | None
+    # PLAN.md §28 B.3. Both were previously invisible: the alignment RMSD was logged at
+    # debug level and dropped, and nothing recorded that the receptor came from an MD run
+    # that hit its minimization cap. Both are error terms folded into the self-dock RMSD
+    # this target produces, so they travel with it and land in the persisted
+    # ValidationResult instead of being unrecoverable after the fact (§28a F-A/A1, A4).
+    alignment_rmsd_angstrom: float | None = None
+    receptor_minimization_converged: bool | None = None
+
+
+def _receptor_minimization_converged(pdb_id: str, db_path) -> bool | None:
+    """Did the MD run that produced this receptor converge, or hit its minimization cap?
+
+    ``run_test_md`` records "may not have fully converged" in its notes when OpenMM stopped
+    at ``max_minimization_iterations``. 2,281 of 2,357 stored MD rows carry that warning and
+    100% of docking-tested candidates used such a receptor (PLAN.md §28a F-A/A1), which is
+    exactly why it has to travel with the docking result instead of staying buried in prose.
+    Returns ``None`` when no MD row exists to read.
+    """
+    # Path(), not db_path as given: this module's callers pass a plain str in places
+    # (so does the test suite), while the store loaders call db_path.exists() -- the
+    # same str-vs-Path rough edge §28a F-H notes for build_report_table.
+    md_result = load_validation_results(MD_EXERCISE_NAME, Path(db_path)).get(pdb_id)
+    if md_result is None:
+        return None
+    return not any("converge" in note.lower() for note in md_result.notes)
 
 
 def resolve_docking_target(
@@ -166,6 +196,8 @@ def resolve_docking_target(
             box_center=box_center,
             box_size=box_size,
             nearby_pocket_druggability=nearby_pocket_druggability,
+            alignment_rmsd_angstrom=alignment_rmsd,
+            receptor_minimization_converged=_receptor_minimization_converged(pdb_id, db_path),
         ),
         [],
         None,

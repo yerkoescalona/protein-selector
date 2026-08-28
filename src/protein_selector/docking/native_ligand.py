@@ -36,6 +36,25 @@ _EXCLUDED_CCD_CODES = frozenset(
         # Small polyatomic crystallization ions -- nitrate/nitrite were the concrete
         # bug this brief reports (1LKS/1V7S).
         "NO3", "NO2",
+        # PLAN.md §28 C.1, added 2026-08-28 from a measurement, not a guess: these are
+        # the codes that actually reached Vina in the real store and behaved like
+        # non-ligands -- 49 of 370 docking-tested candidates (13%), passing at 10.2%
+        # against the pool's own 35.4%. Each group is a *reason*, not a list of
+        # coincidences:
+        #   PEG family -- crystallization additives. "PEG"/"1PE"/"PGE" were already
+        #   here; the longer chains were not, so P6G/PG4 slipped through (2IEK's
+        #   "docking target" was hexaethylene glycol). 0/7 passed.
+        "P6G", "PG4", "PE4", "2PE", "XPE", "P33", "7PE", "PG0", "PG5", "PG6", "DIO",
+        #   Sugars/glycosylation residues -- NAG in particular is normally N-linked to
+        #   asparagine, i.e. part of the protein, not a bound ligand to redock. 0/10.
+        "NAG", "NDG", "BGC", "MAN", "BMA", "FUC", "GAL", "XYL",
+        #   Buffers, detergents and cryoprotectants: HED (2-hydroxyethyl disulfide,
+        #   12 candidates, 0 passed), EPE (HEPES), IMD (imidazole), MPD, BOG, LDA.
+        "HED", "EPE", "IMD", "BOG", "LDA", "C8E", "SBT", "POL", "PIN", "EOH",
+        #   Diatomic/triatomic gases and ions -- too few atoms for a meaningful pose
+        #   or RMSD (the B.1 coverage guard rejects them downstream anyway; excluding
+        #   them here means not spending a Vina run to find that out).
+        "NO", "CMO", "OXY", "CYN",
     }
 )
 
