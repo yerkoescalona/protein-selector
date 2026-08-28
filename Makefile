@@ -1,4 +1,4 @@
-.PHONY: env test lint typecheck check serve workflow workflow-md workflow-dock workflow-all clean
+.PHONY: env test coverage lint typecheck check serve demo calibration workflow workflow-md workflow-dock workflow-all provenance clean
 
 # Base env + the validate extra (rdkit/meeko/...) + the webapp deps group --
 # what `make test`/`make serve` below both need. `uv sync` alone (no flags)
@@ -9,6 +9,10 @@ env:
 test:
 	uv run --extra validate pytest -q
 
+# PLAN.md §27d W5.3: a coverage baseline, not a target -- see pyproject.toml's dev group.
+coverage:
+	uv run --extra validate pytest -q --cov=protein_selector --cov-report=term-missing
+
 lint:
 	uv run ruff check .
 
@@ -18,6 +22,20 @@ typecheck:
 # The full pre-commit gate this repo's .claude/CLAUDE.md calls for, run
 # together, in the same order.
 check: lint typecheck test
+
+# PLAN.md §27d W1.1/W1.2: rebuild the report from the committed demo slice
+# (demo/protein_selector_demo.db, a real few-hundred-candidate sample -- see
+# scripts/build_demo_slice.py). Base deps only: no `uv sync --extra validate`, no conda,
+# no network -- `uv sync` alone (the plain default target) is enough. This is the
+# "what do I get" answer for a first-time reader, before any real setup.
+demo:
+	uv run python scripts/build_report.py --db-path demo/protein_selector_demo.db --out demo/report_demo.csv
+
+# PLAN.md §27d W3.1: does predicted_difficulty actually discriminate pass from fail?
+# Base deps only, same "no --extra/no conda/no network" guarantee as `make demo` --
+# runs against the committed demo slice by default; pass --db-path for the real store.
+calibration:
+	uv run python scripts/calibration_study.py --db-path demo/protein_selector_demo.db --out docs/calibration_study.md
 
 # Local dev server for the Dash app (PLAN.md §14). Needs the validate extra
 # too -- webapp/data.py's report join reads parameterizability results.
@@ -92,6 +110,12 @@ workflow-all:
 # fixed by this exact `PATH=` prefix (same one workflow-md/-dock/-all already use).
 workflow-complex-md:
 	PATH="$$HOME/miniconda3/bin:$$PATH" uv run --extra validate --group workflow snakemake --cores 2 --sdm conda --config run_complex_md=true --forcerun report
+
+# PLAN.md §27d W2.5: print one stamped run's provenance (tool version, git SHA, resolved
+# parameters, environment fingerprint) as a plain-text table. No RUN=<id> -> lists every
+# stamped run instead. Read-only, no extras/conda env needed.
+provenance:
+	uv run python scripts/provenance.py $(RUN)
 
 clean:
 	rm -rf .pytest_cache .ruff_cache

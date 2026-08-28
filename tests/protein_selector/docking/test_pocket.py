@@ -122,6 +122,31 @@ class TestRunFpocket:
 
         assert len(pockets) == 2
 
+    def test_deletes_output_dir_by_default(self, tmp_path):
+        pdb_path = tmp_path / "1uyd.pdb"
+        pdb_path.write_text("ATOM ...")
+        out_dir = tmp_path / "1uyd_out"
+        out_dir.mkdir()
+        (out_dir / "1uyd_info.txt").write_text(_SAMPLE_INFO_TXT)
+
+        with patch("protein_selector.docking.pocket.subprocess.run", return_value=MagicMock()):
+            run_fpocket(pdb_path)
+
+        assert not out_dir.exists()
+
+    def test_keep_output_dir_true_preserves_it(self, tmp_path):
+        pdb_path = tmp_path / "1uyd.pdb"
+        pdb_path.write_text("ATOM ...")
+        out_dir = tmp_path / "1uyd_out"
+        out_dir.mkdir()
+        (out_dir / "1uyd_info.txt").write_text(_SAMPLE_INFO_TXT)
+
+        with patch("protein_selector.docking.pocket.subprocess.run", return_value=MagicMock()):
+            run_fpocket(pdb_path, keep_output_dir=True)
+
+        assert out_dir.exists()
+        assert (out_dir / "1uyd_info.txt").exists()
+
     def test_populates_box_center_from_vertex_files_when_present(self, tmp_path):
         pdb_path = tmp_path / "1uyd.pdb"
         pdb_path.write_text("ATOM ...")

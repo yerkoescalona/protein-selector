@@ -63,7 +63,7 @@ restrict_md_to_dockable: true  # scripts/ligand_filter_fix_brief.md, Problem 3 -
 # under this conda env) needs it directly for `docking.pdb_download.fetch_pdb_text` --
 # unlike `md_validate` (PDBFixer fetches its own structure, no `requests` call), so
 # `requests` was never in this env's original MD-only package list and must be added too.
-validation_conda_prefix: /home/yescalona/miniconda3/envs/protein-selector-validation
+validation_conda_prefix: /home/yerko/miniconda3/envs/protein-selector-validation
 md_threads: 2
 md_n_steps: 50  # short smoke test (§15.0/PLAN.md §5b: setup/stability failure modes
 # surface in minutes, not a converged trajectory -- see PLAN.md §15f for why cutting

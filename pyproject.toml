@@ -73,6 +73,8 @@ validate = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    # PLAN.md §27d W5.3: a coverage baseline, not a target -- see `make coverage`.
+    "pytest-cov>=5.0",
     "ruff>=0.6",
     "ty>=0.0.1a1",
 ]

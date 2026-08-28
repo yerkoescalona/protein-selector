@@ -25,6 +25,7 @@ import itertools
 import logging
 import math
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -162,7 +163,9 @@ def _parse_vertex_extent(
 
 
 def run_fpocket(
-    pdb_path: Path, box_padding_angstroms: float = _BOX_PADDING_ANGSTROMS
+    pdb_path: Path,
+    box_padding_angstroms: float = _BOX_PADDING_ANGSTROMS,
+    keep_output_dir: bool = False,
 ) -> list[PocketInfo]:
     """Run fpocket on a local PDB file and parse its pocket-info output.
 
@@ -174,6 +177,17 @@ def run_fpocket(
 
     Raises ``FileNotFoundError`` (with an install hint) if the ``fpocket`` binary isn't on
     PATH, and ``RuntimeError`` if fpocket exits non-zero or doesn't produce ``_info.txt``.
+
+    **Deletes fpocket's own ``<stem>_out/`` directory before returning** (PLAN.md §27d
+    S7.1) -- everything this function's caller needs (scores/volumes/box geometry) is
+    already parsed into the returned ``PocketInfo`` list and, from there, persisted to
+    the ``pocket_detection`` SQLite table; nothing downstream (docking, the report join)
+    ever re-reads this directory from disk again. Confirmed by grepping every caller of
+    ``core.paths`` before adding this: only the top-level relaxed-receptor PDB is read
+    again later, never fpocket's visualization scripts / per-pocket atom-vertex files /
+    duplicated receptor copy -- which is why this was ~55% (609 MB of 1.1 GB) of
+    ``cache/structures`` in the real store before this change. Pass
+    ``keep_output_dir=True`` to skip cleanup (e.g. debugging a real fpocket run by hand).
     """
     logger.info("🕳️ running fpocket on %s", pdb_path)
     try:
@@ -208,6 +222,10 @@ def run_fpocket(
             pocket.box_center = _parse_vertex_centroid(vert_text)
             pocket.box_size = _parse_vertex_extent(vert_text, box_padding_angstroms)
     logger.info("✅ fpocket on %s: found %d pocket(s)", pdb_path, len(pockets))
+
+    if not keep_output_dir:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
     return pockets
 
 

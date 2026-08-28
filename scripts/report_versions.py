@@ -31,8 +31,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import importlib.metadata
+import io
 import json
 import os
 import platform
@@ -40,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import warnings
 from pathlib import Path
 
 # (PyPI/conda distribution name, importable module name, which group it belongs to).
@@ -104,11 +107,25 @@ def _dist_version(dist_name: str) -> str | None:
 
 
 def _probe_module(module_name: str) -> tuple[bool, str | None, str | None]:
-    """Return (importable, path, error). Importing is the only honest availability test."""
-    try:
-        mod = importlib.import_module(module_name)
-    except BaseException as exc:  # noqa: BLE001 -- a broken C extension can raise anything
-        return False, None, f"{type(exc).__name__}: {exc}"
+    """Return (importable, path, error). Importing is the only honest availability test.
+
+    Some real packages print/warn as an import side effect (live-caught, 2026-08-23:
+    Biopython's "importing from inside the source tree" ``BiopythonWarning`` and PyMOL's
+    "use `from pymol import cmd`" both land on stdout, not stderr) -- silenced here so
+    ``--json`` mode's stdout stays parseable JSON, its one documented machine-readable
+    contract. Never silences the probe's *own* result (importable/path/error), only the
+    imported module's incidental noise.
+    """
+    with (
+        warnings.catch_warnings(),
+        contextlib.redirect_stdout(io.StringIO()),
+        contextlib.redirect_stderr(io.StringIO()),
+    ):
+        warnings.simplefilter("ignore")
+        try:
+            mod = importlib.import_module(module_name)
+        except BaseException as exc:  # noqa: BLE001 -- a broken C extension can raise anything
+            return False, None, f"{type(exc).__name__}: {exc}"
     path = getattr(mod, "__file__", None)
     return True, path, None
 
