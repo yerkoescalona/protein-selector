@@ -1,4 +1,4 @@
-.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-status provenance clean
+.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-graph ray-status provenance clean
 
 # Base env + the validate extra (rdkit/meeko/...) + the webapp deps group --
 # what `make test`/`make serve` below both need. `uv sync` alone (no flags)
@@ -65,6 +65,12 @@ ray-run:
 # and how long each took. The store cannot answer any of those: a row only appears once a
 # stage FINISHES, and a failure persists no row at all. Needs a running cluster
 # (RUN=<run_id> must match the id the run was launched with).
+# PLAN.md §35: print every node's input/output sockets and check the wiring -- which
+# required input has no producer, which wire runs backwards, what is produced and never
+# consumed. Base deps only; runs nothing.
+ray-graph:
+	./.venv/bin/python scripts/run_ray_pipeline.py --graph
+
 ray-status:
 	./.venv/bin/python scripts/run_ray_pipeline.py --status $(RUN)
 

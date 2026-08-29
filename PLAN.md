@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§35** | **The node card (2026-08-29): sockets, wires, and a pre-flight graph check.** Makes missing links findable before a run. Found a real dropped consumer on its first run (P.4) and a wire missing from its own declaration (P.2). |
 | **§34** | **Target structure (2026-08-29): pipelines / stages / nodes / domain.** A code-organization taxonomy, orthogonal to the runner. Fixes a ~2,445-call double AFDB fetch and §25g's layering inversion on the way. Work order in §34e. |
 | **§33** | **Snakemake removed (2026-08-29).** Y.1 (slow lanes under Ray, conda-env driver) and Y.2 (both runners produce byte-identical stores) both passed first. 961 lines of orchestration → 643; 2,830 marker files gone. Open cost: Y.4, the SLURM shape. |
 | **§32** | **Run status board (2026-08-29).** The liveness view the store structurally cannot provide — which step is running, which *failed* (a failure persists no row), and per-step timing. Board is a view, never an authority. |
@@ -2241,3 +2242,80 @@ exactly what is missing today.
       module and every module has a spec), plus the invariants that keep the tiers honest:
       conda-only nodes live only in `validation`, and per-candidate granularity is exactly
       the four expensive nodes.
+
+## 35. The node card: sockets, wires, and checking before running (2026-08-29)
+
+§34 gave nodes a *place*. This gives them a **contract**, so the connections between them
+can be checked instead of inferred.
+
+### 35a. The card
+
+Every node is a box with named **input sockets** (what it needs) and **output sockets**
+(what it gives). Each socket has a name, a kind, and — for inputs — whether it is required.
+A **wire** exists wherever one node's output socket name matches another's input socket
+name: naming *is* the wiring, so there is no separate wire list that can drift from reality.
+
+One rule carries the whole design: **a node may only receive through its declared inputs
+and only produce through its declared outputs.** A node that quietly writes a file for a
+later node to find has broken the contract, and no check can see that dependency.
+
+Three socket kinds, and the distinction is operational rather than decorative:
+
+| kind | what it is | survives a run? |
+|---|---|---|
+| `TABLE` | a row set in SQLite | yes — this is why resume works from the store (§31a) |
+| `ARTIFACT` | a file under `cache/structures/` | yes, but **invisible to the database** |
+| `COLLECTION` | a value handed node-to-node in memory | no |
+
+### 35b. `ARTIFACT` exists because of a link nothing could express
+
+The first registry (§34 N.2) declared only SQLite tables, and that was not enough to
+describe the real flow. **The MD-relaxed receptor is a file**, written by `simulate_md`
+under `cache/structures/` and read by `detect_pocket`, `dock_ligand` and
+`simulate_complex_md` — §18 makes it load-bearing, since the docking receptor *is* the
+MD-relaxed structure. A table-only vocabulary cannot say that, so the single most
+important dependency in the slow lane was undeclared and therefore uncheckable.
+
+### 35c. Checking before running
+
+`validate_graph()` walks the wires and returns errors (which block) and warnings (which do
+not), naming the node and the socket:
+
+- a **required input with no producer** — a node that can never run;
+- a **wire running backwards** — an input produced only by a later phase;
+- an **output nobody consumes** — not an error, but it is also what a dropped consumer
+  looks like;
+- an **optional input with no producer** — a typo, or an undeclared external source.
+
+A node consuming a socket it also produces is explicitly *not* treated as a loop:
+several nodes append to `validation`, which is a shared table, not a cycle.
+
+Wired into `pipelines/course_candidates.run()` as a pre-flight, and exposed as
+`make ray-graph`. A missing link now costs seconds to find rather than a whole run —
+which is exactly how the §34-era discovery regression stayed hidden: it returned zero
+survivors and looked like a clean no-op.
+
+### 35d. What it found on its first run
+
+- [x] **P.1** (2026-08-29) `SocketKind` + `Socket` + declared inputs/outputs for all 14
+      nodes; `producers_of`/`consumers_of`; `validate_graph`; `make ray-graph`; pre-flight
+      check in `course_candidates`. 9 new tests. **Real graph: 0 errors, 3 warnings.**
+- [x] **P.2** (2026-08-29) **A wire missing from the declaration, caught immediately.**
+      `select_dockable` produces `dockable_ids` and the checker reported it unconsumed —
+      but the runner *does* consume it, feeding `simulate_md`'s pool when
+      `restrict_md_to_dockable` is on. The code was right and the card was wrong; fixed by
+      declaring it an optional input of `simulate_md`.
+- [x] **P.3** (2026-08-29) **A bug in the checker itself**, caught by its own tests:
+      `validate_graph` resolved a producer's stage through the module-global `BY_NAME`
+      rather than the graph being checked, so validating any subgraph raised `KeyError` on
+      its own nodes. It now builds the map from the nodes passed in.
+- [ ] **P.4** **`oligomeric_state` is written every run and read by nothing.** 17,966 rows;
+      `load_oligomeric_state` is called only by its own tests. This is a real dropped
+      consumer, found by the first `validate_graph()` run rather than by reading code.
+      Decide, don't drift: either surface it in the report (oligomeric state is a genuine
+      simulability signal, §2) or stop computing it. *Done when:* the warning is gone
+      because one of those two happened.
+- [ ] **P.5** Enforce the card at runtime, not just on paper. Today a node *could* still
+      read a table it never declared and nothing would notice. *Done when:* a node reading
+      an undeclared table fails a test — most cheaply by having the node wrapper pass only
+      its declared sockets.

@@ -92,3 +92,119 @@ class TestRegistryIsInternallyConsistent:
         # annotation writes validation rows too, via lookup_alphafold -- the modeling
         # exercise is a lookup, not a simulation. Stated, so it is a decision not a leak.
         assert writers == {"annotation", "validation"}
+
+
+class TestSockets:
+    """PLAN.md §35: the card every node fills in."""
+
+    def test_reads_and_writes_are_the_table_sockets(self):
+        md = BY_NAME["simulate_md"]
+        assert md.reads == ("candidates",)
+        assert md.writes == ("validation",)
+
+    def test_the_relaxed_structure_is_declared_as_an_artifact_not_a_table(self):
+        # The channel the first registry could not express at all: §18 makes the docking
+        # receptor the MD validator's own relaxed structure -- a FILE, invisible to the
+        # database, that three later nodes genuinely depend on.
+        from protein_selector.core.registry import RELAXED_STRUCTURE, SocketKind
+
+        produced = [
+            s for s in BY_NAME["simulate_md"].outputs if s.name == RELAXED_STRUCTURE
+        ]
+        assert produced and produced[0].kind is SocketKind.ARTIFACT
+        for reader in ("detect_pocket", "dock_ligand", "simulate_complex_md"):
+            assert RELAXED_STRUCTURE in {s.name for s in BY_NAME[reader].inputs}, reader
+
+    def test_producers_and_consumers_agree(self):
+        from protein_selector.core.registry import consumers_of, producers_of
+
+        assert "simulate_md" in producers_of("relaxed_structure")
+        assert "detect_pocket" in consumers_of("relaxed_structure")
+
+
+class TestGraphValidation:
+    """The check that answers 'is a link missing?' before anything runs."""
+
+    def test_the_real_pipeline_graph_is_complete(self):
+        from protein_selector.core.registry import validate_graph
+
+        report = validate_graph()
+        assert report.ok, str(report)
+
+    def test_a_required_input_with_no_producer_is_an_error(self):
+        from protein_selector.core.registry import (
+            Granularity,
+            NodeSpec,
+            table,
+            validate_graph,
+        )
+
+        orphan = NodeSpec(
+            "orphan", "screening", Granularity.BATCH, inputs=(table("nowhere"),)
+        )
+        report = validate_graph((orphan,))
+        assert not report.ok
+        assert "nothing produces it" in report.errors[0]
+
+    def test_an_optional_input_with_no_producer_is_only_a_warning(self):
+        from protein_selector.core.registry import (
+            Granularity,
+            NodeSpec,
+            table,
+            validate_graph,
+        )
+
+        node = NodeSpec(
+            "lenient", "screening", Granularity.BATCH,
+            inputs=(table("nowhere", required=False),),
+        )
+        report = validate_graph((node,))
+        assert report.ok
+        assert any("optional" in w for w in report.warnings)
+
+    def test_a_backwards_wire_is_an_error(self):
+        # A node reading something only produced in a LATER phase can never be satisfied.
+        from protein_selector.core.registry import (
+            Granularity,
+            NodeSpec,
+            table,
+            validate_graph,
+        )
+
+        early = NodeSpec(
+            "early", "screening", Granularity.BATCH, inputs=(table("late_output"),)
+        )
+        late = NodeSpec(
+            "late", "reporting", Granularity.BATCH, outputs=(table("late_output"),)
+        )
+        report = validate_graph((early, late))
+        assert not report.ok
+        assert "backwards" in report.errors[0]
+
+    def test_a_node_consuming_what_it_also_produces_is_not_a_self_loop(self):
+        # Several nodes append to `validation`; that is a shared table, not a cycle.
+        from protein_selector.core.registry import (
+            Granularity,
+            NodeSpec,
+            table,
+            validate_graph,
+        )
+
+        node = NodeSpec(
+            "appender", "validation", Granularity.BATCH,
+            inputs=(table("validation"),), outputs=(table("validation"),),
+        )
+        producer = NodeSpec(
+            "seeder", "screening", Granularity.BATCH, outputs=(table("validation"),)
+        )
+        assert validate_graph((producer, node)).ok
+
+    def test_an_unconsumed_output_is_a_warning_not_an_error(self):
+        # This is what a DROPPED CONSUMER looks like, so it is surfaced -- and on the real
+        # graph it caught a live one: `oligomeric_state` is written every run (17,966 rows)
+        # and `load_oligomeric_state` is called by nothing but its own tests.
+        from protein_selector.core.registry import validate_graph
+
+        report = validate_graph()
+        assert report.ok
+        assert any("oligomeric_state" in w for w in report.warnings)

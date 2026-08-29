@@ -54,6 +54,8 @@ def main() -> None:
     parser.add_argument("--ids", type=Path, help="frozen candidate id list (PLAN.md §16c)")
     parser.add_argument("--plan", action="store_true", help="dry run: what would be done")
     parser.add_argument("--run", action="store_true", help="execute the Ray DAG")
+    parser.add_argument("--graph", action="store_true",
+                        help="print the node graph and every missing link (PLAN.md §35)")
     parser.add_argument("--status", metavar="RUN_ID",
                         help="print the live status board for a run (PLAN.md §32)")
     parser.add_argument("--run-id", help="name this run, so --status can find its board")
@@ -61,6 +63,21 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if args.graph:
+        from protein_selector.core.registry import NODES, STAGE_ORDER, validate_graph
+
+        for stage in STAGE_ORDER:
+            print(f"\n[{stage}]")
+            for node in (n for n in NODES if n.stage == stage):
+                ins = ", ".join(f"{s.name}{'' if s.required else '?'}" for s in node.inputs)
+                outs = ", ".join(s.name for s in node.outputs)
+                print(f"  {node.name}")
+                print(f"      in  <- {ins or '(none)'}")
+                print(f"      out -> {outs or '(none)'}")
+        print()
+        print(validate_graph())
+        return
 
     if args.status:
         # Attaches to an existing cluster to read a detached board -- deliberately does
