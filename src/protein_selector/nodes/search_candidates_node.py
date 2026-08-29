@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import random
+from typing import TypedDict
 
 from protein_selector.core.config import (
     _RCSB_MAX_ATOMS_CEILING,
@@ -23,6 +24,12 @@ from protein_selector.domain.structural_biology.rcsb_search import (
     search_candidate_ids,
 )
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
+
+
+class SearchCandidatesOutputs(TypedDict):
+    """Output sockets of :class:`SearchCandidatesNode` -- keys checked statically."""
+
+    candidate_entries: list[CandidateEntry]
 
 
 class SearchCandidatesNode(Node):
@@ -38,10 +45,10 @@ class SearchCandidatesNode(Node):
     outputs = (collection("candidate_entries"),)
     needs_network = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[SearchCandidatesOutputs]:
         """Delegates to the module function, which stays the implementation."""
         entries = search_candidates(ctx.config)
-        return NodeResult(outputs={"candidate_entries": entries})
+        return NodeResult(outputs=SearchCandidatesOutputs(candidate_entries=entries))
 
 logger = logging.getLogger(__name__)
 

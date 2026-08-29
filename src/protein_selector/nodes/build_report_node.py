@@ -8,10 +8,17 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TypedDict
 
 from protein_selector.core.registry import Granularity, collection, table
 from protein_selector.core.report import build_report_table, write_report_csv
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
+
+
+class BuildReportOutputs(TypedDict):
+    """Output sockets of :class:`BuildReportNode` -- keys checked statically."""
+
+    report_rows: int
 
 
 class BuildReportNode(Node):
@@ -26,10 +33,10 @@ class BuildReportNode(Node):
     inputs = (table("candidates"), table("simulability"), table("entity_composition"), table("literature"), table("ligand_ccd_codes"), table("ligand_smiles"), table("parameterizability"), table("meeko_parameterization"), table("pocket_detection", required=False), table("alphafold_entries"), table("validation"),)
     outputs = (collection("report_rows"),)
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[BuildReportOutputs]:
         """Delegates to the module function, which stays the implementation."""
         rows = build_report(ctx.db_path)
-        return NodeResult(outputs={"report_rows": rows})
+        return NodeResult(outputs=BuildReportOutputs(report_rows=rows))
 
 logger = logging.getLogger(__name__)
 

@@ -9,9 +9,16 @@ statement) -- see ``.claude/CLAUDE.md`` bug 8 for why.
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 from protein_selector.core.registry import Granularity, table
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
+
+
+class ParameterizeLigandOutputs(TypedDict):
+    """Output sockets of :class:`ParameterizeLigandNode` -- keys checked statically."""
+
+    meeko_parameterization: bool
 
 
 class ParameterizeLigandNode(Node):
@@ -26,13 +33,13 @@ class ParameterizeLigandNode(Node):
     inputs = (table("ligand_ccd_codes"), table("ligand_smiles"),)
     outputs = (table("meeko_parameterization"),)
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[ParameterizeLigandOutputs]:
         """Delegates to the module function, which stays the implementation."""
         parameterize_ligand(
             list(ctx.get("ligand_ccd_codes")), ctx.get("ligand_smiles"),
             ctx.db_path, force_refresh=ctx.force_refresh,
         )
-        return NodeResult(outputs={"meeko_parameterization": True})
+        return NodeResult(outputs=ParameterizeLigandOutputs(meeko_parameterization=True))
 
 logger = logging.getLogger(__name__)
 

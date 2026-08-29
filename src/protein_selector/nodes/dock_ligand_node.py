@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
+from typing import TypedDict
 
 from protein_selector.core.config import DockingConfig
 from protein_selector.core.registry import (
@@ -44,6 +45,12 @@ from protein_selector.domain.molecular_dynamics.openmm_md import (
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
 
+class DockLigandOutputs(TypedDict):
+    """Output sockets of :class:`DockLigandNode` -- keys checked statically."""
+
+    validation: ValidationResult | None
+
+
 class DockLigandNode(Node):
     """The card (PLAN.md §35): what this node needs, what it gives.
 
@@ -58,13 +65,13 @@ class DockLigandNode(Node):
     needs_conda = True
     needs_network = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[DockLigandOutputs]:
         """Delegates to the module function, which stays the implementation."""
         result = dock_ligand(
             ctx.candidate(), ctx.config, ctx.db_path,
             force_refresh=ctx.force_refresh,
         )
-        return NodeResult(outputs={"validation": result})
+        return NodeResult(outputs=DockLigandOutputs(validation=result))
 
 logger = logging.getLogger(__name__)
 

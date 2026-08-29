@@ -84,13 +84,34 @@ class NodeContext:
 
 
 @dataclass
-class NodeResult:
-    """What a node produced, keyed by output socket name."""
+class NodeResult[Outputs: Mapping[str, Any]]:
+    """What a node produced, keyed by output socket name.
 
-    outputs: dict[str, Any] = field(default_factory=dict)
+    Generic over a per-node ``TypedDict`` (``DockLigandOutputs`` and friends) so the keys
+    are checked statically on **both** sides -- where the node builds the result, and where
+    a caller reads it. With a plain ``dict[str, Any]``, ``outputs["validaton"]`` silently
+    returned ``None``.
+
+    A ``TypedDict`` rather than a dataclass or ``NamedTuple`` deliberately: the value stays
+    a real ``dict`` at runtime, so the stage and runner layers that route outputs by socket
+    name need no conversion step. This does not replace the dictionary -- it makes its keys
+    checked.
+
+    The TypedDict keys and the node's declared output sockets state the same fact twice, so
+    ``test_registry`` asserts they agree -- the drift guard §7b uses for report columns.
+
+    **Convention for ``TABLE`` sockets:** the value is a *receipt*, not the data -- a count
+    where one is naturally available, otherwise ``True``. Table rows live in the store and
+    a downstream node reads them from there rather than along a wire (§15b). The key is
+    still required, because it is a declared output and the graph checker uses it to wire
+    this node to whoever reads that table. ``COLLECTION`` and ``ARTIFACT`` sockets carry
+    the real value (a list, or a path).
+    """
+
+    outputs: Outputs
 
     def get(self, socket: str) -> Any:
-        """Convenience accessor for one output."""
+        """Convenience accessor for one output, by socket name."""
         return self.outputs.get(socket)
 
 

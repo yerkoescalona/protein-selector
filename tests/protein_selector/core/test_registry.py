@@ -275,3 +275,46 @@ class TestCardsLiveOnTheNodes:
         )
         assert result.returncode == 0, result.stderr
         assert "ok" in result.stdout
+
+
+class TestOutputTypedDictsMatchTheCards:
+    """PLAN.md §35g: the TypedDict keys and the declared output sockets are one fact.
+
+    Stating it twice means it can drift, so it is asserted -- the same guard §7b uses for
+    report columns and §34 N.7 uses for node tables.
+    """
+
+    def test_every_node_has_an_outputs_typeddict_matching_its_sockets(self):
+        import importlib
+        import inspect
+        import typing
+
+        from protein_selector.core.registry import discover_nodes
+
+        for spec in discover_nodes():
+            module = importlib.import_module(f"protein_selector.nodes.{spec.name}_node")
+            pascal = "".join(p.title() for p in spec.name.split("_"))
+            td = getattr(module, f"{pascal}Outputs", None)
+            assert td is not None, f"{spec.name}: no {pascal}Outputs TypedDict"
+            declared = {s.name for s in spec.outputs}
+            keys = set(typing.get_type_hints(td))
+            assert keys == declared, (
+                f"{spec.name}: TypedDict keys {sorted(keys)} != output sockets "
+                f"{sorted(declared)}"
+            )
+            assert inspect.isclass(td)
+
+    def test_the_return_annotation_uses_that_typeddict(self):
+        import importlib
+        import inspect
+
+        from protein_selector.core.registry import discover_nodes
+
+        for spec in discover_nodes():
+            module = importlib.import_module(f"protein_selector.nodes.{spec.name}_node")
+            pascal = "".join(p.title() for p in spec.name.split("_"))
+            cls = getattr(module, f"{pascal}Node")
+            source = inspect.getsource(cls.run)
+            assert f"NodeResult[{pascal}Outputs]" in source, (
+                f"{spec.name}.run must be annotated NodeResult[{pascal}Outputs]"
+            )

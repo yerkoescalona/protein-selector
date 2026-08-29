@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TypedDict
 
 from protein_selector.core.config import ModelingLookupConfig
 from protein_selector.core.registry import Granularity, collection, table
@@ -29,6 +30,15 @@ from protein_selector.domain.structural_biology.rcsb_search import CandidateEntr
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
 
+class LookupAlphafoldOutputs(TypedDict):
+    """Output sockets of :class:`LookupAlphafoldNode` -- keys checked statically."""
+
+    alphafold_entries: int
+    # A receipt, not a payload: the validation rows live in the store (§15b). The key is
+    # required because `validation` is a declared output socket that build_report reads.
+    validation: bool
+
+
 class LookupAlphafoldNode(Node):
     """The card (PLAN.md §35): what this node needs, what it gives.
 
@@ -42,12 +52,16 @@ class LookupAlphafoldNode(Node):
     outputs = (table("alphafold_entries"), table("validation"),)
     needs_network = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[LookupAlphafoldOutputs]:
         """Delegates to the module function, which stays the implementation."""
         results = lookup_alphafold(
             ctx.get("survivors"), ctx.config, ctx.db_path, force_refresh=ctx.force_refresh
         )
-        return NodeResult(outputs={"alphafold_entries": len(results)})
+        return NodeResult(
+            outputs=LookupAlphafoldOutputs(
+                alphafold_entries=len(results), validation=True
+            )
+        )
 
 logger = logging.getLogger(__name__)
 

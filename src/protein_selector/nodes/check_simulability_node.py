@@ -13,6 +13,7 @@ persisted but never used to filter anything).
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 from protein_selector.core.config import CandidateFilterConfig
 from protein_selector.core.registry import Granularity, collection, table
@@ -33,6 +34,22 @@ from protein_selector.domain.structural_biology.validation import (
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
 
+class CheckSimulabilityOutputs(TypedDict):
+    """Output sockets of :class:`CheckSimulabilityNode` -- keys checked statically.
+
+    The four table keys are **receipts**, not payloads: the rows live in the store and a
+    downstream node reads them from there rather than along a wire (§15b). The keys are
+    still required, because they are declared output sockets and the graph checker uses
+    them to wire this node to whoever reads those tables.
+    """
+
+    survivors: list[CandidateEntry]
+    candidates: bool
+    simulability: bool
+    oligomeric_state: bool
+    entity_composition: bool
+
+
 class CheckSimulabilityNode(Node):
     """The card (PLAN.md §35): what this node needs, what it gives.
 
@@ -46,12 +63,20 @@ class CheckSimulabilityNode(Node):
     outputs = (collection("survivors"), table("candidates"), table("simulability"), table("oligomeric_state"), table("entity_composition"),)
     needs_network = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[CheckSimulabilityOutputs]:
         """Delegates to the module function, which stays the implementation."""
         survivors = check_simulability(
             ctx.get("candidate_entries"), ctx.config, ctx.db_path
         )
-        return NodeResult(outputs={"survivors": survivors})
+        return NodeResult(
+            outputs=CheckSimulabilityOutputs(
+                survivors=survivors,
+                candidates=True,
+                simulability=True,
+                oligomeric_state=True,
+                entity_composition=True,
+            )
+        )
 
 logger = logging.getLogger(__name__)
 

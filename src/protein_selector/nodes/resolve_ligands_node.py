@@ -7,6 +7,8 @@ don't need to re-fetch SMILES for codes this stage already resolved.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 from protein_selector.core.registry import Granularity, collection, table
 from protein_selector.domain.docking.ligands import (
     fetch_ligand_ccd_codes,
@@ -15,6 +17,16 @@ from protein_selector.domain.docking.ligands import (
 from protein_selector.domain.docking.store import upsert_ligand_ccd_codes
 from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
+
+
+class ResolveLigandsOutputs(TypedDict):
+    """Output sockets of :class:`ResolveLigandsNode` -- keys checked statically."""
+
+    ligand_ccd_codes: dict[str, str | None]
+    # A receipt, not a payload -- the SMILES rows live in the store (§15b). The key is
+    # required because `ligand_smiles` is a declared output socket that
+    # sanitize_ligand/parameterize_ligand read.
+    ligand_smiles: bool
 
 
 class ResolveLigandsNode(Node):
@@ -30,10 +42,14 @@ class ResolveLigandsNode(Node):
     outputs = (table("ligand_ccd_codes"), table("ligand_smiles"),)
     needs_network = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[ResolveLigandsOutputs]:
         """Delegates to the module function, which stays the implementation."""
         smiles = resolve_ligands(ctx.get("survivors"), db_path=ctx.db_path)
-        return NodeResult(outputs={"ligand_ccd_codes": smiles})
+        return NodeResult(
+            outputs=ResolveLigandsOutputs(
+                ligand_ccd_codes=smiles, ligand_smiles=True
+            )
+        )
 
 
 def resolve_ligands(entries: list[CandidateEntry], db_path) -> dict[str, str | None]:

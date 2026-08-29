@@ -8,6 +8,7 @@ request per PDB ID, so skipping already-fetched ids matters.
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 from protein_selector.core.registry import Granularity, collection, table
 from protein_selector.domain.bioinformatics.europe_pmc import fetch_literature_counts
@@ -16,6 +17,12 @@ from protein_selector.domain.bioinformatics.store import (
     upsert_literature_counts,
 )
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
+
+
+class CountLiteratureOutputs(TypedDict):
+    """Output sockets of :class:`CountLiteratureNode` -- keys checked statically."""
+
+    literature: int
 
 
 class CountLiteratureNode(Node):
@@ -31,11 +38,11 @@ class CountLiteratureNode(Node):
     outputs = (table("literature"),)
     needs_network = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[CountLiteratureOutputs]:
         """Delegates to the module function, which stays the implementation."""
         ids = [e.pdb_id for e in ctx.get("survivors")]
         count_literature(ids, ctx.db_path, force_refresh=ctx.force_refresh)
-        return NodeResult(outputs={"literature": len(ids)})
+        return NodeResult(outputs=CountLiteratureOutputs(literature=len(ids)))
 
 logger = logging.getLogger(__name__)
 

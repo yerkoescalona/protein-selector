@@ -8,6 +8,7 @@ codes missing from the persisted ``parameterizability`` table, unless ``force_re
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 from protein_selector.core.registry import Granularity, table
 from protein_selector.domain.docking.rdkit_ligand import filter_parameterizable
@@ -16,6 +17,12 @@ from protein_selector.domain.docking.store import (
     upsert_parameterizability,
 )
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
+
+
+class SanitizeLigandOutputs(TypedDict):
+    """Output sockets of :class:`SanitizeLigandNode` -- keys checked statically."""
+
+    parameterizability: bool
 
 
 class SanitizeLigandNode(Node):
@@ -30,12 +37,12 @@ class SanitizeLigandNode(Node):
     inputs = (table("ligand_ccd_codes"), table("ligand_smiles"),)
     outputs = (table("parameterizability"),)
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[SanitizeLigandOutputs]:
         """Delegates to the module function, which stays the implementation."""
         sanitize_ligand(
             ctx.get("ligand_smiles"), ctx.db_path, force_refresh=ctx.force_refresh
         )
-        return NodeResult(outputs={"parameterizability": True})
+        return NodeResult(outputs=SanitizeLigandOutputs(parameterizability=True))
 
 logger = logging.getLogger(__name__)
 

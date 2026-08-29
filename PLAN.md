@@ -2347,6 +2347,21 @@ survivors and looked like a clean no-op.
       outputs of 4 nodes -- `validate_graph()` reported 5 required inputs with no producer
       and named every one. That is the check paying for itself on the commit that
       introduced it.
+- [x] **P.8** (2026-08-29) **`NodeResult` is generic over a per-node `TypedDict`.**
+      `dict[str, Any]` meant `outputs["validaton"]` silently returned `None`; now both
+      sides fail type-check -- building the result *and* reading it. Verified by feeding
+      `ty` a deliberate typo on each side. Chosen over a dataclass/`NamedTuple` because a
+      `TypedDict` **is** a dict at runtime, so the stage and runner layers that route
+      outputs by socket name need no conversion; it does not replace the dictionary, it
+      makes its keys checked. **Convention recorded:** a `TABLE` socket's value is a
+      *receipt* (a count where natural, else `True`) -- the rows live in the store and a
+      consumer reads them from there (§15b), while `COLLECTION`/`ARTIFACT` sockets carry
+      the real value. A drift test asserts every node's TypedDict keys equal its declared
+      output sockets, since those state one fact twice (§7b's guard, third application).
+      **Two real bugs it caught immediately:** `simulate_md` and `simulate_complex_md` were
+      passing a `ValidationResult` as their `relaxed_structure`/`complex_relaxed_structure`
+      socket, which is a `Path` -- the plain dict accepted it silently; and the drift test
+      found four nodes whose TypedDicts omitted table outputs they genuinely declare.
 - [ ] **P.7** Move each node's body out of the module function and into `run(ctx)`. Today
       `run` delegates to the function, which keeps this conversion behaviour-preserving --
       deliberately, since the classes and the 60 call sites moved in one change already.

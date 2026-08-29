@@ -10,6 +10,7 @@ already succeeded -- see ``detect_pocket`` for the three outcomes that follow.
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 from protein_selector.core.config import PocketDetectionConfig
 from protein_selector.core.registry import Granularity, artifact, table
@@ -27,6 +28,12 @@ from protein_selector.domain.molecular_dynamics.openmm_md import (
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
 
+class DetectPocketOutputs(TypedDict):
+    """Output sockets of :class:`DetectPocketNode` -- keys checked statically."""
+
+    pocket_detection: PocketDetectionResult | None
+
+
 class DetectPocketNode(Node):
     """The card (PLAN.md §35): what this node needs, what it gives.
 
@@ -40,13 +47,13 @@ class DetectPocketNode(Node):
     outputs = (table("pocket_detection"),)
     needs_conda = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[DetectPocketOutputs]:
         """Delegates to the module function, which stays the implementation."""
         result = detect_pocket(
             ctx.candidate(), ctx.config, ctx.db_path,
             force_refresh=ctx.force_refresh,
         )
-        return NodeResult(outputs={"pocket_detection": result})
+        return NodeResult(outputs=DetectPocketOutputs(pocket_detection=result))
 
 logger = logging.getLogger(__name__)
 

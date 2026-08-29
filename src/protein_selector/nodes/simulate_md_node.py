@@ -8,6 +8,8 @@ candidate.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from typing import TypedDict
 
 from protein_selector.core.config import MdSimulationConfig
 from protein_selector.core.registry import (
@@ -29,6 +31,13 @@ from protein_selector.domain.molecular_dynamics.openmm_md import (
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
 
+class SimulateMdOutputs(TypedDict):
+    """Output sockets of :class:`SimulateMdNode` -- keys checked statically."""
+
+    validation: ValidationResult | None
+    relaxed_structure: Path | None
+
+
 class SimulateMdNode(Node):
     """The card (PLAN.md §35): what this node needs, what it gives.
 
@@ -42,13 +51,21 @@ class SimulateMdNode(Node):
     outputs = (table("validation"), artifact("relaxed_structure"),)
     needs_conda = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[SimulateMdOutputs]:
         """Delegates to the module function, which stays the implementation."""
         result = simulate_md(
             ctx.candidate(), ctx.config, ctx.db_path,
             force_refresh=ctx.force_refresh,
         )
-        return NodeResult(outputs={"validation": result, "relaxed_structure": result})
+        # The artifact socket carries the PATH, not the ValidationResult -- and only
+        # when MD actually succeeded, since run_test_md writes the relaxed structure on
+        # SUCCESS only (§18). The plain-dict version silently passed the wrong object
+        # here; the TypedDict rejected it.
+        succeeded = result is not None and result.status.value == "success"
+        relaxed = relaxed_structure_path(ctx.candidate()) if succeeded else None
+        return NodeResult(
+            outputs=SimulateMdOutputs(validation=result, relaxed_structure=relaxed)
+        )
 
 logger = logging.getLogger(__name__)
 

@@ -10,6 +10,8 @@ directly with a single ``pdb_id``; nothing here is Snakemake-specific.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from typing import TypedDict
 
 from protein_selector.core.config import ComplexMdSimulationConfig
 from protein_selector.core.registry import (
@@ -32,6 +34,13 @@ from protein_selector.domain.molecular_dynamics.amber_complex import (
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
 
+class SimulateComplexMdOutputs(TypedDict):
+    """Output sockets of :class:`SimulateComplexMdNode` -- keys checked statically."""
+
+    validation: ValidationResult | None
+    complex_relaxed_structure: Path | None
+
+
 class SimulateComplexMdNode(Node):
     """The card (PLAN.md §35): what this node needs, what it gives.
 
@@ -46,13 +55,28 @@ class SimulateComplexMdNode(Node):
     needs_conda = True
     needs_network = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[SimulateComplexMdOutputs]:
         """Delegates to the module function, which stays the implementation."""
         result = simulate_complex_md(
             ctx.candidate(), ctx.config, ctx.db_path,
             force_refresh=ctx.force_refresh,
         )
-        return NodeResult(outputs={"validation": result, "complex_relaxed_structure": result})
+        # Same correction as simulate_md: the socket carries a path, written on SUCCESS
+        # only (§24). Resolved from the docking target so the ccd_code matches the ligand
+        # the complex was actually built for.
+        succeeded = result is not None and result.status.value == "success"
+        complex_path = None
+        if succeeded:
+            target, _reasons, _mode = resolve_docking_target(ctx.candidate(), ctx.db_path)
+            if target is not None:
+                complex_path = complex_relaxed_structure_path(
+                    ctx.candidate(), target.ccd_code
+                )
+        return NodeResult(
+            outputs=SimulateComplexMdOutputs(
+                validation=result, complex_relaxed_structure=complex_path
+            )
+        )
 
 logger = logging.getLogger(__name__)
 

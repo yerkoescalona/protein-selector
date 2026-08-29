@@ -18,6 +18,7 @@ default, so the full ex03-serving behavior is unchanged unless explicitly reques
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 from protein_selector.core.registry import Granularity, collection, table
 from protein_selector.domain.docking.native_ligand import is_dockable_ligand_code
@@ -26,6 +27,12 @@ from protein_selector.domain.docking.store import (
     load_meeko_parameterization,
 )
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
+
+
+class SelectDockableOutputs(TypedDict):
+    """Output sockets of :class:`SelectDockableNode` -- keys checked statically."""
+
+    dockable_ids: list[str]
 
 
 class SelectDockableNode(Node):
@@ -40,10 +47,10 @@ class SelectDockableNode(Node):
     inputs = (table("ligand_ccd_codes"), table("meeko_parameterization"),)
     outputs = (collection("dockable_ids"),)
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[SelectDockableOutputs]:
         """Delegates to the module function, which stays the implementation."""
         ids = select_dockable(ctx.get("ligand_ccd_codes"), ctx.db_path)
-        return NodeResult(outputs={"dockable_ids": ids})
+        return NodeResult(outputs=SelectDockableOutputs(dockable_ids=ids))
 
 logger = logging.getLogger(__name__)
 

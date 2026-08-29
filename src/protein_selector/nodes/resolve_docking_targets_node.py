@@ -18,6 +18,7 @@ run once to produce `docking_shortlist.txt`, then `--config run_dock=true` for t
 from __future__ import annotations
 
 import logging
+from typing import TypedDict
 
 from protein_selector.core.registry import (
     Granularity,
@@ -27,6 +28,12 @@ from protein_selector.core.registry import (
 )
 from protein_selector.domain.docking.target import resolve_docking_target
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
+
+
+class ResolveDockingTargetsOutputs(TypedDict):
+    """Output sockets of :class:`ResolveDockingTargetsNode` -- keys checked statically."""
+
+    docking_shortlist: list[str]
 
 
 class ResolveDockingTargetsNode(Node):
@@ -43,10 +50,10 @@ class ResolveDockingTargetsNode(Node):
     needs_conda = True
     needs_network = True
 
-    def run(self, ctx: NodeContext) -> NodeResult:
+    def run(self, ctx: NodeContext) -> NodeResult[ResolveDockingTargetsOutputs]:
         """Delegates to the module function, which stays the implementation."""
         ids = resolve_docking_targets(ctx.get("ligand_ccd_codes"), ctx.db_path)
-        return NodeResult(outputs={"docking_shortlist": ids})
+        return NodeResult(outputs=ResolveDockingTargetsOutputs(docking_shortlist=ids))
 
 logger = logging.getLogger(__name__)
 
