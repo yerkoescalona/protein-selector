@@ -19,7 +19,7 @@ repo for the same judgment call.
 ## Problem 2 — PLIP zero-interaction cases may be real strictness, not a selection bug
 
 Confirmed (via `stages/docking_common.py::resolve_docking_target` +
-`stages/docking.py::run_docking_stage`): the receptor passed to PLIP is the MD-relaxed,
+`nodes/dock_ligand.py::dock_ligand`): the receptor passed to PLIP is the MD-relaxed,
 PDBFixer-heterogen-stripped structure, and only the ONE selected native ligand is aligned
 back in — so `plip_analysis.py`'s `complex_.ligands[0]` is not grabbing a stray ion (ruled
 this out; an earlier draft of this brief wrongly suspected it). 3 real candidates (186L,
@@ -31,7 +31,7 @@ pass/warn state rather than an outright `docking_quality` failure.
 
 ## Problem 3 — MD runs on candidates that can never pass docking anyway
 
-`run_docking_stage` requires `md_simulation` to have already succeeded (needs the
+`dock_ligand` requires `md_simulation` to have already succeeded (needs the
 MD-relaxed structure as receptor, PLAN.md §18) — correct dependency order. But nothing
 currently checks, *before* spending MD compute, whether a candidate even HAS an organic
 (post-fix, non-ion) ligand. Since MD is the slow stage and ligand-agnostic (strips all

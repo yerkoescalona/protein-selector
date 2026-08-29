@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI wrapper for `stages.validate_one.run_validate_one_stage`. See PLAN.md §22.
+"""CLI wrapper for `stages.validate_one.validate_single_pdb`. See PLAN.md §22.
 
 Usage:
     uv run --extra validate python scripts/validate_one.py 1UBQ
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from protein_selector.stages.validate_one import run_validate_one_stage
+from protein_selector.pipelines.single_pdb import validate_single_pdb
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ def _load_workflow_config(config_path: Path) -> dict:
 
 
 def main() -> None:
-    """CLI entry point: parse args, load config, run `run_validate_one_stage` for the given PDB id."""
+    """CLI entry point: parse args, load config, run `validate_single_pdb` for the given PDB id."""
     parser = argparse.ArgumentParser(
         description="Validate ONE PDB entry end-to-end, no Snakemake, no checkpoints (PLAN.md §22)."
     )
@@ -104,7 +104,7 @@ def main() -> None:
             )
             config[key] = value
 
-    run_validate_one_stage(
+    validate_single_pdb(
         args.pdb_id,
         db_path,
         config,

@@ -1,4 +1,4 @@
-"""Tests for protein_selector.stages.validate_one.run_validate_one_stage.
+"""Tests for protein_selector.pipelines.single_pdb.validate_single_pdb.
 
 The single-PDB, no-Snakemake, no-checkpoints CLI entry point (PLAN.md §22). Every stage
 function it calls is monkeypatched at the module level, recording calls into a shared
@@ -15,13 +15,13 @@ import pytest
 
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
 from protein_selector.domain.structural_biology.candidates import CandidateEntry
-from protein_selector.stages import validate_one as validate_one_module
-from protein_selector.stages.validate_one import run_validate_one_stage
+from protein_selector.pipelines import single_pdb as single_pdb_module
+from protein_selector.pipelines.single_pdb import validate_single_pdb
 
 
 @pytest.fixture(autouse=True)
 def _stub_summary(monkeypatch):
-    monkeypatch.setattr(validate_one_module, "print_validate_one_summary", lambda *a, **k: None)
+    monkeypatch.setattr(single_pdb_module, "print_validate_one_summary", lambda *a, **k: None)
 
 
 @pytest.fixture
@@ -39,43 +39,43 @@ def _record(calls, name):
 
 def _patch_happy_path(monkeypatch, calls, *, ccd_codes=("GLC",)):
     monkeypatch.setattr(
-        validate_one_module, "fetch_entry_metadata", lambda ids: [CandidateEntry(pdb_id=ids[0])]
+        single_pdb_module, "fetch_entry_metadata", lambda ids: [CandidateEntry(pdb_id=ids[0])]
     )
     monkeypatch.setattr(
-        validate_one_module,
-        "run_simulability_stage",
+        single_pdb_module,
+        "check_simulability",
         lambda entries, candidate_filter, db_path: entries,
     )
     monkeypatch.setattr(
-        validate_one_module, "run_ligands_stage", lambda survivors, db_path: {"GLC": "OC1..."}
+        single_pdb_module, "resolve_ligands", lambda survivors, db_path: {"GLC": "OC1..."}
     )
-    monkeypatch.setattr(validate_one_module, "run_literature_stage", _record(calls, "literature"))
-    monkeypatch.setattr(validate_one_module, "run_modeling_stage", _record(calls, "modeling"))
+    monkeypatch.setattr(single_pdb_module, "count_literature", _record(calls, "literature"))
+    monkeypatch.setattr(single_pdb_module, "lookup_alphafold", _record(calls, "modeling"))
     monkeypatch.setattr(
-        validate_one_module, "load_ligand_ccd_codes", lambda db_path: {"1ABC": list(ccd_codes)}
+        single_pdb_module, "load_ligand_ccd_codes", lambda db_path: {"1ABC": list(ccd_codes)}
     )
     monkeypatch.setattr(
-        validate_one_module, "run_parameterizability_stage", _record(calls, "parameterizability")
+        single_pdb_module, "sanitize_ligand", _record(calls, "parameterizability")
     )
-    monkeypatch.setattr(validate_one_module, "run_meeko_stage", _record(calls, "meeko"))
+    monkeypatch.setattr(single_pdb_module, "parameterize_ligand", _record(calls, "meeko"))
     monkeypatch.setattr(
-        validate_one_module,
-        "run_md_simulation_stage",
+        single_pdb_module,
+        "simulate_md",
         lambda *a, **k: (_record(calls, "md")(*a, **k), ValidationResult(pdb_id="1ABC", status=ValidationStatus.SUCCESS))[1],
     )
     monkeypatch.setattr(
-        validate_one_module,
-        "run_pocket_detection_stage",
+        single_pdb_module,
+        "detect_pocket",
         lambda *a, **k: (_record(calls, "pocket")(*a, **k), None)[1],
     )
     monkeypatch.setattr(
-        validate_one_module,
-        "run_docking_stage",
+        single_pdb_module,
+        "dock_ligand",
         lambda *a, **k: (_record(calls, "dock")(*a, **k), ValidationResult(pdb_id="1ABC", status=ValidationStatus.SUCCESS))[1],
     )
     monkeypatch.setattr(
-        validate_one_module,
-        "run_complex_md_simulation_stage",
+        single_pdb_module,
+        "simulate_complex_md",
         lambda *a, **k: (_record(calls, "complex_md")(*a, **k), ValidationResult(pdb_id="1ABC", status=ValidationStatus.SUCCESS))[1],
     )
 
@@ -90,7 +90,7 @@ def _run(
     run_complex_md=False,
     force_refresh=False,
 ):
-    run_validate_one_stage(
+    validate_single_pdb(
         pdb_id,
         db_path=Path("unused"),
         config=config or {},
@@ -105,7 +105,7 @@ def _run(
 def test_uppercases_the_pdb_id(monkeypatch, calls):
     seen = {}
     monkeypatch.setattr(
-        validate_one_module,
+        single_pdb_module,
         "fetch_entry_metadata",
         lambda ids: seen.setdefault("ids", ids) and [],
     )
@@ -114,9 +114,9 @@ def test_uppercases_the_pdb_id(monkeypatch, calls):
 
 
 def test_no_entry_metadata_stops_before_simulability(monkeypatch, calls):
-    monkeypatch.setattr(validate_one_module, "fetch_entry_metadata", lambda ids: [])
+    monkeypatch.setattr(single_pdb_module, "fetch_entry_metadata", lambda ids: [])
     monkeypatch.setattr(
-        validate_one_module, "run_simulability_stage", _record(calls, "simulability")
+        single_pdb_module, "check_simulability", _record(calls, "simulability")
     )
 
     _run()
@@ -126,12 +126,12 @@ def test_no_entry_metadata_stops_before_simulability(monkeypatch, calls):
 
 def test_failed_simulability_stops_before_ligands(monkeypatch, calls):
     monkeypatch.setattr(
-        validate_one_module, "fetch_entry_metadata", lambda ids: [CandidateEntry(pdb_id=ids[0])]
+        single_pdb_module, "fetch_entry_metadata", lambda ids: [CandidateEntry(pdb_id=ids[0])]
     )
     monkeypatch.setattr(
-        validate_one_module, "run_simulability_stage", lambda entries, candidate_filter, db_path: []
+        single_pdb_module, "check_simulability", lambda entries, candidate_filter, db_path: []
     )
-    monkeypatch.setattr(validate_one_module, "run_ligands_stage", _record(calls, "ligands"))
+    monkeypatch.setattr(single_pdb_module, "resolve_ligands", _record(calls, "ligands"))
 
     _run()
 

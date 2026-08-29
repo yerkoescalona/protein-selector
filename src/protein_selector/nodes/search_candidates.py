@@ -12,20 +12,20 @@ from __future__ import annotations
 import logging
 import random
 
+from protein_selector.core.config import (
+    _RCSB_MAX_ATOMS_CEILING,
+    CandidateSearchConfig,
+)
 from protein_selector.domain.structural_biology.candidates import (
     CandidateEntry,
     fetch_entry_metadata,
     search_candidate_ids,
 )
-from protein_selector.stages.config import (
-    _RCSB_MAX_ATOMS_CEILING,
-    CandidateSearchConfig,
-)
 
 logger = logging.getLogger(__name__)
 
 
-def run_search_candidates_stage(
+def search_candidates(
     candidate_search: CandidateSearchConfig,
 ) -> list[CandidateEntry]:
     """Search RCSB, sample ``max_candidates`` ids, fetch their metadata.

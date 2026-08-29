@@ -18,7 +18,7 @@ from protein_selector.domain.bioinformatics.store import (
 logger = logging.getLogger(__name__)
 
 
-def run_literature_stage(pdb_ids: list[str], db_path, force_refresh: bool = False) -> None:
+def count_literature(pdb_ids: list[str], db_path, force_refresh: bool = False) -> None:
     """Fetch + persist literature counts for any pdb_id not already persisted."""
     already_fetched = set() if force_refresh else set(load_literature_counts(db_path).keys())
     new_pdb_ids = [p for p in pdb_ids if p not in already_fetched]

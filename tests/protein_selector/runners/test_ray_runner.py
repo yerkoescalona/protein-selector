@@ -115,7 +115,7 @@ class TestRayDag:
 
     A mocked test cannot cover it honestly: the Ray tasks run in separate worker
     processes, so a driver-side monkeypatch of a stage function never reaches them, and
-    ``run_simulability_stage`` legitimately calls RCSB (composition.py's assembly and
+    ``check_simulability`` legitimately calls RCSB (composition.py's assembly and
     entity fetches). A test built on fake PDB ids just sends them to the live API and
     gets "Input produced no results" -- which is what the first version of this test did.
     Rather than ship a test that pretends, the DAG was run for real; the record is in

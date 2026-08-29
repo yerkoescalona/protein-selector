@@ -1,4 +1,4 @@
-"""Tests for protein_selector.stages.docking_common.resolve_docking_target.
+"""Tests for protein_selector.domain.docking.target.resolve_docking_target.
 
 The one function shared by docking_shortlist's batch gate and dock_validate's
 per-candidate run, specifically so the two can never disagree about which
@@ -11,12 +11,12 @@ from __future__ import annotations
 import requests
 
 from protein_selector.core.validation_result import FailureMode
+from protein_selector.domain.docking import target as target_module
 from protein_selector.domain.docking.meeko_parameterization import (
     MeekoParameterizationResult,
 )
 from protein_selector.domain.docking.pocket import PocketDetectionResult, PocketInfo
-from protein_selector.stages import docking_common as docking_common_module
-from protein_selector.stages.docking_common import resolve_docking_target
+from protein_selector.domain.docking.target import resolve_docking_target
 
 _NATIVE_BLOCK = (
     "HETATM    1  C1  GLC N   1      10.000  10.000  10.000  1.00  0.00           C\n"
@@ -26,25 +26,25 @@ _NATIVE_BLOCK = (
 
 def _patch_common(monkeypatch, *, ccd_codes=("GLC",), pick_ligand="GLC"):
     monkeypatch.setattr(
-        docking_common_module, "load_ligand_ccd_codes", lambda db_path: {"1ABC": list(ccd_codes)}
+        target_module, "load_ligand_ccd_codes", lambda db_path: {"1ABC": list(ccd_codes)}
     )
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "load_meeko_parameterization",
         lambda db_path: {"GLC": MeekoParameterizationResult(ligand_id="GLC", passed=True)},
     )
     monkeypatch.setattr(
-        docking_common_module, "fetch_smiles_for_ccd_codes", lambda codes: {"GLC": "OC1..."}
+        target_module, "fetch_smiles_for_ccd_codes", lambda codes: {"GLC": "OC1..."}
     )
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "pick_largest_organic_ligand",
         lambda codes, meeko_results, smiles_by_ccd: pick_ligand,
     )
 
 
 def test_no_ligand_ccd_codes_persisted_is_a_parameterization_failure(monkeypatch):
-    monkeypatch.setattr(docking_common_module, "load_ligand_ccd_codes", lambda db_path: {})
+    monkeypatch.setattr(target_module, "load_ligand_ccd_codes", lambda db_path: {})
 
     target, reasons, failure_mode = resolve_docking_target("1ABC", db_path="unused")
 
@@ -66,7 +66,7 @@ def test_no_dockable_organic_ligand_is_a_parameterization_failure(monkeypatch):
 def test_missing_md_relaxed_structure_is_a_completeness_failure(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     monkeypatch.setattr(
-        docking_common_module, "relaxed_structure_path", lambda pdb_id: tmp_path / "missing.pdb"
+        target_module, "relaxed_structure_path", lambda pdb_id: tmp_path / "missing.pdb"
     )
 
     target, reasons, failure_mode = resolve_docking_target("1ABC", db_path="unused")
@@ -80,12 +80,12 @@ def test_crystal_download_failure_is_a_completeness_failure(monkeypatch, tmp_pat
     _patch_common(monkeypatch)
     relaxed_path = tmp_path / "1ABC_relaxed.pdb"
     relaxed_path.write_text("ATOM some receptor text\n")
-    monkeypatch.setattr(docking_common_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
+    monkeypatch.setattr(target_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
 
     def _raise(pdb_id):
         raise requests.RequestException("network down")
 
-    monkeypatch.setattr(docking_common_module, "fetch_pdb_text", _raise)
+    monkeypatch.setattr(target_module, "fetch_pdb_text", _raise)
 
     target, reasons, failure_mode = resolve_docking_target("1ABC", db_path="unused")
 
@@ -98,10 +98,10 @@ def test_alignment_failure_is_a_completeness_failure(monkeypatch, tmp_path):
     _patch_common(monkeypatch)
     relaxed_path = tmp_path / "1ABC_relaxed.pdb"
     relaxed_path.write_text("ATOM some receptor text\n")
-    monkeypatch.setattr(docking_common_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
-    monkeypatch.setattr(docking_common_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
+    monkeypatch.setattr(target_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
+    monkeypatch.setattr(target_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
     monkeypatch.setattr(
-        docking_common_module, "align_ligand_into_md_frame", lambda crystal, receptor, ccd: None
+        target_module, "align_ligand_into_md_frame", lambda crystal, receptor, ccd: None
     )
 
     target, reasons, failure_mode = resolve_docking_target("1ABC", db_path="unused")
@@ -115,14 +115,14 @@ def test_unparseable_aligned_ligand_is_a_parameterization_failure(monkeypatch, t
     _patch_common(monkeypatch)
     relaxed_path = tmp_path / "1ABC_relaxed.pdb"
     relaxed_path.write_text("ATOM some receptor text\n")
-    monkeypatch.setattr(docking_common_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
-    monkeypatch.setattr(docking_common_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
+    monkeypatch.setattr(target_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
+    monkeypatch.setattr(target_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "align_ligand_into_md_frame",
         lambda crystal, receptor, ccd: ("NO HEAVY ATOMS HERE", 0.5),
     )
-    monkeypatch.setattr(docking_common_module, "ligand_centroid", lambda block: None)
+    monkeypatch.setattr(target_module, "ligand_centroid", lambda block: None)
 
     target, reasons, failure_mode = resolve_docking_target("1ABC", db_path="unused")
 
@@ -135,20 +135,20 @@ def test_success_resolves_a_docking_target_with_ligand_derived_box(monkeypatch, 
     _patch_common(monkeypatch)
     relaxed_path = tmp_path / "1ABC_relaxed.pdb"
     relaxed_path.write_text("ATOM some receptor text\n")
-    monkeypatch.setattr(docking_common_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
-    monkeypatch.setattr(docking_common_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
+    monkeypatch.setattr(target_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
+    monkeypatch.setattr(target_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "align_ligand_into_md_frame",
         lambda crystal, receptor, ccd: (_NATIVE_BLOCK, 0.28),
     )
-    monkeypatch.setattr(docking_common_module, "ligand_centroid", lambda block: (10.5, 10.0, 10.0))
+    monkeypatch.setattr(target_module, "ligand_centroid", lambda block: (10.5, 10.0, 10.0))
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "ligand_bounding_box",
         lambda block, padding_angstroms=6.0: ((10.5, 10.0, 10.0), (7.0, 6.0, 6.0)),
     )
-    monkeypatch.setattr(docking_common_module, "load_pocket_detection", lambda db_path: {})
+    monkeypatch.setattr(target_module, "load_pocket_detection", lambda db_path: {})
 
     target, reasons, failure_mode = resolve_docking_target("1ABC", db_path="unused")
 
@@ -170,16 +170,16 @@ def test_success_attaches_nearby_pocket_druggability_when_a_containing_pocket_ex
     _patch_common(monkeypatch)
     relaxed_path = tmp_path / "1ABC_relaxed.pdb"
     relaxed_path.write_text("ATOM some receptor text\n")
-    monkeypatch.setattr(docking_common_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
-    monkeypatch.setattr(docking_common_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
+    monkeypatch.setattr(target_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
+    monkeypatch.setattr(target_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "align_ligand_into_md_frame",
         lambda crystal, receptor, ccd: (_NATIVE_BLOCK, 0.28),
     )
-    monkeypatch.setattr(docking_common_module, "ligand_centroid", lambda block: (10.5, 10.0, 10.0))
+    monkeypatch.setattr(target_module, "ligand_centroid", lambda block: (10.5, 10.0, 10.0))
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "ligand_bounding_box",
         lambda block, padding_angstroms=6.0: ((10.5, 10.0, 10.0), (7.0, 6.0, 6.0)),
     )
@@ -188,9 +188,9 @@ def test_success_attaches_nearby_pocket_druggability_when_a_containing_pocket_ex
         passed=True,
         pockets=[PocketInfo(pocket_number=1, druggability_score=0.581)],
     )
-    monkeypatch.setattr(docking_common_module, "load_pocket_detection", lambda db_path: {"1ABC": pocket_result})
+    monkeypatch.setattr(target_module, "load_pocket_detection", lambda db_path: {"1ABC": pocket_result})
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "select_containing_pocket",
         lambda pockets, point: pockets[0],
     )
@@ -208,24 +208,24 @@ def test_pocket_detection_never_gates_dockability_when_no_pocket_contains_the_li
     _patch_common(monkeypatch)
     relaxed_path = tmp_path / "1ABC_relaxed.pdb"
     relaxed_path.write_text("ATOM some receptor text\n")
-    monkeypatch.setattr(docking_common_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
-    monkeypatch.setattr(docking_common_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
+    monkeypatch.setattr(target_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
+    monkeypatch.setattr(target_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "align_ligand_into_md_frame",
         lambda crystal, receptor, ccd: (_NATIVE_BLOCK, 0.28),
     )
-    monkeypatch.setattr(docking_common_module, "ligand_centroid", lambda block: (10.5, 10.0, 10.0))
+    monkeypatch.setattr(target_module, "ligand_centroid", lambda block: (10.5, 10.0, 10.0))
     monkeypatch.setattr(
-        docking_common_module,
+        target_module,
         "ligand_bounding_box",
         lambda block, padding_angstroms=6.0: ((10.5, 10.0, 10.0), (7.0, 6.0, 6.0)),
     )
     pocket_result = PocketDetectionResult(
         pdb_id="1ABC", passed=True, pockets=[PocketInfo(pocket_number=1, druggability_score=0.0)]
     )
-    monkeypatch.setattr(docking_common_module, "load_pocket_detection", lambda db_path: {"1ABC": pocket_result})
-    monkeypatch.setattr(docking_common_module, "select_containing_pocket", lambda pockets, point: None)
+    monkeypatch.setattr(target_module, "load_pocket_detection", lambda db_path: {"1ABC": pocket_result})
+    monkeypatch.setattr(target_module, "select_containing_pocket", lambda pockets, point: None)
 
     target, reasons, failure_mode = resolve_docking_target("1ABC", db_path="unused")
 

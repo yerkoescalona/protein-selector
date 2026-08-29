@@ -33,8 +33,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from protein_selector.core.db import DEFAULT_DB_PATH
-from protein_selector.stages.config import (
+from protein_selector.core.config import (
     CandidateFilterConfig,
     CandidateSearchConfig,
     ComplexMdSimulationConfig,
@@ -43,6 +42,7 @@ from protein_selector.stages.config import (
     ModelingLookupConfig,
     PocketDetectionConfig,
 )
+from protein_selector.core.db import DEFAULT_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +189,7 @@ def resolve_entries(pdb_ids: list[str], db_path: Path):
     """Metadata for ``pdb_ids``, fetched from RCSB -- NOT read from the store.
 
     **This must fetch, not load.** A newly discovered candidate has no ``candidates`` row
-    yet -- that row is written by ``run_simulability_stage`` only for survivors -- so
+    yet -- that row is written by ``check_simulability`` only for survivors -- so
     resolving entries via ``load_candidates`` silently returns nothing for exactly the
     candidates a discovery run exists to find. That was a real regression in the first
     version of this runner (PLAN.md §34): a live search returned 300 ids and simulability
@@ -250,11 +250,11 @@ def run_pipeline_on_ray(
 
     # Imported inside the function so the module imports without the heavy stage chain.
     from protein_selector.domain.structural_biology.store import load_candidates
-    from protein_selector.stages.ligands import run_ligands_stage
-    from protein_selector.stages.literature import run_literature_stage
-    from protein_selector.stages.modeling import run_modeling_stage
-    from protein_selector.stages.search_candidates import run_search_candidates_stage
-    from protein_selector.stages.simulability import run_simulability_stage
+    from protein_selector.nodes.check_simulability import check_simulability
+    from protein_selector.nodes.count_literature import count_literature
+    from protein_selector.nodes.lookup_alphafold import lookup_alphafold
+    from protein_selector.nodes.resolve_ligands import resolve_ligands
+    from protein_selector.nodes.search_candidates import search_candidates
 
     if not ray.is_initialized():
         ray.init(num_cpus=num_cpus, logging_level=logging.WARNING, include_dashboard=False)
@@ -286,7 +286,7 @@ def run_pipeline_on_ray(
                 ids = list(config.candidate_ids)
                 _report(board, "mark_completed", "search", f"{len(ids)} frozen ids")
                 return ids
-            entries = run_search_candidates_stage(config.candidate_search)
+            entries = search_candidates(config.candidate_search)
             _report(board, "mark_completed", "search", f"{len(entries)} fetched")
             return [e.pdb_id for e in entries]
         except Exception as exc:
@@ -300,7 +300,7 @@ def run_pipeline_on_ray(
         # caused when it read the store instead.
         entries = resolve_entries(pdb_ids, db_path)
         try:
-            survivors = run_simulability_stage(entries, config.candidate_filter, db_path)
+            survivors = check_simulability(entries, config.candidate_filter, db_path)
         except Exception as exc:
             _report(board, "mark_failed", "simulability", f"{type(exc).__name__}: {exc}")
             raise
@@ -314,7 +314,7 @@ def run_pipeline_on_ray(
         _report(board, "mark_running", "ligands")
         entries = [e for p, e in load_candidates(db_path).items() if p in set(survivors)]
         try:
-            run_ligands_stage(entries, db_path=db_path)
+            resolve_ligands(entries, db_path=db_path)
         except Exception as exc:
             _report(board, "mark_failed", "ligands", f"{type(exc).__name__}: {exc}")
             raise
@@ -325,7 +325,7 @@ def run_pipeline_on_ray(
     def _literature(survivors: list[str]) -> int:
         _report(board, "mark_running", "literature")
         try:
-            run_literature_stage(survivors, db_path, force_refresh=config.force_refresh)
+            count_literature(survivors, db_path, force_refresh=config.force_refresh)
         except Exception as exc:
             _report(board, "mark_failed", "literature", f"{type(exc).__name__}: {exc}")
             raise
@@ -337,7 +337,7 @@ def run_pipeline_on_ray(
         _report(board, "mark_running", "modeling")
         entries = [e for p, e in load_candidates(db_path).items() if p in set(survivors)]
         try:
-            run_modeling_stage(entries, config.modeling_lookup, db_path,
+            lookup_alphafold(entries, config.modeling_lookup, db_path,
                            force_refresh=config.force_refresh)
         except Exception as exc:
             _report(board, "mark_failed", "modeling", f"{type(exc).__name__}: {exc}")
@@ -362,9 +362,9 @@ def run_pipeline_on_ray(
             load_ligand_ccd_codes,
             load_ligand_smiles,
         )
-        from protein_selector.stages.meeko import run_meeko_stage
-        from protein_selector.stages.parameterizability import (
-            run_parameterizability_stage,
+        from protein_selector.nodes.parameterize_ligand import parameterize_ligand
+        from protein_selector.nodes.sanitize_ligand import (
+            sanitize_ligand,
         )
 
         _report(board, "mark_running", "chemistry")
@@ -374,8 +374,8 @@ def run_pipeline_on_ray(
             missing = [c for c in codes if c not in smiles]
             if missing:
                 smiles = {**smiles, **fetch_smiles_for_ccd_codes(missing)}
-            run_parameterizability_stage(smiles, db_path, force_refresh=config.force_refresh)
-            run_meeko_stage(codes, smiles, db_path, force_refresh=config.force_refresh)
+            sanitize_ligand(smiles, db_path, force_refresh=config.force_refresh)
+            parameterize_ligand(codes, smiles, db_path, force_refresh=config.force_refresh)
         except Exception as exc:
             _report(board, "mark_failed", "chemistry", f"{type(exc).__name__}: {exc}")
             raise
@@ -390,37 +390,37 @@ def run_pipeline_on_ray(
     # per candidate, with no marker files and no fan-out declarations.
     @ray.remote(num_cpus=config.md_threads)
     def _md(pdb_id: str, _gate: int) -> bool:
-        from protein_selector.stages.md_simulation import run_md_simulation_stage
+        from protein_selector.nodes.simulate_md import simulate_md
 
-        result = run_md_simulation_stage(
+        result = simulate_md(
             pdb_id, config.md_simulation, db_path, force_refresh=config.force_refresh
         )
         return result is not None and result.status.value == "success"
 
     @ray.remote
     def _pocket(pdb_id: str, _md_ok: bool) -> bool:
-        from protein_selector.stages.pocket_detection import run_pocket_detection_stage
+        from protein_selector.nodes.detect_pocket import detect_pocket
 
-        return run_pocket_detection_stage(
+        return detect_pocket(
             pdb_id, config.pocket_detection, db_path, force_refresh=config.force_refresh
         ) is not None
 
     @ray.remote(num_cpus=config.dock_threads)
     def _dock(pdb_id: str, _md_ok: bool, _pocket_done: bool) -> bool:
-        from protein_selector.stages.docking import run_docking_stage
+        from protein_selector.nodes.dock_ligand import dock_ligand
 
-        result = run_docking_stage(
+        result = dock_ligand(
             pdb_id, config.docking, db_path, force_refresh=config.force_refresh
         )
         return result is not None and result.status.value == "success"
 
     @ray.remote(num_cpus=config.md_threads)
     def _complex_md(pdb_id: str, _dock_done: bool) -> bool:
-        from protein_selector.stages.complex_md_simulation import (
-            run_complex_md_simulation_stage,
+        from protein_selector.nodes.simulate_complex_md import (
+            simulate_complex_md,
         )
 
-        result = run_complex_md_simulation_stage(
+        result = simulate_complex_md(
             pdb_id, config.complex_md_simulation, db_path,
             force_refresh=config.force_refresh,
         )
@@ -430,12 +430,12 @@ def run_pipeline_on_ray(
     gate = ray.get(chemistry_ref)
 
     if config.md_simulation.enabled:
-        from protein_selector.stages.docking_candidates import (
-            run_docking_candidates_stage,
+        from protein_selector.nodes.select_dockable import (
+            select_dockable,
         )
 
         md_pool = (
-            run_docking_candidates_stage(survivors, db_path)
+            select_dockable(survivors, db_path)
             if config.restrict_md_to_dockable
             else survivors
         )
@@ -451,11 +451,11 @@ def run_pipeline_on_ray(
             _report(board, "mark_completed", "pocket_detection", f"{n}/{len(md_pool)} found")
 
         if config.docking.enabled:
-            from protein_selector.stages.docking_shortlist import (
-                run_docking_shortlist_stage,
+            from protein_selector.nodes.resolve_docking_targets import (
+                resolve_docking_targets,
             )
 
-            shortlist = run_docking_shortlist_stage(md_pool, db_path)
+            shortlist = resolve_docking_targets(md_pool, db_path)
             _report(board, "mark_running", "docking")
             dock_refs = {
                 p: _dock.remote(p, md_refs[p], True) for p in shortlist if p in md_refs

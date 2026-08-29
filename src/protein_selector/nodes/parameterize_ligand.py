@@ -13,7 +13,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def run_meeko_stage(
+def parameterize_ligand(
     ccd_codes: list[str],
     smiles_by_ccd_code: dict[str, str | None],
     db_path,

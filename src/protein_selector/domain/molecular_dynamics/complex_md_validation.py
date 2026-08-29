@@ -19,7 +19,7 @@ from protein_selector.core.validation_result import (
     ValidationStatus,
 )
 from protein_selector.domain.docking.ligands import fetch_smiles_for_ccd_codes
-from protein_selector.stages.docking_common import resolve_docking_target
+from protein_selector.domain.docking.target import resolve_docking_target
 
 logger = logging.getLogger(__name__)
 

@@ -13,13 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from protein_selector.core.report import build_report_table
-from protein_selector.domain.docking.store import load_ligand_ccd_codes
-from protein_selector.domain.structural_biology.candidates import fetch_entry_metadata
-from protein_selector.stages.complex_md_simulation import (
-    run_complex_md_simulation_stage,
-)
-from protein_selector.stages.config import (
+from protein_selector.core.config import (
     CandidateFilterConfig,
     ComplexMdSimulationConfig,
     DockingConfig,
@@ -27,20 +21,26 @@ from protein_selector.stages.config import (
     ModelingLookupConfig,
     PocketDetectionConfig,
 )
-from protein_selector.stages.docking import run_docking_stage
-from protein_selector.stages.ligands import run_ligands_stage
-from protein_selector.stages.literature import run_literature_stage
-from protein_selector.stages.md_simulation import run_md_simulation_stage
-from protein_selector.stages.meeko import run_meeko_stage
-from protein_selector.stages.modeling import run_modeling_stage
-from protein_selector.stages.parameterizability import run_parameterizability_stage
-from protein_selector.stages.pocket_detection import run_pocket_detection_stage
-from protein_selector.stages.simulability import run_simulability_stage
+from protein_selector.core.report import build_report_table
+from protein_selector.domain.docking.store import load_ligand_ccd_codes
+from protein_selector.domain.structural_biology.candidates import fetch_entry_metadata
+from protein_selector.nodes.check_simulability import check_simulability
+from protein_selector.nodes.count_literature import count_literature
+from protein_selector.nodes.detect_pocket import detect_pocket
+from protein_selector.nodes.dock_ligand import dock_ligand
+from protein_selector.nodes.lookup_alphafold import lookup_alphafold
+from protein_selector.nodes.parameterize_ligand import parameterize_ligand
+from protein_selector.nodes.resolve_ligands import resolve_ligands
+from protein_selector.nodes.sanitize_ligand import sanitize_ligand
+from protein_selector.nodes.simulate_complex_md import (
+    simulate_complex_md,
+)
+from protein_selector.nodes.simulate_md import simulate_md
 
 logger = logging.getLogger(__name__)
 
 
-def run_validate_one_stage(
+def validate_single_pdb(
     pdb_id: str,
     db_path: Path,
     config: dict,
@@ -67,7 +67,7 @@ def run_validate_one_stage(
             "max_unmodeled_fraction", CandidateFilterConfig.max_unmodeled_fraction
         ),
     )
-    survivors = run_simulability_stage(entries, candidate_filter, db_path)
+    survivors = check_simulability(entries, candidate_filter, db_path)
     if not survivors:
         logger.error(
             "❌ %s: failed simulability -- see the `simulability` table's `reasons` column", pdb_id
@@ -75,22 +75,22 @@ def run_validate_one_stage(
         return
     logger.info("✅ %s: passed simulability", pdb_id)
 
-    smiles_by_ccd = run_ligands_stage(survivors, db_path)
-    run_literature_stage([pdb_id], db_path, force_refresh=force_refresh)
-    run_modeling_stage(
+    smiles_by_ccd = resolve_ligands(survivors, db_path)
+    count_literature([pdb_id], db_path, force_refresh=force_refresh)
+    lookup_alphafold(
         survivors, ModelingLookupConfig(enabled=True), db_path, force_refresh=force_refresh
     )
 
     ccd_codes = load_ligand_ccd_codes(db_path).get(pdb_id, [])
     if ccd_codes:
-        run_parameterizability_stage(smiles_by_ccd, db_path, force_refresh=force_refresh)
-        run_meeko_stage(ccd_codes, smiles_by_ccd, db_path, force_refresh=force_refresh)
+        sanitize_ligand(smiles_by_ccd, db_path, force_refresh=force_refresh)
+        parameterize_ligand(ccd_codes, smiles_by_ccd, db_path, force_refresh=force_refresh)
     else:
         logger.info("ℹ️ %s: no bound ligand -- skipping parameterizability/meeko/docking", pdb_id)
         run_dock = False
 
     if run_md:
-        md_result = run_md_simulation_stage(
+        md_result = simulate_md(
             pdb_id,
             MdSimulationConfig(
                 enabled=True,
@@ -113,7 +113,7 @@ def run_validate_one_stage(
         logger.info("⏭️ %s: MD skipped (--no-md)", pdb_id)
 
     if run_pocket:
-        pocket_result = run_pocket_detection_stage(
+        pocket_result = detect_pocket(
             pdb_id,
             PocketDetectionConfig(
                 enabled=True,
@@ -134,7 +134,7 @@ def run_validate_one_stage(
         logger.info("⏭️ %s: pocket detection skipped (--no-pocket)", pdb_id)
 
     if run_dock:
-        dock_result = run_docking_stage(
+        dock_result = dock_ligand(
             pdb_id,
             DockingConfig(
                 enabled=True,
@@ -162,7 +162,7 @@ def run_validate_one_stage(
         logger.info("⏭️ %s: docking skipped (--no-dock)", pdb_id)
 
     if run_complex_md and run_dock:
-        complex_md_result = run_complex_md_simulation_stage(
+        complex_md_result = simulate_complex_md(
             pdb_id,
             ComplexMdSimulationConfig(
                 enabled=True,

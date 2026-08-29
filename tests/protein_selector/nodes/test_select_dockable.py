@@ -1,4 +1,4 @@
-"""Tests for protein_selector.stages.docking_candidates.
+"""Tests for protein_selector.nodes.select_dockable.
 
 See scripts/ligand_filter_fix_brief.md, Problem 3. Pure logic once the two store loaders
 are mocked -- no DB, no network, no MD.
@@ -9,13 +9,13 @@ from __future__ import annotations
 from protein_selector.domain.docking.meeko_parameterization import (
     MeekoParameterizationResult,
 )
-from protein_selector.stages import docking_candidates as docking_candidates_module
-from protein_selector.stages.docking_candidates import run_docking_candidates_stage
+from protein_selector.nodes import select_dockable as select_dockable_module
+from protein_selector.nodes.select_dockable import select_dockable
 
 
 def test_keeps_only_candidates_with_a_dockable_ligand(monkeypatch):
     monkeypatch.setattr(
-        docking_candidates_module,
+        select_dockable_module,
         "load_ligand_ccd_codes",
         lambda db_path: {
             "1ABC": ["GLC"],  # organic, meeko-passing -> dockable
@@ -25,7 +25,7 @@ def test_keeps_only_candidates_with_a_dockable_ligand(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        docking_candidates_module,
+        select_dockable_module,
         "load_meeko_parameterization",
         lambda db_path: {
             "GLC": MeekoParameterizationResult(ligand_id="GLC", passed=True),
@@ -34,7 +34,7 @@ def test_keeps_only_candidates_with_a_dockable_ligand(monkeypatch):
         },
     )
 
-    survivors = run_docking_candidates_stage(
+    survivors = select_dockable(
         ["1ABC", "1DEF", "1GHI", "1JKL"], db_path="unused"
     )
 
@@ -42,9 +42,9 @@ def test_keeps_only_candidates_with_a_dockable_ligand(monkeypatch):
 
 
 def test_empty_input_returns_empty(monkeypatch):
-    monkeypatch.setattr(docking_candidates_module, "load_ligand_ccd_codes", lambda db_path: {})
+    monkeypatch.setattr(select_dockable_module, "load_ligand_ccd_codes", lambda db_path: {})
     monkeypatch.setattr(
-        docking_candidates_module, "load_meeko_parameterization", lambda db_path: {}
+        select_dockable_module, "load_meeko_parameterization", lambda db_path: {}
     )
 
-    assert run_docking_candidates_stage([], db_path="unused") == []
+    assert select_dockable([], db_path="unused") == []

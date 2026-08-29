@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import time
 
+from protein_selector.core.config import ModelingLookupConfig
 from protein_selector.core.validation_result import ValidationResult
 from protein_selector.core.validation_store import (
     load_validation_results,
@@ -24,12 +25,11 @@ from protein_selector.domain.modeling.modeling_validation import (
 from protein_selector.domain.modeling.modeling_validation import run_modeling_validation
 from protein_selector.domain.modeling.store import upsert_alphafold_entry
 from protein_selector.domain.structural_biology.candidates import CandidateEntry
-from protein_selector.stages.config import ModelingLookupConfig
 
 logger = logging.getLogger(__name__)
 
 
-def run_modeling_stage(
+def lookup_alphafold(
     entries: list[CandidateEntry],
     modeling_lookup: ModelingLookupConfig,
     db_path,

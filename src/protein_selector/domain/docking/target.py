@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 class DockingTarget:
     """The docking input, once PLAN.md §17a/§18/§20's selection decisions are resolved.
 
-    Everything ``stages.docking.run_docking_stage`` needs to actually run a self-dock for
+    Everything ``stages.docking.dock_ligand`` needs to actually run a self-dock for
     one candidate. ``receptor_pdb_text`` is the MD-relaxed structure, used as-is (already
     heterogen-free, complete, hydrogenated by PDBFixer/OpenMM -- no further prep needed
     before ``obabel -xr``). ``native_ligand_block`` is the crystal ligand's HETATM block,

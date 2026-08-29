@@ -1,6 +1,6 @@
 """Real Vina self-dock + PLIP validator, per candidate (PLAN.md §17d/§18's `dock_validate` rule).
 
-Structural mirror of ``stages/md_simulation.py``'s ``run_md_simulation_stage``: same
+Structural mirror of ``stages/md_simulation.py``'s ``simulate_md``: same
 incremental-skip pattern, same "conda env genuinely unavailable -> return ``None``, caller
 must NOT create a completion marker" contract. Depends on `md_validate` having already
 succeeded for the same ``pdb_id`` -- ``resolve_docking_target`` requires the MD validator's
@@ -13,6 +13,7 @@ import logging
 import tempfile
 from pathlib import Path
 
+from protein_selector.core.config import DockingConfig
 from protein_selector.core.validation_result import (
     FailureMode,
     ValidationResult,
@@ -30,16 +31,15 @@ from protein_selector.domain.docking.docking_validation import (
 )
 from protein_selector.domain.docking.native_ligand import prepare_ligand_pdbqt
 from protein_selector.domain.docking.receptor_prep import prepare_receptor_pdbqt
+from protein_selector.domain.docking.target import resolve_docking_target
 from protein_selector.domain.molecular_dynamics.md_validation import (
     relaxed_structure_path,
 )
-from protein_selector.stages.config import DockingConfig
-from protein_selector.stages.docking_common import resolve_docking_target
 
 logger = logging.getLogger(__name__)
 
 
-def run_docking_stage(
+def dock_ligand(
     pdb_id: str,
     docking: DockingConfig,
     db_path,

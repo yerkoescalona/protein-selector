@@ -28,7 +28,7 @@ from protein_selector.domain.docking.store import (
 logger = logging.getLogger(__name__)
 
 
-def run_docking_candidates_stage(pdb_ids: list[str], db_path) -> list[str]:
+def select_dockable(pdb_ids: list[str], db_path) -> list[str]:
     """Filter ``pdb_ids`` down to those with at least one dockable ligand.
 
     Uses ``docking.native_ligand.is_dockable_ligand_code`` -- the SAME predicate

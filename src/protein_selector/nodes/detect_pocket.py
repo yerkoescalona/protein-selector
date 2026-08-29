@@ -4,13 +4,14 @@ Runs on the MD validator's own relaxed structure, not a freshly-downloaded cryst
 (PLAN.md §18) -- a detected pocket's box must correspond to the SAME receptor
 `dock_validate` docks into, and the crystal/PDBFixer-repaired frames aren't identical. This
 makes pocket detection genuinely per-candidate and dependent on `md_validate` having
-already succeeded -- see ``run_pocket_detection_stage`` for the three outcomes that follow.
+already succeeded -- see ``detect_pocket`` for the three outcomes that follow.
 """
 
 from __future__ import annotations
 
 import logging
 
+from protein_selector.core.config import PocketDetectionConfig
 from protein_selector.domain.docking.pocket import (
     PocketDetectionResult,
     check_pocket_detected,
@@ -22,12 +23,11 @@ from protein_selector.domain.docking.store import (
 from protein_selector.domain.molecular_dynamics.md_validation import (
     relaxed_structure_path,
 )
-from protein_selector.stages.config import PocketDetectionConfig
 
 logger = logging.getLogger(__name__)
 
 
-def run_pocket_detection_stage(
+def detect_pocket(
     pdb_id: str,
     pocket_detection: PocketDetectionConfig,
     db_path,

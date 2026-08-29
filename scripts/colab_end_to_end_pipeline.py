@@ -1,7 +1,7 @@
 # %% [markdown]
 # # protein-selector: real end-to-end pipeline test, on Google Colab
 #
-# Runs `stages.validate_one.run_validate_one_stage` -- the SAME function
+# Runs `stages.validate_one.validate_single_pdb` -- the SAME function
 # `scripts/validate_one.py` wraps for single-candidate, no-Snakemake validation
 # (PLAN.md §22) -- end to end against ONE fixed, already-verified real candidate:
 #
@@ -151,7 +151,7 @@ for binary in ("pymol", "sqlite3", "obabel"):
 # %% [markdown]
 # ## Part A, cell 4: run the real pipeline (metadata -> ... -> MD -> docking) for 2PK4
 #
-# `run_validate_one_stage` is the exact function `scripts/validate_one.py` calls -- no
+# `validate_single_pdb` is the exact function `scripts/validate_one.py` calls -- no
 # reimplementation here. `run_complex_md=False` here on purpose -- that's Part B.
 
 # %%
@@ -161,7 +161,7 @@ os.chdir(REPO_DIR if REPO_DIR.exists() else ".")
 
 import yaml
 
-from protein_selector.stages.validate_one import run_validate_one_stage
+from protein_selector.pipelines.single_pdb import validate_single_pdb
 
 db_path = Path(DB_PATH_STR)
 db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,7 +169,7 @@ db_path.parent.mkdir(parents=True, exist_ok=True)
 config_path = Path("workflow/config.yaml")
 config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
 
-run_validate_one_stage(
+validate_single_pdb(
     PDB_ID,
     db_path,
     config,
@@ -254,14 +254,14 @@ os.chdir(REPO_DIR)
 
 import yaml
 
-from protein_selector.stages.validate_one import run_validate_one_stage
+from protein_selector.pipelines.single_pdb import validate_single_pdb
 
 PDB_ID = "2PK4"
 db_path = Path("colab_run/protein_selector_colab_test.db")  # same file Part A wrote to -- survived the restart
 config_path = Path("workflow/config.yaml")
 config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
 
-run_validate_one_stage(
+validate_single_pdb(
     PDB_ID,
     db_path,
     config,

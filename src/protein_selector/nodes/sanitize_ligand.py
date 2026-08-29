@@ -18,7 +18,7 @@ from protein_selector.domain.docking.store import (
 logger = logging.getLogger(__name__)
 
 
-def run_parameterizability_stage(
+def sanitize_ligand(
     smiles_by_ccd_code: dict[str, str | None],
     db_path,
     force_refresh: bool = False,

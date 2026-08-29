@@ -25,13 +25,13 @@ from pathlib import Path
 
 import yaml
 
+from protein_selector.core.config import CandidateFilterConfig
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.runners.ray_runner import (
     RayPipelineConfig,
     format_plan,
     plan_pipeline,
 )
-from protein_selector.stages.config import CandidateFilterConfig
 
 
 def _filter_from_workflow_config(path: Path) -> CandidateFilterConfig:

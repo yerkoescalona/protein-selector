@@ -11,23 +11,23 @@ from __future__ import annotations
 
 import logging
 
+from protein_selector.core.config import ComplexMdSimulationConfig
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
 from protein_selector.core.validation_store import (
     load_validation_results,
     upsert_validation_results,
 )
+from protein_selector.domain.docking.target import resolve_docking_target
 from protein_selector.domain.molecular_dynamics.complex_md_validation import (
     EXERCISE_NAME,
     complex_relaxed_structure_path,
     run_complex_md_validation,
 )
-from protein_selector.stages.config import ComplexMdSimulationConfig
-from protein_selector.stages.docking_common import resolve_docking_target
 
 logger = logging.getLogger(__name__)
 
 
-def run_complex_md_simulation_stage(
+def simulate_complex_md(
     pdb_id: str,
     complex_md_simulation: ComplexMdSimulationConfig,
     db_path,
@@ -37,7 +37,7 @@ def run_complex_md_simulation_stage(
 
     Skips actually running MD (returns the existing row instead) if already validated and
     its relaxed structure file still exists, unless ``force_refresh`` -- same pattern and
-    same real reason as ``stages.md_simulation.run_md_simulation_stage``'s cached-but-
+    same real reason as ``stages.md_simulation.simulate_md``'s cached-but-
     missing-file check.
     """
     if not force_refresh:

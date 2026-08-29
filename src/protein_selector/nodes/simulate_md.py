@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from protein_selector.core.config import MdSimulationConfig
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
 from protein_selector.core.validation_store import (
     load_validation_results,
@@ -19,12 +20,11 @@ from protein_selector.domain.molecular_dynamics.md_validation import (
     relaxed_structure_path,
     run_test_md,
 )
-from protein_selector.stages.config import MdSimulationConfig
 
 logger = logging.getLogger(__name__)
 
 
-def run_md_simulation_stage(
+def simulate_md(
     pdb_id: str,
     md_simulation: MdSimulationConfig,
     db_path,

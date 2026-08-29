@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+from protein_selector.core.config import CandidateFilterConfig
 from protein_selector.domain.structural_biology.candidates import CandidateEntry
 from protein_selector.domain.structural_biology.composition import (
     fetch_non_standard_residues,
@@ -28,12 +29,11 @@ from protein_selector.domain.structural_biology.store import (
     upsert_oligomeric_state,
     upsert_simulability,
 )
-from protein_selector.stages.config import CandidateFilterConfig
 
 logger = logging.getLogger(__name__)
 
 
-def run_simulability_stage(
+def check_simulability(
     entries: list[CandidateEntry],
     candidate_filter: CandidateFilterConfig,
     db_path,

@@ -15,7 +15,7 @@ from protein_selector.domain.docking.store import upsert_ligand_ccd_codes
 from protein_selector.domain.structural_biology.candidates import CandidateEntry
 
 
-def run_ligands_stage(entries: list[CandidateEntry], db_path) -> dict[str, str | None]:
+def resolve_ligands(entries: list[CandidateEntry], db_path) -> dict[str, str | None]:
     """Fetch + persist ligand CCD codes for every entry, return CCD code -> SMILES."""
     ligand_ccd_by_pdb_id = fetch_ligand_ccd_codes(entries)
     upsert_ligand_ccd_codes(ligand_ccd_by_pdb_id, db_path=db_path)

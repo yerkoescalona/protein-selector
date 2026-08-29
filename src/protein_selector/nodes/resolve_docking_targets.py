@@ -19,12 +19,12 @@ from __future__ import annotations
 
 import logging
 
-from protein_selector.stages.docking_common import resolve_docking_target
+from protein_selector.domain.docking.target import resolve_docking_target
 
 logger = logging.getLogger(__name__)
 
 
-def run_docking_shortlist_stage(pdb_ids: list[str], db_path) -> list[str]:
+def resolve_docking_targets(pdb_ids: list[str], db_path) -> list[str]:
     """Filter the sim shortlist down to candidates with a resolvable docking target."""
     survivors = []
     for pdb_id in pdb_ids:
