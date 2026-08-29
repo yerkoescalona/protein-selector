@@ -2315,7 +2315,19 @@ survivors and looked like a clean no-op.
       Decide, don't drift: either surface it in the report (oligomeric state is a genuine
       simulability signal, §2) or stop computing it. *Done when:* the warning is gone
       because one of those two happened.
-- [ ] **P.5** Enforce the card at runtime, not just on paper. Today a node *could* still
+- [x] **P.5a** (2026-08-29) **The cards moved onto the nodes.** They were originally one
+      central list in `core/registry.py`, which meant opening `nodes/dock_ligand.py` told
+      you nothing about its sockets -- a second source of truth describing code it did not
+      live next to, the exact failure §7b fixed for report columns. Each node module now
+      declares its own `NODE = NodeSpec(...)` directly under its imports, and the registry
+      *collects* them via `discover_nodes()` (lazy, PEP 562 `__getattr__` for
+      `NODES`/`BY_NAME`, since the node modules import the registry -- a module-level
+      constant would be a cycle). **Done when verified:** 14 cards discovered, the graph
+      validates identically (0 errors, 3 warnings), and a subprocess test asserts that
+      collecting the graph pulls in **no** rdkit/openmm/vina/ray/pymol/openff/meeko --
+      the property that makes cards-on-nodes safe, and the same
+      network-at-import trap W1.2 had to undo, in a new place.
+- [ ] **P.5b** Enforce the card at runtime, not just on paper. Today a node *could* still
       read a table it never declared and nothing would notice. *Done when:* a node reading
       an undeclared table fails a test — most cheaply by having the node wrapper pass only
       its declared sockets.

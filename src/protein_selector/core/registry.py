@@ -99,116 +99,67 @@ class NodeSpec:
         return tuple(s.name for s in self.outputs if s.kind is SocketKind.TABLE)
 
 
-# The one file-on-disk channel in this pipeline, and the reason ARTIFACT exists: PLAN.md
-# §18 makes the docking receptor the MD validator's own relaxed structure, so three later
-# nodes genuinely depend on a file `simulate_md` wrote, not on any table.
+# Socket names shared across nodes, so a wire is a constant rather than a repeated string.
+# PLAN.md §18 makes the docking receptor the MD validator's own relaxed structure, which is
+# why an ARTIFACT channel exists at all.
 RELAXED_STRUCTURE = "relaxed_structure"
 COMPLEX_STRUCTURE = "complex_relaxed_structure"
 
-NODES: tuple[NodeSpec, ...] = (
-    NodeSpec(
-        "search_candidates", "screening", Granularity.BATCH,
-        outputs=(collection("candidate_entries"),),
-        needs_network=True,
-    ),
-    NodeSpec(
-        "check_simulability", "screening", Granularity.BATCH,
-        inputs=(collection("candidate_entries"),),
-        outputs=(collection("survivors"), table("candidates"), table("simulability"),
-                 table("oligomeric_state"), table("entity_composition")),
-        needs_network=True,
-    ),
-    NodeSpec(
-        "resolve_ligands", "annotation", Granularity.BATCH,
-        inputs=(collection("survivors"), table("candidates")),
-        outputs=(table("ligand_ccd_codes"), table("ligand_smiles")),
-        needs_network=True,
-    ),
-    NodeSpec(
-        "count_literature", "annotation", Granularity.BATCH,
-        inputs=(collection("survivors"),),
-        outputs=(table("literature"),),
-        needs_network=True,
-    ),
-    NodeSpec(
-        "lookup_alphafold", "annotation", Granularity.BATCH,
-        inputs=(collection("survivors"), table("candidates")),
-        outputs=(table("alphafold_entries"), table("validation")),
-        needs_network=True,
-    ),
-    NodeSpec(
-        "sanitize_ligand", "chemistry", Granularity.BATCH,
-        inputs=(table("ligand_ccd_codes"), table("ligand_smiles")),
-        outputs=(table("parameterizability"),),
-    ),
-    NodeSpec(
-        "parameterize_ligand", "chemistry", Granularity.BATCH,
-        inputs=(table("ligand_ccd_codes"), table("ligand_smiles")),
-        outputs=(table("meeko_parameterization"),),
-    ),
-    NodeSpec(
-        "select_dockable", "chemistry", Granularity.BATCH,
-        inputs=(table("ligand_ccd_codes"), table("meeko_parameterization")),
-        outputs=(collection("dockable_ids"),),
-    ),
-    NodeSpec(
-        "simulate_md", "validation", Granularity.PER_CANDIDATE,
-        # `dockable_ids` is optional because it only narrows the pool when
-        # `restrict_md_to_dockable` is on (scripts/ligand_filter_fix_brief.md, Problem 3);
-        # with it off, simulate_md runs over every simulability survivor instead.
-        inputs=(table("candidates"), collection("dockable_ids", required=False)),
-        outputs=(table("validation"), artifact(RELAXED_STRUCTURE)),
-        needs_conda=True,
-    ),
-    NodeSpec(
-        "detect_pocket", "validation", Granularity.PER_CANDIDATE,
-        inputs=(artifact(RELAXED_STRUCTURE),),
-        outputs=(table("pocket_detection"),),
-        needs_conda=True,
-    ),
-    NodeSpec(
-        "resolve_docking_targets", "validation", Granularity.BATCH,
-        inputs=(table("ligand_ccd_codes"), table("meeko_parameterization"),
-                artifact(RELAXED_STRUCTURE),
-                table("pocket_detection", required=False)),
-        outputs=(collection("docking_shortlist"),),
-        needs_conda=True, needs_network=True,
-    ),
-    NodeSpec(
-        "dock_ligand", "validation", Granularity.PER_CANDIDATE,
-        inputs=(collection("docking_shortlist"), artifact(RELAXED_STRUCTURE),
-                table("ligand_ccd_codes"), table("meeko_parameterization")),
-        outputs=(table("validation"),),
-        needs_conda=True, needs_network=True,
-    ),
-    NodeSpec(
-        "simulate_complex_md", "validation", Granularity.PER_CANDIDATE,
-        inputs=(collection("docking_shortlist"), artifact(RELAXED_STRUCTURE),
-                table("validation")),
-        outputs=(table("validation"), artifact(COMPLEX_STRUCTURE)),
-        needs_conda=True, needs_network=True,
-    ),
-    NodeSpec(
-        "build_report", "reporting", Granularity.BATCH,
-        inputs=(table("candidates"), table("simulability"), table("entity_composition"),
-                table("literature"), table("ligand_ccd_codes"), table("ligand_smiles"),
-                table("parameterizability"), table("meeko_parameterization"),
-                table("pocket_detection", required=False), table("alphafold_entries"),
-                table("validation")),
-        outputs=(collection("report_rows"),),
-    ),
-)
+
+_DISCOVERED: tuple[NodeSpec, ...] | None = None
+
+
+def discover_nodes(refresh: bool = False) -> tuple[NodeSpec, ...]:
+    """Collect every node's card from the node modules themselves.
+
+    **The cards live on the nodes, not here** (PLAN.md §35e). A central list would be a
+    second source of truth that drifts from the code it describes -- the exact failure §7b
+    fixed for report columns. Opening ``nodes/dock_ligand.py`` now shows that node's
+    sockets; this function only gathers them.
+
+    Importing all 14 node modules is deliberately cheap: every heavy dependency in this
+    repo is imported lazily inside the function that needs it, so collecting the graph
+    pulls in no rdkit, openmm, vina, ray or pymol. ``test_registry`` asserts that, because
+    it is the property that makes this safe -- and the one W1.2 had to restore once.
+    """
+    global _DISCOVERED
+    if _DISCOVERED is not None and not refresh:
+        return _DISCOVERED
+    import importlib
+    import pkgutil
+
+    import protein_selector.nodes as package
+
+    specs: list[NodeSpec] = []
+    for module_info in sorted(pkgutil.iter_modules(package.__path__), key=lambda m: m.name):
+        module = importlib.import_module(f"{package.__name__}.{module_info.name}")
+        spec = getattr(module, "NODE", None)
+        if isinstance(spec, NodeSpec):
+            specs.append(spec)
+    _DISCOVERED = tuple(specs)
+    return _DISCOVERED
+
+
+def __getattr__(name: str):
+    """Expose ``NODES``/``BY_NAME`` lazily (PEP 562).
+
+    Module-level constants would have to import the node package at import time, and this
+    module is imported BY those nodes -- a cycle. Deferring to first access breaks it.
+    """
+    if name == "NODES":
+        return discover_nodes()
+    if name == "BY_NAME":
+        return {n.name: n for n in discover_nodes()}
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 STAGE_ORDER: tuple[str, ...] = (
     "screening", "annotation", "chemistry", "validation", "reporting",
 )
 
-BY_NAME: dict[str, NodeSpec] = {n.name: n for n in NODES}
-
-
 def nodes_in_stage(stage: str) -> tuple[NodeSpec, ...]:
     """Every node declared as belonging to ``stage``, in declaration order."""
-    return tuple(n for n in NODES if n.stage == stage)
+    return tuple(n for n in discover_nodes() if n.stage == stage)
 
 
 def tables_written_by(stage: str) -> set[str]:
@@ -216,13 +167,19 @@ def tables_written_by(stage: str) -> set[str]:
     return {t for n in nodes_in_stage(stage) for t in n.writes}
 
 
-def producers_of(socket_name: str, nodes: tuple[NodeSpec, ...] = NODES) -> tuple[str, ...]:
+def producers_of(
+    socket_name: str, nodes: tuple[NodeSpec, ...] | None = None
+) -> tuple[str, ...]:
     """Which nodes declare an output socket with this name -- i.e. what feeds this wire."""
+    nodes = discover_nodes() if nodes is None else nodes
     return tuple(n.name for n in nodes if any(o.name == socket_name for o in n.outputs))
 
 
-def consumers_of(socket_name: str, nodes: tuple[NodeSpec, ...] = NODES) -> tuple[str, ...]:
+def consumers_of(
+    socket_name: str, nodes: tuple[NodeSpec, ...] | None = None
+) -> tuple[str, ...]:
     """Which nodes declare an input socket with this name."""
+    nodes = discover_nodes() if nodes is None else nodes
     return tuple(n.name for n in nodes if any(i.name == socket_name for i in n.inputs))
 
 
@@ -251,7 +208,7 @@ class GraphReport:
         return "\n".join([head, *lines])
 
 
-def validate_graph(nodes: tuple[NodeSpec, ...] = NODES) -> GraphReport:
+def validate_graph(nodes: tuple[NodeSpec, ...] | None = None) -> GraphReport:
     """Walk the wires and report every missing link, before anything runs.
 
     The questions asked, and why each is worth asking here:
@@ -270,6 +227,7 @@ def validate_graph(nodes: tuple[NodeSpec, ...] = NODES) -> GraphReport:
 
     Returns rather than raises, so a caller can print warnings and still proceed.
     """
+    nodes = discover_nodes() if nodes is None else nodes
     report = GraphReport()
     stage_index = {s: i for i, s in enumerate(STAGE_ORDER)}
     # Build the name map from the graph being CHECKED, not from the module-global one --

@@ -208,3 +208,49 @@ class TestGraphValidation:
         report = validate_graph()
         assert report.ok
         assert any("oligomeric_state" in w for w in report.warnings)
+
+
+class TestCardsLiveOnTheNodes:
+    """PLAN.md §35e: each node declares its own card; the registry only collects them."""
+
+    def test_every_node_module_declares_a_card(self):
+        import pkgutil
+
+        import protein_selector.nodes as pkg
+        from protein_selector.core.registry import BY_NAME
+
+        modules = {m.name for m in pkgutil.iter_modules(pkg.__path__)}
+        assert modules == set(BY_NAME), (
+            "every node module must define NODE, and every card must have a module"
+        )
+
+    def test_a_cards_name_matches_its_module_name(self):
+        import importlib
+
+        from protein_selector.core.registry import discover_nodes
+
+        for spec in discover_nodes():
+            module = importlib.import_module(f"protein_selector.nodes.{spec.name}")
+            assert module.NODE.name == spec.name
+
+    def test_collecting_the_graph_pulls_in_no_heavy_dependency(self):
+        # This is the property that makes cards-on-nodes safe. Collecting imports all 14
+        # node modules, so if any of them imported rdkit/openmm/vina/ray at module level,
+        # merely asking "what produces pocket_detection?" would drag the whole validation
+        # stack in -- the network-at-import problem §27d W1.2 had to undo, in a new place.
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys;"
+             "from protein_selector.core.registry import discover_nodes;"
+             "assert len(discover_nodes()) == 14;"
+             "heavy = {'rdkit','openmm','vina','plip','pymol','ray','openff','meeko'};"
+             "loaded = {k.split('.')[0] for k in sys.modules};"
+             "assert not (loaded & heavy), sorted(loaded & heavy);"
+             "print('ok')"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "ok" in result.stdout

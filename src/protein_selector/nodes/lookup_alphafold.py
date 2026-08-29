@@ -13,6 +13,7 @@ import logging
 import time
 
 from protein_selector.core.config import ModelingLookupConfig
+from protein_selector.core.registry import Granularity, NodeSpec, collection, table
 from protein_selector.core.validation_result import ValidationResult
 from protein_selector.core.validation_store import (
     load_validation_results,
@@ -25,6 +26,18 @@ from protein_selector.domain.modeling.validation import (
 )
 from protein_selector.domain.modeling.validation import run_modeling_validation
 from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "lookup_alphafold",
+    stage="annotation",
+    granularity=Granularity.BATCH,
+    inputs=(collection("survivors"), table("candidates")),
+    outputs=(table("alphafold_entries"), table("validation")),
+    needs_network=True,
+)
 
 logger = logging.getLogger(__name__)
 

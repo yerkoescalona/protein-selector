@@ -19,10 +19,22 @@ from __future__ import annotations
 
 import logging
 
+from protein_selector.core.registry import Granularity, NodeSpec, collection, table
 from protein_selector.domain.docking.native_ligand import is_dockable_ligand_code
 from protein_selector.domain.docking.store import (
     load_ligand_ccd_codes,
     load_meeko_parameterization,
+)
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "select_dockable",
+    stage="chemistry",
+    granularity=Granularity.BATCH,
+    inputs=(table("ligand_ccd_codes"), table("meeko_parameterization")),
+    outputs=(collection("dockable_ids"),),
 )
 
 logger = logging.getLogger(__name__)

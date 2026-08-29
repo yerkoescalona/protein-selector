@@ -16,10 +16,23 @@ from protein_selector.core.config import (
     _RCSB_MAX_ATOMS_CEILING,
     CandidateSearchConfig,
 )
+from protein_selector.core.registry import Granularity, NodeSpec, collection
 from protein_selector.domain.structural_biology.rcsb_search import (
     CandidateEntry,
     fetch_entry_metadata,
     search_candidate_ids,
+)
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "search_candidates",
+    stage="screening",
+    granularity=Granularity.BATCH,
+    inputs=(),
+    outputs=(collection("candidate_entries"),),
+    needs_network=True,
 )
 
 logger = logging.getLogger(__name__)

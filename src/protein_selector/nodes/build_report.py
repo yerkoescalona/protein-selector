@@ -9,7 +9,19 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from protein_selector.core.registry import Granularity, NodeSpec, collection, table
 from protein_selector.core.report import build_report_table, write_report_csv
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "build_report",
+    stage="reporting",
+    granularity=Granularity.BATCH,
+    inputs=(table("candidates"), table("simulability"), table("entity_composition"), table("literature"), table("ligand_ccd_codes"), table("ligand_smiles"), table("parameterizability"), table("meeko_parameterization"), table("pocket_detection", required=False), table("alphafold_entries"), table("validation")),
+    outputs=(collection("report_rows"),),
+)
 
 logger = logging.getLogger(__name__)
 

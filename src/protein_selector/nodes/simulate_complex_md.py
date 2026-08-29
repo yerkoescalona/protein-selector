@@ -12,6 +12,13 @@ from __future__ import annotations
 import logging
 
 from protein_selector.core.config import ComplexMdSimulationConfig
+from protein_selector.core.registry import (
+    Granularity,
+    NodeSpec,
+    artifact,
+    collection,
+    table,
+)
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
 from protein_selector.core.validation_store import (
     load_validation_results,
@@ -22,6 +29,19 @@ from protein_selector.domain.molecular_dynamics.amber_complex import (
     EXERCISE_NAME,
     complex_relaxed_structure_path,
     run_complex_md_validation,
+)
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "simulate_complex_md",
+    stage="validation",
+    granularity=Granularity.PER_CANDIDATE,
+    inputs=(collection("docking_shortlist"), artifact("relaxed_structure"), table("validation")),
+    outputs=(table("validation"), artifact("complex_relaxed_structure")),
+    needs_conda=True,
+    needs_network=True,
 )
 
 logger = logging.getLogger(__name__)

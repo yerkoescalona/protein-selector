@@ -19,7 +19,27 @@ from __future__ import annotations
 
 import logging
 
+from protein_selector.core.registry import (
+    Granularity,
+    NodeSpec,
+    artifact,
+    collection,
+    table,
+)
 from protein_selector.domain.docking.target import resolve_docking_target
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "resolve_docking_targets",
+    stage="validation",
+    granularity=Granularity.BATCH,
+    inputs=(table("ligand_ccd_codes"), table("meeko_parameterization"), artifact("relaxed_structure"), table("pocket_detection", required=False)),
+    outputs=(collection("docking_shortlist"),),
+    needs_conda=True,
+    needs_network=True,
+)
 
 logger = logging.getLogger(__name__)
 

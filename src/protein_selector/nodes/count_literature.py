@@ -9,10 +9,23 @@ from __future__ import annotations
 
 import logging
 
+from protein_selector.core.registry import Granularity, NodeSpec, collection, table
 from protein_selector.domain.bioinformatics.europe_pmc import fetch_literature_counts
 from protein_selector.domain.bioinformatics.store import (
     load_literature_counts,
     upsert_literature_counts,
+)
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "count_literature",
+    stage="annotation",
+    granularity=Granularity.BATCH,
+    inputs=(collection("survivors"),),
+    outputs=(table("literature"),),
+    needs_network=True,
 )
 
 logger = logging.getLogger(__name__)

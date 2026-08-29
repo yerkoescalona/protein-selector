@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 
 from protein_selector.core.config import CandidateFilterConfig
+from protein_selector.core.registry import Granularity, NodeSpec, collection, table
 from protein_selector.domain.structural_biology.rcsb_composition import (
     fetch_non_standard_residues,
     fetch_oligomeric_state,
@@ -28,6 +29,18 @@ from protein_selector.domain.structural_biology.store import (
 )
 from protein_selector.domain.structural_biology.validation import (
     check_full_simulability,
+)
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "check_simulability",
+    stage="screening",
+    granularity=Granularity.BATCH,
+    inputs=(collection("candidate_entries"),),
+    outputs=(collection("survivors"), table("candidates"), table("simulability"), table("oligomeric_state"), table("entity_composition")),
+    needs_network=True,
 )
 
 logger = logging.getLogger(__name__)

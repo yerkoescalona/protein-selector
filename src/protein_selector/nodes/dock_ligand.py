@@ -14,6 +14,13 @@ import tempfile
 from pathlib import Path
 
 from protein_selector.core.config import DockingConfig
+from protein_selector.core.registry import (
+    Granularity,
+    NodeSpec,
+    artifact,
+    collection,
+    table,
+)
 from protein_selector.core.validation_result import (
     FailureMode,
     ValidationResult,
@@ -34,6 +41,19 @@ from protein_selector.domain.docking.validation import (
 )
 from protein_selector.domain.molecular_dynamics.openmm_md import (
     relaxed_structure_path,
+)
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "dock_ligand",
+    stage="validation",
+    granularity=Granularity.PER_CANDIDATE,
+    inputs=(collection("docking_shortlist"), artifact("relaxed_structure"), table("ligand_ccd_codes"), table("meeko_parameterization")),
+    outputs=(table("validation"),),
+    needs_conda=True,
+    needs_network=True,
 )
 
 logger = logging.getLogger(__name__)

@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 
 from protein_selector.core.config import PocketDetectionConfig
+from protein_selector.core.registry import Granularity, NodeSpec, artifact, table
 from protein_selector.domain.docking.fpocket import (
     PocketDetectionResult,
     check_pocket_detected,
@@ -22,6 +23,18 @@ from protein_selector.domain.docking.store import (
 )
 from protein_selector.domain.molecular_dynamics.openmm_md import (
     relaxed_structure_path,
+)
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "detect_pocket",
+    stage="validation",
+    granularity=Granularity.PER_CANDIDATE,
+    inputs=(artifact("relaxed_structure"),),
+    outputs=(table("pocket_detection"),),
+    needs_conda=True,
 )
 
 logger = logging.getLogger(__name__)

@@ -9,10 +9,22 @@ from __future__ import annotations
 
 import logging
 
+from protein_selector.core.registry import Granularity, NodeSpec, table
 from protein_selector.domain.docking.rdkit_ligand import filter_parameterizable
 from protein_selector.domain.docking.store import (
     load_parameterizability,
     upsert_parameterizability,
+)
+
+# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
+# wherever a socket name here matches one on another node. Nothing outside these
+# sockets may be read or written -- if it is not on the card, it does not exist.
+NODE = NodeSpec(
+    "sanitize_ligand",
+    stage="chemistry",
+    granularity=Granularity.BATCH,
+    inputs=(table("ligand_ccd_codes"), table("ligand_smiles")),
+    outputs=(table("parameterizability"),),
 )
 
 logger = logging.getLogger(__name__)
