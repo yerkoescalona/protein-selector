@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§39** | **SLURM setup (2026-08-29).** Everything installed and munge active; the sole blocker was a missing `/etc/slurm/slurm.conf`. Config generated for this hardware + `slurm/SETUP.md`. Daemons not yet started (needs sudo). |
 | **§38** | **One config file + SLURM (2026-08-29).** `make ray-run` honours all of `workflow/config.yaml` (it was reading 3 of 27 keys); `slurm/run_pipeline.sbatch` runs the pipeline as one allocation. |
 | **§37** | **Integration (2026-08-29).** 17 hermetic tests over the seams between tiers, plus a live full-chain run. Found a real Ray constraint: cluster and driver must share an exact Python version, so the venv head cannot serve conda slow lanes. |
 | **§36** | **Watching a run (2026-08-29).** `make ray-head` for Ray's own dashboard, and `make ray-watch` for the domain view Ray cannot give — the graph by stage with per-candidate progress and the socket a pending node waits on. |
@@ -2569,3 +2570,41 @@ board and two views, each green on its own -- which is precisely the situation w
       rows are in the store.
 - [ ] **C.5** GPU line is commented out and untested -- nothing in screening needs one.
       Revisit with the design work (§30). *Done when:* a GPU lane requests and uses one.
+
+## 39. SLURM setup on this workstation (2026-08-29)
+
+- [x] **S.1** (2026-08-29) Diagnosed rather than assumed. `slurm-wlm 24.11.5` is fully
+      installed (client, server, plugins), **munge is active**, the `slurm` user exists
+      (uid 64030) and `/var/log/slurm` is present. The only blocker is that
+      **`/etc/slurm/slurm.conf` does not exist** — which is why `slurmd` shows *failed* and
+      `slurmctld` *inactive*: neither daemon can start without it, and `sinfo` falls back to
+      a DNS-SRV lookup that cannot succeed. So this is not an install job; it is one config
+      file and two directories.
+- [x] **S.2** (2026-08-29) `slurm/slurm.conf`, generated for **this** hardware rather than
+      copied from a template: `debian`, 1 socket x 8 cores x 2 threads = 16 CPUs, 31217 MB.
+      Two choices worth keeping:
+      * **`RealMemory=30000`, deliberately below the physical 31217.** SLURM drains a node
+        that reports less memory than the config claims, and the OS never leaves you all
+        of it — a config that claims the full number is a node that goes DRAIN.
+      * **`proctrack/linuxproc` + `task/none`.** `proctrack/cgroup` is stricter and correct
+        on a real cluster, but needs a matching `cgroup.conf` and cgroup-v2 delegation;
+        getting that wrong makes every job fail to launch with an error that points
+        nowhere. Start simple, switch once the basic cluster is known good.
+      * **`SelectType=select/cons_tres`** so `--cpus-per-task` means something. Without it
+        SLURM allocates whole nodes and the sbatch script's CPU request is silently inert.
+- [x] **S.3** (2026-08-29) `slurm/SETUP.md`: the seven steps, each with the failure it
+      prevents — spool-directory ownership (`/var/spool/slurmd` stays root-owned because
+      `slurmd` runs as root), installing the config, starting the daemons, verifying, and
+      how to read a `drain` state. Also states plainly that **`sacct` will not work** under
+      `accounting_storage/none`, and what it costs to add (`slurmdbd` + MariaDB) — worth it
+      only if per-job CPU/memory history is wanted, which is what §29e O.1 wanted
+      `benchmark:` data for.
+
+### 39a. Open
+
+- [ ] **S.4** Every step needs `sudo`, which this machine does not grant passwordlessly, so
+      the daemons are **not started** and nothing has been verified live. *Done when:*
+      `sinfo` shows the node `idle` and `srun -n1 hostname` prints `debian`.
+- [ ] **S.5** Then §38c **C.4**: `sbatch slurm/run_pipeline.sbatch` completes and its rows
+      land in the store — which finally makes §33e **Y.4** (one held allocation vs. many
+      small jobs) measurable rather than arguable.
