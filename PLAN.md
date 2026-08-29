@@ -2241,5 +2241,3 @@ exactly what is missing today.
       module and every module has a spec), plus the invariants that keep the tiers honest:
       conda-only nodes live only in `validation`, and per-candidate granularity is exactly
       the four expensive nodes.
-- [ ] **N.7** Registry drift test. *Done when:* renaming a table without updating its node
-      spec fails `pytest`.
