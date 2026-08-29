@@ -10,6 +10,7 @@ per-candidate-job level applies here at the per-candidate-within-one-job level).
 from __future__ import annotations
 
 import logging
+import time
 
 from protein_selector.core.validation_result import ValidationResult
 from protein_selector.core.validation_store import (
@@ -55,14 +56,21 @@ def run_modeling_stage(
             entry.pdb_id,
             uniprot_accession,
         )
+        fetch_started = time.monotonic()
         try:
             alphafold_entry = fetch_alphafold_entry(uniprot_accession)
         except ValueError as exc:
             logger.warning("⏭️ modeling lookup skipped for %s: %s", entry.pdb_id, exc)
             continue
+        fetch_elapsed = time.monotonic() - fetch_started
         if alphafold_entry is not None:
             upsert_alphafold_entry(alphafold_entry, db_path=db_path)
-        result = run_modeling_validation(entry.pdb_id, uniprot_accession)
+        # PLAN.md §34 N.3: pass the entry we just fetched. This used to call
+        # run_modeling_validation(pdb_id, accession), which fetched the SAME record again.
+        result = run_modeling_validation(
+            entry.pdb_id, uniprot_accession, alphafold_entry,
+            effort_seconds=fetch_elapsed,
+        )
         logger.debug("modeling lookup %s: %s", entry.pdb_id, result.status.value)
         upsert_validation_results(MODELING_EXERCISE, [result], db_path=db_path)
         results.append(result)

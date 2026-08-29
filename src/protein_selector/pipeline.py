@@ -433,7 +433,9 @@ def run_pipeline(
                 continue
             if alphafold_entry is not None:
                 upsert_alphafold_entry(alphafold_entry, db_path=db_path)
-            result = run_modeling_validation(entry.pdb_id, uniprot_accession)
+            result = run_modeling_validation(
+                entry.pdb_id, uniprot_accession, alphafold_entry
+            )
             logger.debug("modeling lookup %s: %s", entry.pdb_id, result.status.value)
             # Persisted immediately, not batched after the loop: a crash on
             # candidate N (e.g. an unhandled network error) must not lose the

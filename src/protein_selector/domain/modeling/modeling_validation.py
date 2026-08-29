@@ -9,14 +9,12 @@ this validates is the broader modeling domain, even though today it's fetch-only
 
 from __future__ import annotations
 
-import time
-
 from protein_selector.core.validation_result import (
     FailureMode,
     ValidationResult,
     ValidationStatus,
 )
-from protein_selector.domain.modeling.alphafold_lookup import fetch_alphafold_entry
+from protein_selector.domain.modeling.alphafold_lookup import AlphaFoldEntry
 
 EXERCISE_NAME = "modeling"
 _DEFAULT_MAX_LOW_CONFIDENCE_FRACTION = 0.3  # combined very-low + low pLDDT fraction above
@@ -27,7 +25,9 @@ _DEFAULT_MAX_LOW_CONFIDENCE_FRACTION = 0.3  # combined very-low + low pLDDT frac
 def run_modeling_validation(
     pdb_id: str,
     uniprot_accession: str,
+    entry: AlphaFoldEntry | None,
     max_low_confidence_fraction: float = _DEFAULT_MAX_LOW_CONFIDENCE_FRACTION,
+    effort_seconds: float | None = None,
 ) -> ValidationResult:
     """Check whether a trustworthy AlphaFold DB structure already exists for this candidate.
 
@@ -39,12 +39,17 @@ def run_modeling_validation(
     - An entry exists but too much of it is low-confidence
       (``FailureMode.CONFIDENCE``).
 
-    A malformed ``uniprot_accession`` (a caller bug, not "no entry")
-    propagates as ``ValueError``, same as ``fetch_alphafold_entry``.
+    ``entry`` is the already-fetched ``AlphaFoldEntry`` (or ``None`` when the AlphaFold DB
+    has no structure for this accession). **This function no longer fetches** (PLAN.md §34
+    N.3): it used to call ``fetch_alphafold_entry`` itself while its only caller had just
+    fetched the very same record to persist it -- two live HTTP requests per candidate for
+    one AFDB entry, roughly 2,445 redundant calls across the store. Taking the entry as an
+    argument also makes this a pure function of its inputs, matching §34c's rule that a
+    validator turns adapter output into a ``ValidationResult`` and performs no I/O itself.
+
+    ``uniprot_accession`` is still taken, for the "no entry" message only.
     """
-    start = time.monotonic()
-    entry = fetch_alphafold_entry(uniprot_accession)
-    elapsed = time.monotonic() - start
+    elapsed = 0.0 if effort_seconds is None else effort_seconds
 
     if entry is None:
         return ValidationResult(
