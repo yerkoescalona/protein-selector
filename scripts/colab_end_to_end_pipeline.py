@@ -161,7 +161,7 @@ os.chdir(REPO_DIR if REPO_DIR.exists() else ".")
 
 import yaml
 
-from protein_selector.pipelines.single_pdb import validate_single_pdb
+from protein_selector.pipelines.single_pdb_pipeline import validate_single_pdb
 
 db_path = Path(DB_PATH_STR)
 db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -254,7 +254,7 @@ os.chdir(REPO_DIR)
 
 import yaml
 
-from protein_selector.pipelines.single_pdb import validate_single_pdb
+from protein_selector.pipelines.single_pdb_pipeline import validate_single_pdb
 
 PDB_ID = "2PK4"
 db_path = Path("colab_run/protein_selector_colab_test.db")  # same file Part A wrote to -- survived the restart

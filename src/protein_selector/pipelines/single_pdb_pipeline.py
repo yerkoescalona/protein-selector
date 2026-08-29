@@ -36,6 +36,11 @@ from protein_selector.nodes.simulate_complex_md_node import (
     simulate_complex_md,
 )
 from protein_selector.nodes.simulate_md_node import simulate_md
+from protein_selector.pipelines.base import Pipeline, PipelineContext
+from protein_selector.stages.annotation_stage import AnnotationStage
+from protein_selector.stages.chemistry_stage import ChemistryStage
+from protein_selector.stages.screening_stage import ScreeningStage
+from protein_selector.stages.validation_stage import ValidationStage
 
 logger = logging.getLogger(__name__)
 
@@ -210,3 +215,33 @@ def print_validate_one_summary(pdb_id: str, db_path: Path) -> None:
     print(f"md_simulation: {row.md_simulation.status:<8} {row.md_simulation.notes}")
     print(f"docking:       {row.docking.status:<8} {row.docking.notes}")
     print(f"suitable_for: {row.suitable_for}")
+
+
+class SinglePdbPipeline(Pipeline):
+    """Validate ONE candidate end to end, bypassing every whole-pool checkpoint (§22).
+
+    The same nodes and the same store as the batch recipe -- only the scope differs. It
+    deliberately does not write ``results/report.csv``: that would rewrite rows for every
+    other candidate (§4b).
+    """
+
+    name = "single_pdb"
+    stages = (ScreeningStage, AnnotationStage, ChemistryStage, ValidationStage)
+
+    def run(self, ctx: PipelineContext) -> None:
+        """Validate the single candidate named in ``ctx.config``.
+
+        Which lanes run is explicit rather than defaulted: the slow ones need the
+        validation conda environment, so a caller must ask for them (§9).
+        """
+        config = dict(ctx.config or {})
+        validate_single_pdb(
+            config["pdb_id"],
+            ctx.db_path,
+            config,
+            run_md=config.get("run_md", False),
+            run_pocket=config.get("run_pocket", False),
+            run_dock=config.get("run_dock", False),
+            run_complex_md=config.get("run_complex_md", False),
+            force_refresh=config.get("force_refresh", False),
+        )

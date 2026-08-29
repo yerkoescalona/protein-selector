@@ -23,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from protein_selector.pipelines.single_pdb import validate_single_pdb
+from protein_selector.pipelines.single_pdb_pipeline import validate_single_pdb
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)

@@ -27,6 +27,12 @@ from protein_selector.core.config import (
 )
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.core.registry import STAGE_ORDER
+from protein_selector.pipelines.base import Pipeline, PipelineContext
+from protein_selector.stages.annotation_stage import AnnotationStage
+from protein_selector.stages.chemistry_stage import ChemistryStage
+from protein_selector.stages.reporting_stage import ReportingStage
+from protein_selector.stages.screening_stage import ScreeningStage
+from protein_selector.stages.validation_stage import ValidationStage
 
 logger = logging.getLogger(__name__)
 
@@ -91,3 +97,30 @@ def run(
     )
     logger.info("🧬 course_candidates: %d simulability survivors", len(survivors))
     return build_report(db_path, report_path)
+
+
+class CourseCandidatesPipeline(Pipeline):
+    """The recipe for the §1 deliverable: a ranked table of course candidates.
+
+    Named for the outcome, not the mechanism. It lists the stages and supplies the
+    configuration; *how* they execute belongs to a runner, which is what let §33 swap
+    Snakemake out without rewriting the recipe.
+    """
+
+    name = "course_candidates"
+    stages = (
+        ScreeningStage,
+        AnnotationStage,
+        ChemistryStage,
+        ValidationStage,
+        ReportingStage,
+    )
+
+    def run(self, ctx: PipelineContext) -> int:
+        """Run every stage, then build the ranked report. Returns the row count."""
+        return run(
+            ctx.config,
+            db_path=ctx.db_path,
+            num_cpus=ctx.num_cpus,
+            run_id=ctx.run_id,
+        )

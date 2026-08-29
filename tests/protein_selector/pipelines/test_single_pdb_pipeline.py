@@ -1,4 +1,4 @@
-"""Tests for protein_selector.pipelines.single_pdb.validate_single_pdb.
+"""Tests for protein_selector.pipelines.single_pdb_pipeline.validate_single_pdb.
 
 The single-PDB, no-Snakemake, no-checkpoints CLI entry point (PLAN.md §22). Every stage
 function it calls is monkeypatched at the module level, recording calls into a shared
@@ -15,8 +15,8 @@ import pytest
 
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
 from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
-from protein_selector.pipelines import single_pdb as single_pdb_module
-from protein_selector.pipelines.single_pdb import validate_single_pdb
+from protein_selector.pipelines import single_pdb_pipeline as single_pdb_module
+from protein_selector.pipelines.single_pdb_pipeline import validate_single_pdb
 
 
 @pytest.fixture(autouse=True)
@@ -201,3 +201,55 @@ def test_force_refresh_propagates_to_literature_stage(monkeypatch, calls):
 
     _args, kwargs = calls["literature"][0]
     assert kwargs.get("force_refresh") is True
+
+
+class TestPipelineClasses:
+    """PLAN.md §35f: pipelines follow the same base as nodes and stages."""
+
+    def test_both_pipelines_declare_stages_and_register(self):
+        from protein_selector.pipelines.base import PIPELINE_CLASSES
+        from protein_selector.pipelines.course_candidates_pipeline import (
+            CourseCandidatesPipeline,
+        )
+        from protein_selector.pipelines.single_pdb_pipeline import SinglePdbPipeline
+
+        registered = {c.__name__ for c in PIPELINE_CLASSES}
+        assert {"CourseCandidatesPipeline", "SinglePdbPipeline"} <= registered
+        assert CourseCandidatesPipeline.stages
+        assert SinglePdbPipeline.stages
+
+    def test_a_pipeline_listing_a_stage_twice_is_rejected_at_definition(self):
+        import pytest
+
+        from protein_selector.pipelines.base import MalformedPipeline, Pipeline
+        from protein_selector.stages.screening_stage import ScreeningStage
+
+        with pytest.raises(MalformedPipeline, match="twice"):
+
+            class Duplicated(Pipeline):
+                name = "duplicated"
+                stages = (ScreeningStage, ScreeningStage)
+
+                def run(self, ctx):  # pragma: no cover - never reached
+                    return None
+
+    def test_a_pipeline_without_a_name_is_rejected_at_definition(self):
+        import pytest
+
+        from protein_selector.pipelines.base import MalformedPipeline, Pipeline
+        from protein_selector.stages.screening_stage import ScreeningStage
+
+        with pytest.raises(MalformedPipeline, match="name"):
+
+            class Unnamed(Pipeline):
+                stages = (ScreeningStage,)
+
+                def run(self, ctx):  # pragma: no cover - never reached
+                    return None
+
+    def test_single_pdb_omits_reporting_deliberately(self):
+        # §22/§4b: validating one candidate must NOT rewrite results/report.csv, which
+        # would touch rows for every other candidate. The recipe says so structurally.
+        from protein_selector.pipelines.single_pdb_pipeline import SinglePdbPipeline
+
+        assert "reporting" not in {s.name for s in SinglePdbPipeline.stages}
