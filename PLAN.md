@@ -2173,14 +2173,52 @@ exactly what is missing today.
       double-nestings were introduced; ruff/ty clean; **428 passed, 2 skipped**; and three
       real functional checks -- `make demo` (300 rows), `make calibration`, and
       `make ray-plan` against the live 2,540-candidate store -- all still work.
-- [ ] **N.2** `pipelines/` + `core/registry.py`, additive; move `validate_one`.
-      *Done when:* `course_candidates` runs the same DAG the runner runs today.
-- [ ] **N.3** Fix the double AFDB fetch. *Done when:* one fetch per candidate, asserted.
-- [ ] **N.4** `stages/` → `nodes/`, one node per commit, verb+thing names.
-      *Done when:* 97 `run_*_stage` references are gone and the gate is green.
+- [x] **N.2** (2026-08-29) `pipelines/` created with `single_pdb` (moved from
+      `stages/validate_one.py` -- the taxonomy identified it as a pipeline misfiled as a
+      stage) and a new `course_candidates`, the named recipe for the §1 deliverable. It
+      supplies configuration and composes stages, and **delegates execution to the runner
+      rather than reimplementing the DAG** -- the split that made §33's Snakemake removal
+      survivable in the first place. `core/registry.py` declares all 14 nodes: stage
+      membership, granularity, the tables each reads and writes, and
+      `needs_conda`/`needs_gpu`/`needs_network`.
+- [x] **N.3** (2026-08-29) Double AlphaFold fetch removed. `run_modeling_validation` took
+      only `(pdb_id, accession)` and fetched the record itself, while its only caller had
+      just fetched the same record to persist it -- **~2,445 redundant HTTP calls**. The
+      validator now takes the entry as an argument and performs no I/O, matching §34c.
+      Two new guards: the module no longer exposes a fetch function at all, and the
+      validator is asserted to be a pure function of its arguments.
+- [x] **N.4** (2026-08-29) `stages/` -> `nodes/`, 13 modules renamed verb+thing (97
+      references). Three files were not nodes and the taxonomy surfaced it:
+      `docking_common.py` -> `domain/docking/target.py` (**fixes §25g's layering
+      inversion** -- verified: no file under `domain/` imports `nodes/`, `pipelines/` or
+      `runners/`), `validate_one.py` -> `pipelines/single_pdb.py`, `config.py` ->
+      `core/config.py`. **One real bug in the sweep itself**, caught by `ty`:
+      `stages.docking_common` matched the `stages.docking` rewrite first and became
+      `nodes.dock_ligand_common`, because longest-first ordering covered only the rename
+      map. A rename sweep still needs the gate, not trust.
 - [ ] **N.5** Role split (adapter / validator / store) inside each domain folder, one
       discipline per commit. *Done when:* every domain has the same three-role shape.
-- [ ] **N.6** Re-add `stages/` as thin phase groupings; delete `pipeline.py`.
-      *Done when:* §33e Y.5 is closed.
+- [x] **N.6** (2026-08-29) `stages/` re-created as five real phases -- `screening`,
+      `annotation`, `chemistry`, `validation`, `reporting` -- each declaring its `NODES`
+      and owning ordering only. The groupings are not invented: `annotation`'s three nodes
+      are exactly the three the runner already fans out together, and `validation`'s chain
+      is exactly §17c/§18's md -> pocket -> dock -> complex_md. New `nodes/build_report.py`
+      so reporting is a node like any other. **`pipeline.py` (530 lines) deleted**, closing
+      §33e Y.5. Its 17 tests were not simply dropped: they were the *only* coverage for
+      several node behaviours (§25f's least-tested layer), so the ones encoding real
+      live-discovered lessons were ported to `nodes/test_graceful_degradation.py` --
+      missing conda returns `None` not a fake result, a missing optional dependency is
+      caught not fatal (bug 8), a malformed accession is a skip. One legacy test was
+      **deliberately not ported and says so in place**: `max_residues` was a
+      `pipeline.py`-only pre-gate the node never had.
+- [x] **N.7** (2026-08-29) `tests/protein_selector/core/test_registry.py`, 10 drift tests
+      on the §7b precedent -- a declaration nobody checks drifts and is then worse than
+      none, because it is believed. They assert the registry against the **real schema**
+      (every declared table exists in a freshly-created db; every table has a declared
+      writer, with `runs` and `openff_parameterization` named as stated exceptions rather
+      than silently passing) and against the **real package** (every declared node has a
+      module and every module has a spec), plus the invariants that keep the tiers honest:
+      conda-only nodes live only in `validation`, and per-candidate granularity is exactly
+      the four expensive nodes.
 - [ ] **N.7** Registry drift test. *Done when:* renaming a table without updating its node
       spec fails `pytest`.
