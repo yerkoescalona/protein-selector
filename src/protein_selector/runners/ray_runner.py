@@ -101,6 +101,20 @@ def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
     because the answer lives in the store rather than in file mtimes: each stage's own
     "already persisted?" query IS the plan. No Ray needed -- deliberately importable and
     runnable with base dependencies only.
+
+    **Each stage's denominator is its own eligible pool, never the whole store.** A plan
+    that overstates work is worse than no plan, and this function got it wrong twice
+    before it got it right: docking counted every candidate rather than those with a
+    dockable ligand (2,065 phantom jobs), and modeling counted candidates with no UniProt
+    accession, for which an AlphaFold DB lookup can never return anything (28 phantom
+    jobs).
+
+    **Known limitation, stated rather than hidden:** ``ligands`` can still report a
+    permanently-pending candidate. A protein with no bound ligand at all (e.g. 1UBQ)
+    legitimately produces zero ``ligand_ccd_codes`` rows, and "fetched, found none" is
+    indistinguishable here from "never fetched". The count is off by at most the number
+    of ligand-free candidates, and fixing it needs a per-candidate "ligands were resolved"
+    marker the store does not currently keep.
     """
     from protein_selector.bioinformatics.store import load_literature_counts
     from protein_selector.core.validation_store import load_validation_results
@@ -122,6 +136,13 @@ def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
     # denominator for them would report thousands of phantom pending jobs -- an honest
     # dry-run has to use each lane's real eligible pool, not the whole store.
     survivors = {p for p, r in load_simulability(db_path).items() if r.passed}
+    # Modeling is an AlphaFold DB lookup keyed by UniProt accession, so a candidate with
+    # no accession can NEVER get a row -- counting it as pending reports work that can
+    # never be done. Measured on the real store: all 28 candidates the first version of
+    # this function called "pending modeling" had no uniprot_id at all.
+    modelable = {
+        p for p, c in candidates.items() if c.uniprot_ids
+    }
     # `is_dockable_ligand_code` is the SAME predicate the real docking path uses
     # (stages.docking_common.resolve_docking_target), so the plan can never disagree with
     # what would actually run -- the reason that predicate was centralised in the first
@@ -142,7 +163,7 @@ def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
         plan("simulability", len(load_simulability(db_path)), total),
         plan("ligands", len(load_ligand_ccd_codes(db_path)), total),
         plan("literature", len(load_literature_counts(db_path)), total),
-        plan("modeling", len(load_validation_results("modeling", db_path)), total),
+        plan("modeling", len(load_validation_results("modeling", db_path)), len(modelable)),
         plan("parameterizability", len(load_parameterizability(db_path)), len(ligand_ids)),
         plan("meeko", len(load_meeko_parameterization(db_path)), len(ligand_ids)),
         plan("md_simulation", len(load_validation_results("md_simulation", db_path)),
@@ -162,6 +183,26 @@ def format_plan(plans: list[StagePlan]) -> str:
     if pending == 0:
         lines.append("Nothing to be done -- every stage's results are already persisted.")
     return "\n".join(lines)
+
+
+def resolve_entries(pdb_ids: list[str], db_path: Path):
+    """Metadata for ``pdb_ids``, fetched from RCSB -- NOT read from the store.
+
+    **This must fetch, not load.** A newly discovered candidate has no ``candidates`` row
+    yet -- that row is written by ``run_simulability_stage`` only for survivors -- so
+    resolving entries via ``load_candidates`` silently returns nothing for exactly the
+    candidates a discovery run exists to find. That was a real regression in the first
+    version of this runner (PLAN.md §34): a live search returned 300 ids and simulability
+    received zero entries, so the run reported "0 survivors" and wrote nothing, while
+    looking like a clean no-op. The Snakemake ``simulability`` rule this replaced always
+    called ``fetch_entry_metadata``; the port dropped that and the equivalence test (Y.2)
+    could not see it, because every id in that test was already in the store.
+    """
+    if not pdb_ids:
+        return []
+    from protein_selector.structural_biology.candidates import fetch_entry_metadata
+
+    return fetch_entry_metadata(pdb_ids)
 
 
 def _report(board, method: str, *args) -> None:
@@ -253,7 +294,9 @@ def run_pipeline_on_ray(
     @ray.remote
     def _simulability(pdb_ids: list[str]) -> list[str]:
         _report(board, "mark_running", "simulability")
-        entries = [e for p, e in load_candidates(db_path).items() if p in set(pdb_ids)]
+        # fetch, never load -- see resolve_entries' docstring for the regression this
+        # caused when it read the store instead.
+        entries = resolve_entries(pdb_ids, db_path)
         try:
             survivors = run_simulability_stage(entries, config.candidate_filter, db_path)
         except Exception as exc:

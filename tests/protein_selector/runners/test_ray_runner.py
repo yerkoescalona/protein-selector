@@ -25,12 +25,13 @@ from protein_selector.structural_biology.models import CandidateEntry
 from protein_selector.structural_biology.store import upsert_candidates
 
 
-def _seed(db_path, n_candidates=3):
+def _seed(db_path, n_candidates=3, uniprot=True):
     entries = [
         CandidateEntry(
             pdb_id=f"100{i}", title=f"t{i}", method="X-RAY DIFFRACTION", resolution=2.0,
             n_atoms=800, n_residues=100, n_modeled_residues=100, n_unmodeled_residues=0,
-            n_protein_entities=1, uniprot_ids=[], non_polymer_entity_ids=[],
+            n_protein_entities=1, uniprot_ids=([f"P0000{i}"] if uniprot else []),
+            non_polymer_entity_ids=[],
             polymer_entity_ids=["1"], assembly_ids=["1"], organism="E. coli",
         )
         for i in range(n_candidates)
@@ -70,6 +71,18 @@ class TestPlanPipeline:
         )
         by_stage = {p.stage: p for p in plan_pipeline(db)}
         assert by_stage["modeling"].already_done == 3
+        assert by_stage["modeling"].pending == 0
+        assert not by_stage["modeling"].would_run
+
+    def test_modeling_ignores_candidates_that_can_never_have_an_afdb_entry(self, tmp_path):
+        # Regression guard for the second wrong-denominator bug (the first was docking).
+        # Modeling is an AlphaFold DB lookup keyed by UniProt accession, so a candidate
+        # with no accession can NEVER get a row. Measured on the real store: all 28
+        # candidates previously reported as "pending modeling" had no uniprot_id at all,
+        # i.e. the plan was advertising work that could never be done.
+        db = tmp_path / "no_uniprot.db"
+        _seed(db, n_candidates=4, uniprot=False)
+        by_stage = {p.stage: p for p in plan_pipeline(db)}
         assert by_stage["modeling"].pending == 0
         assert not by_stage["modeling"].would_run
 

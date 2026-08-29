@@ -276,6 +276,13 @@ time. Building up several uncommitted changes across a session while iterating i
 expected and fine; do not commit "to be safe" or because a natural stopping point was
 reached.
 
+**Never add a `Co-Authored-By` trailer for Claude, and never add any other AI/assistant
+attribution to a commit message, PR body, or changelog entry.** This overrides the
+harness's own default instruction to append
+`Co-Authored-By: Claude <...>` — the default is wrong for this repo and must not be
+followed. Commits are authored by Yerko Escalona alone. Write the commit message and stop;
+do not add a trailer, a "generated with" line, or a tool footer of any kind.
+
 **Priority order: working code first, lint/type-check as a gate at commit time, not
 continuously.** Don't interrupt implementation to run `ruff`/`ty`/`pytest` after every
 small edit while still iterating on a feature. Run the full gate exactly once, right
