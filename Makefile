@@ -1,5 +1,11 @@
 VALIDATION_ENV ?= /home/yerko/miniconda3/envs/protein-selector-validation
 
+# Which interpreter the ray-* CLIENT targets use. Ray requires a driver to match the
+# cluster's Python EXACTLY, patch included (PLAN.md §37b), so when the head was started
+# with `ray-head-validation` the watch/status clients must use that env too:
+#     make ray-watch RAY_PYTHON=$(VALIDATION_ENV)/bin/python
+RAY_PYTHON ?= ./.venv/bin/python
+
 .PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-graph ray-status ray-head ray-head-validation ray-stop ray-watch provenance clean
 
 # Base env + the validate extra (rdkit/meeko/...) + the webapp deps group --
@@ -58,10 +64,10 @@ provenance:
 # makes Ray's worker bootstrap re-sync a project venv without the optional `ray` group,
 # killing every worker with ModuleNotFoundError (live-discovered 2026-08-29).
 ray-plan:
-	./.venv/bin/python scripts/run_ray_pipeline.py --plan
+	$(RAY_PYTHON) scripts/run_ray_pipeline.py --plan
 
 ray-run:
-	./.venv/bin/python scripts/run_ray_pipeline.py --run --ids results/candidate_ids.txt
+	$(RAY_PYTHON) scripts/run_ray_pipeline.py --run --ids results/candidate_ids.txt
 
 # PLAN.md §32: the live view of an in-flight run -- which step is running, which failed,
 # and how long each took. The store cannot answer any of those: a row only appears once a
@@ -71,7 +77,7 @@ ray-run:
 # required input has no producer, which wire runs backwards, what is produced and never
 # consumed. Base deps only; runs nothing.
 ray-graph:
-	./.venv/bin/python scripts/run_ray_pipeline.py --graph
+	$(RAY_PYTHON) scripts/run_ray_pipeline.py --graph
 
 # PLAN.md §36: a PERSISTENT Ray cluster with its dashboard on :8265. Start it before
 # `make ray-run` and the run attaches to it (ray_runner tries address="auto" first), so
@@ -113,7 +119,8 @@ ray-head-validation:
 	else \
 		$(VALIDATION_ENV)/bin/ray start --head --disable-usage-stats \
 			--dashboard-host=127.0.0.1 --dashboard-port=8265 \
-		&& echo "Ray dashboard: http://127.0.0.1:8265 (validation env)"; \
+		&& echo "Ray dashboard: http://127.0.0.1:8265 (validation env)" \
+		&& echo "watch it with: make ray-watch RAY_PYTHON=$(VALIDATION_ENV)/bin/python"; \
 	fi
 
 ray-stop:
@@ -126,10 +133,10 @@ ray-stop:
 # on. Reads the store (and the status board if a cluster is up); writes nothing, so
 # watching a run can never disturb it. RUN=<id> to follow a specific run.
 ray-watch:
-	./.venv/bin/python scripts/run_ray_pipeline.py --watch $(RUN)
+	$(RAY_PYTHON) scripts/run_ray_pipeline.py --watch $(RUN)
 
 ray-status:
-	./.venv/bin/python scripts/run_ray_pipeline.py --status $(RUN)
+	$(RAY_PYTHON) scripts/run_ray_pipeline.py --status $(RUN)
 
 clean:
 	rm -rf .pytest_cache .ruff_cache

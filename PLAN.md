@@ -2483,6 +2483,28 @@ board and two views, each green on its own -- which is precisely the situation w
       cluster up a run starts its own private one and works fine, it simply is not visible
       in the dashboard.
 
+### 37b'. Running the slow lanes on a live cluster -- verified
+
+- [x] **I.5** (2026-08-29) The recipe, live-verified end to end rather than asserted:
+
+      ```
+      make ray-head-validation                      # head from the conda env (3.12.13)
+      <conda-python> your_driver.py                 # attaches -- "🔗 attached to the running Ray cluster"
+      make ray-watch RUN=<id> RAY_PYTHON=$(VALIDATION_ENV)/bin/python
+      ```
+
+      Confirmed: the driver reported *attached*, not *started a private cluster*; three
+      real OpenMM MD jobs ran on it and persisted three rows; the dashboard served
+      `HTTP 200`; and `ray-watch` rendered the graph against that cluster.
+
+      **Two things this exposed, both fixed rather than documented around:**
+      `ray[default]` had only been installed in the venv, so `ray-head-validation` came up
+      with **no dashboard at all** (`HTTP 000`) -- it is now installed in the validation env
+      too. And every `ray-*` client target hard-coded `./.venv/bin/python`, so
+      `make ray-watch` could not attach to a validation-env cluster for the very same
+      version reason -- they now take `RAY_PYTHON`, and `ray-head-validation` prints the
+      exact command to use.
+
 ### 37c. Open
 
 - [ ] **I.3** The hermetic test cannot cover the science path (network + conda). Live runs
