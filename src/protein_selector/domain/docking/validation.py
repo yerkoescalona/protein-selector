@@ -23,8 +23,8 @@ from protein_selector.core.validation_result import (
     ValidationResult,
     ValidationStatus,
 )
-from protein_selector.domain.docking.plip_analysis import run_plip_analysis
-from protein_selector.domain.docking.vina_docking import (
+from protein_selector.domain.docking.plip import run_plip_analysis
+from protein_selector.domain.docking.vina import (
     _DEFAULT_BOX_SIZE,
     _DEFAULT_EXHAUSTIVENESS,
     _DEFAULT_N_POSES,

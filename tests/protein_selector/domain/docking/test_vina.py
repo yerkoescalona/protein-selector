@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.docking.vina_docking.
+"""Tests for protein_selector.domain.docking.vina.
 
 _parse_heavy_atom_coords/_rmsd/rmsd_by_atom_name are pure logic -- tested directly against
 hand-built PDB/PDBQT text, no mocks needed. dock_top_pose/run_self_dock
@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 from protein_selector.core.validation_result import FailureMode, ValidationStatus
-from protein_selector.domain.docking import vina_docking
-from protein_selector.domain.docking.vina_docking import (
+from protein_selector.domain.docking import vina as vina_docking
+from protein_selector.domain.docking.vina import (
     _parse_heavy_atom_coords,
     _rmsd,
     rmsd_by_atom_name,

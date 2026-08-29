@@ -36,14 +36,11 @@ from protein_selector.core.validation_result import (
 )
 from protein_selector.core.validation_store import load_validation_results
 from protein_selector.domain.bioinformatics.store import load_literature_counts
-from protein_selector.domain.docking.docking_validation import (
-    EXERCISE_NAME as DOCKING_EXERCISE,
-)
-from protein_selector.domain.docking.meeko_parameterization import (
+from protein_selector.domain.docking.fpocket import PocketDetectionResult
+from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
-from protein_selector.domain.docking.parameterizability import ParameterizabilityResult
-from protein_selector.domain.docking.pocket import PocketDetectionResult
+from protein_selector.domain.docking.rdkit_ligand import ParameterizabilityResult
 from protein_selector.domain.docking.store import (
     load_ligand_ccd_codes,
     load_ligand_smiles,
@@ -51,24 +48,27 @@ from protein_selector.domain.docking.store import (
     load_parameterizability,
     load_pocket_detection,
 )
-from protein_selector.domain.modeling.alphafold_lookup import AlphaFoldEntry
-from protein_selector.domain.modeling.modeling_validation import (
+from protein_selector.domain.docking.validation import (
+    EXERCISE_NAME as DOCKING_EXERCISE,
+)
+from protein_selector.domain.modeling.alphafold_db import AlphaFoldEntry
+from protein_selector.domain.modeling.store import load_alphafold_entries
+from protein_selector.domain.modeling.validation import (
     EXERCISE_NAME as MODELING_EXERCISE,
 )
-from protein_selector.domain.modeling.store import load_alphafold_entries
-from protein_selector.domain.molecular_dynamics.md_validation import (
+from protein_selector.domain.molecular_dynamics.openmm_md import (
     EXERCISE_NAME as MD_SIMULATION_EXERCISE,
 )
 from protein_selector.domain.structural_biology.models import (
     CandidateEntry,
     EntityCompositionInfo,
 )
-from protein_selector.domain.structural_biology.simulability import SimulabilityResult
 from protein_selector.domain.structural_biology.store import (
     load_candidates,
     load_entity_composition,
     load_simulability,
 )
+from protein_selector.domain.structural_biology.validation import SimulabilityResult
 
 
 @dataclass

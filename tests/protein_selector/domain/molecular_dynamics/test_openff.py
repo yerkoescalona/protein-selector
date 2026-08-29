@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.molecular_dynamics.openff_parameterization.
+"""Tests for protein_selector.domain.molecular_dynamics.openff.
 
 Requires the validation conda environment (openff-toolkit, see
 environment-validation.yml) -- these tests are skipped, not failed, when
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.domain.molecular_dynamics.openff_parameterization import (
+from protein_selector.domain.molecular_dynamics.openff import (
     check_ligand_openff_parameterizable,
     filter_openff_parameterizable,
 )

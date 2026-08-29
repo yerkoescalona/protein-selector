@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.domain.structural_biology.candidates import CandidateEntry
-from protein_selector.domain.structural_biology.composition import (
+from protein_selector.domain.structural_biology.rcsb_composition import (
     AssemblyInfo,
     EntityCompositionInfo,
 )
-from protein_selector.domain.structural_biology.simulability import SimulabilityResult
+from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
 from protein_selector.domain.structural_biology.store import (
     load_candidates,
     load_entity_composition,
@@ -24,6 +23,7 @@ from protein_selector.domain.structural_biology.store import (
     upsert_oligomeric_state,
     upsert_simulability,
 )
+from protein_selector.domain.structural_biology.validation import SimulabilityResult
 
 
 @pytest.fixture

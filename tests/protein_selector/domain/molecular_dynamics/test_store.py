@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.domain.molecular_dynamics.openff_parameterization import (
+from protein_selector.domain.molecular_dynamics.openff import (
     OpenFFParameterizationResult,
 )
 from protein_selector.domain.molecular_dynamics.store import (

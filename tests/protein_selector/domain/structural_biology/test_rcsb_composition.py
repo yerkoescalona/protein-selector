@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.structural_biology.composition.
+"""Tests for protein_selector.domain.structural_biology.rcsb_composition.
 
 Network-touching calls (DataQuery.exec+get_response) are mocked -- see
 conftest.py's mock_composition_data_query and .claude/CLAUDE.md "Testing".
@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.domain.structural_biology.candidates import CandidateEntry
-from protein_selector.domain.structural_biology.composition import (
+from protein_selector.domain.structural_biology.rcsb_composition import (
     AssemblyInfo,
     EntityCompositionInfo,
     fetch_non_standard_residues,
     fetch_oligomeric_state,
 )
+from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
 
 
 def _entry(pdb_id="4HHB", assembly_ids=None, polymer_entity_ids=None) -> CandidateEntry:

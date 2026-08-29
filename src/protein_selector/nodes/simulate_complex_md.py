@@ -18,7 +18,7 @@ from protein_selector.core.validation_store import (
     upsert_validation_results,
 )
 from protein_selector.domain.docking.target import resolve_docking_target
-from protein_selector.domain.molecular_dynamics.complex_md_validation import (
+from protein_selector.domain.molecular_dynamics.amber_complex import (
     EXERCISE_NAME,
     complex_relaxed_structure_path,
     run_complex_md_validation,

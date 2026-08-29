@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from protein_selector.domain.docking.parameterizability import filter_parameterizable
+from protein_selector.domain.docking.rdkit_ligand import filter_parameterizable
 from protein_selector.domain.docking.store import (
     load_parameterizability,
     upsert_parameterizability,

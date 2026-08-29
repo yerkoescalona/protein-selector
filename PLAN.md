@@ -2196,8 +2196,29 @@ exactly what is missing today.
       `stages.docking_common` matched the `stages.docking` rewrite first and became
       `nodes.dock_ligand_common`, because longest-first ordering covered only the rename
       map. A rename sweep still needs the gate, not trust.
-- [ ] **N.5** Role split (adapter / validator / store) inside each domain folder, one
-      discipline per commit. *Done when:* every domain has the same three-role shape.
+- [x] **N.5** (2026-08-29) 18 domain modules renamed so the file name states its role.
+      Adapters are named for the external tool they wrap -- `vina.py`, `plip.py`,
+      `fpocket.py`, `openmm_md.py`, `alphafold_db.py`, `europe_pmc.py`, `rcsb_search.py`,
+      `pymol_align.py`, `obabel_prep.py`, `rdkit_ligand.py`, `meeko_ligand.py` -- and each
+      domain's single validator is now just `validation.py`. Every discipline reads the
+      same way: adapters + one validator + one store (plus pure-logic modules where the
+      domain has them: `models.py`, `native_ligand.py`, `target.py`). Two sweeps were
+      needed: module paths, then `from <package> import <module>` forms, which the first
+      sweep does not match -- caught by `ty`, aliased so test bodies stayed untouched.
+      **Done when verified:** ruff/ty clean, 432 passed / 2 skipped, and `make ray-plan`
+      against the live store plus `make demo` and `make calibration` all still work.
+- [ ] **N.8** Split `molecular_dynamics`'s fused adapter+validator -- the one domain that
+      does **not** yet have the three-role shape, because `openmm_md.py` and
+      `amber_complex.py` each build their `ValidationResult` inline. Deliberately not done
+      as part of N.5: `run_test_md` has ~8 `ValidationResult` construction sites
+      interleaved with the OpenMM mechanics, each carrying a live-discovered failure
+      semantic (the "No template found" template mismatch, the NaN blow-up, the
+      finite-but-blown-up coordinate check, §18). Splitting them means designing an
+      intermediate outcome type the validator maps -- a redesign of a 322-line function
+      with real chemistry semantics, not a rename, and it is not worth bundling into a
+      mechanical sweep. *Done when:* `molecular_dynamics/validation.py` exists, the
+      adapters return raw outcomes, and every existing failure mode still round-trips.
+
 - [x] **N.6** (2026-08-29) `stages/` re-created as five real phases -- `screening`,
       `annotation`, `chemistry`, `validation`, `reporting` -- each declaring its `NODES`
       and owning ordering only. The groupings are not invented: `annotation`'s three nodes

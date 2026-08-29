@@ -15,10 +15,10 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-from protein_selector.domain.docking.meeko_parameterization import (
+from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
-from protein_selector.domain.docking.vina_docking import _parse_heavy_atom_coords
+from protein_selector.domain.docking.vina import _parse_heavy_atom_coords
 
 logger = logging.getLogger(__name__)
 

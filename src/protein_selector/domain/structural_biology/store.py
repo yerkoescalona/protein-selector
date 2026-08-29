@@ -15,7 +15,7 @@ from protein_selector.domain.structural_biology.models import (
     CandidateEntry,
     EntityCompositionInfo,
 )
-from protein_selector.domain.structural_biology.simulability import SimulabilityResult
+from protein_selector.domain.structural_biology.validation import SimulabilityResult
 
 
 def upsert_candidates(

@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.domain.docking.meeko_parameterization import (
+from protein_selector.domain.docking.fpocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
-from protein_selector.domain.docking.parameterizability import ParameterizabilityResult
-from protein_selector.domain.docking.pocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.docking.rdkit_ligand import ParameterizabilityResult
 from protein_selector.domain.docking.store import (
     load_meeko_parameterization,
     load_parameterizability,

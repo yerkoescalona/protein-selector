@@ -6,7 +6,7 @@ are mocked -- no DB, no network, no MD.
 
 from __future__ import annotations
 
-from protein_selector.domain.docking.meeko_parameterization import (
+from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
 from protein_selector.nodes import select_dockable as select_dockable_module

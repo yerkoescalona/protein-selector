@@ -12,7 +12,7 @@ from protein_selector.domain.docking.ligands import (
     fetch_smiles_for_ccd_codes,
 )
 from protein_selector.domain.docking.store import upsert_ligand_ccd_codes
-from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
 
 
 def resolve_ligands(entries: list[CandidateEntry], db_path) -> dict[str, str | None]:

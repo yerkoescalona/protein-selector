@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.docking.meeko_parameterization.
+"""Tests for protein_selector.domain.docking.meeko_ligand.
 
 Real rdkit + meeko calls, not mocked -- pure local library logic, no
 network (same rationale as test_parameterizability.py). Requires the
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from protein_selector.domain.docking.meeko_parameterization import (
+from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
     _interpret_process_result,
     check_meeko_parameterizable,

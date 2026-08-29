@@ -14,7 +14,7 @@ from protein_selector.core.validation_result import (
     ValidationResult,
     ValidationStatus,
 )
-from protein_selector.domain.modeling.alphafold_lookup import AlphaFoldEntry
+from protein_selector.domain.modeling.alphafold_db import AlphaFoldEntry
 
 EXERCISE_NAME = "modeling"
 _DEFAULT_MAX_LOW_CONFIDENCE_FRACTION = 0.3  # combined very-low + low pLDDT fraction above

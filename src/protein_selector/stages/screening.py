@@ -30,7 +30,7 @@ def run(
     if candidate_ids is None:
         entries = search_candidates(candidate_search)
     else:
-        from protein_selector.domain.structural_biology.candidates import (
+        from protein_selector.domain.structural_biology.rcsb_search import (
             fetch_entry_metadata,
         )
 

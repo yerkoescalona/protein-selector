@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.molecular_dynamics.structure_alignment (PLAN.md §18).
+"""Tests for protein_selector.domain.molecular_dynamics.pymol_align (PLAN.md §18).
 
 Requires numpy (to build the synthetic test structures) and the system `pymol` binary
 (`cealign`) -- both skipped, not failed, when unavailable. Builds two small synthetic
@@ -18,7 +18,7 @@ np = pytest.importorskip("numpy")
 if shutil.which("pymol") is None:
     pytest.skip("pymol binary not found on PATH", allow_module_level=True)
 
-from protein_selector.domain.molecular_dynamics.structure_alignment import (  # noqa: E402
+from protein_selector.domain.molecular_dynamics.pymol_align import (  # noqa: E402
     align_ligand_into_md_frame,
 )
 

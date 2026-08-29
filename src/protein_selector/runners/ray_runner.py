@@ -200,7 +200,7 @@ def resolve_entries(pdb_ids: list[str], db_path: Path):
     """
     if not pdb_ids:
         return []
-    from protein_selector.domain.structural_biology.candidates import (
+    from protein_selector.domain.structural_biology.rcsb_search import (
         fetch_entry_metadata,
     )
 

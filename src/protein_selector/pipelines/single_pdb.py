@@ -23,7 +23,7 @@ from protein_selector.core.config import (
 )
 from protein_selector.core.report import build_report_table
 from protein_selector.domain.docking.store import load_ligand_ccd_codes
-from protein_selector.domain.structural_biology.candidates import fetch_entry_metadata
+from protein_selector.domain.structural_biology.rcsb_search import fetch_entry_metadata
 from protein_selector.nodes.check_simulability import check_simulability
 from protein_selector.nodes.count_literature import count_literature
 from protein_selector.nodes.detect_pocket import detect_pocket

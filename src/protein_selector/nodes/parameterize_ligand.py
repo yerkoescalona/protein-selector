@@ -27,7 +27,7 @@ def parameterize_ligand(
     """
     try:
         from protein_selector.domain.docking.ligands import fetch_smiles_for_ccd_codes
-        from protein_selector.domain.docking.meeko_parameterization import (
+        from protein_selector.domain.docking.meeko_ligand import (
             filter_meeko_parameterizable,
         )
         from protein_selector.domain.docking.store import (

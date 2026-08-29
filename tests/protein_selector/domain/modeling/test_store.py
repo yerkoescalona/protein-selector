@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.domain.modeling.alphafold_lookup import AlphaFoldEntry
+from protein_selector.domain.modeling.alphafold_db import AlphaFoldEntry
 from protein_selector.domain.modeling.store import (
     load_alphafold_entries,
     upsert_alphafold_entry,

@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.modeling.modeling_validation.
+"""Tests for protein_selector.domain.modeling.validation.
 
 fetch_alphafold_entry (the actual network boundary) is monkeypatched here --
 covered for real by test_alphafold_lookup.py. This module's own job is the
@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 
 from protein_selector.core.validation_result import FailureMode, ValidationStatus
-from protein_selector.domain.modeling import modeling_validation
-from protein_selector.domain.modeling.alphafold_lookup import AlphaFoldEntry
-from protein_selector.domain.modeling.modeling_validation import run_modeling_validation
+from protein_selector.domain.modeling import validation as modeling_validation
+from protein_selector.domain.modeling.alphafold_db import AlphaFoldEntry
+from protein_selector.domain.modeling.validation import run_modeling_validation
 
 _GOOD_ENTRY = AlphaFoldEntry(
     uniprot_accession="P69905",

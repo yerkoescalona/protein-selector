@@ -141,7 +141,7 @@ src/protein_selector/
                                  (Vina/Meeko/PDBQT toolchain).
                                  **PLAN.md §17 (2026-07-18):** three more docking-domain
                                  modules, all conda-only (same env as the validator trio
-                                 above): `pdb_download.py` (plain-PDB text fetch, needed to
+                                 above): `rcsb_pdb_file.py` (plain-PDB text fetch, needed to
                                  extract a bound ligand's real crystal coordinates —
                                  separate from `stages/pocket_detection.py`'s own
                                  file-writing downloader, different callers need text vs. a
@@ -160,7 +160,7 @@ src/protein_selector/
                                  binaries** (none available in the environment this was
                                  built in) — every new function's docstring states this
                                  explicitly; re-verify before trusting a real run (PLAN.md
-                                 §17g). `receptor_prep.py` (`obabel -xr` wrapper producing
+                                 §17g). `obabel_prep.py` (`obabel -xr` wrapper producing
                                  the Vina-ready receptor PDBQT ex04 needed and didn't have).
   domain/molecular_dynamics/            md_validation.py (ex03 MD validator, needs
                                  `environment-validation.yml`, NOT the `validate` extra) +
@@ -309,7 +309,7 @@ it — verify via `uv add <pkg>` and document why in `pyproject.toml` as a comme
 `openff-toolkit` exclusion note there) rather than silently omitting it.
 
 **Heavy optional deps (the `validate` extra: rdkit, meeko) must stay lazily imported.**
-`docking/store.py` transitively imports `docking/parameterizability.py`, so if that module
+`docking/store.py` transitively imports `docking/rdkit_ligand.py`, so if that module
 imported `rdkit` at module top-level, `import protein_selector.docking.store` would break
 for a base-only install that never ran `uv sync --extra validate`. This actually happened
 once (caught by manually testing `uv sync` without `--extra validate` then trying to import
@@ -327,8 +327,8 @@ the external tool to be installed.
 ## Testing
 
 Tests live in `tests/`, mirroring `src/protein_selector/`'s structure file-for-file:
-`src/protein_selector/structural_biology/candidates.py` →
-`tests/protein_selector/structural_biology/test_candidates.py`, etc. Add tests alongside
+`src/protein_selector/structural_biology/rcsb_search.py` →
+`tests/protein_selector/structural_biology/test_rcsb_search.py`, etc. Add tests alongside
 new modules as they're written, not as a separate later pass.
 
 Network-touching code (anything that calls the live RCSB/Europe PMC/AlphaFold APIs) should
@@ -394,7 +394,7 @@ lets `Session`'s auto-pagination keep fetching subsequent pages until `rows` tot
 are collected — `rows=50_000` now genuinely returns up to 50,000 ids (five page fetches),
 not a crash or a silent 10,000 clamp.
 
-**Two more, caught 2026-07-06 in `docking/docking_validation.py`** by bootstrapping a
+**Two more, caught 2026-07-06 in `docking/validation.py`** by bootstrapping a
 throwaway `micromamba` env from `environment-validation.yml` and running the ex04
 docking validator against a real receptor (1UBQ) + real docked ligand pose. Same lesson:
 both were silent (no exception, just PLIP quietly reporting zero ligands), so a
@@ -417,7 +417,7 @@ would have caught either.
    `END`/`MASTER` lines before appending the ligand and writes exactly one final `END`.
 
 Regression tests lock both in (`TestPdbqtPoseToPdbHetatmBlock`/`TestAssembleComplexPdb` in
-`test_docking_validation.py`). If you touch either function again, re-verify live against
+`test_validation.py`). If you touch either function again, re-verify live against
 a real docked complex before trusting the change.
 
 5. **CONECT/END mid-file, caught 2026-07-20 in `_force_chain_id`.** The aligned
@@ -430,7 +430,7 @@ a real docked complex before trusting the change.
    now drops every non-ATOM/HETATM line instead of passing it through. Regression test:
    `TestForceChainId.test_drops_conect_and_end_records`.
 
-**Three more, caught 2026-07-06 in `docking/meeko_parameterization.py`** running the real
+**Three more, caught 2026-07-06 in `docking/meeko_ligand.py`** running the real
 pipeline against a random hard-filters sample.
 
 6. **`AllChem.EmbedMolecule` can hang indefinitely, not just fail fast.** Confirmed live:
@@ -457,7 +457,7 @@ pipeline against a random hard-filters sample.
    checks importability once in the parent process before spawning anything.
 
 9. **Index-order RMSD silently compared unrelated atoms, caught 2026-07-20 in
-   `vina_docking.py`.** `dock_top_pose`'s pose text and the crystal reference block do not
+   `vina.py`.** `dock_top_pose`'s pose text and the crystal reference block do not
    reliably share atom order, even for the exact same ligand with the exact same atom
    names. Confirmed live (2R43, ligand G3G): both blocks had the identical 41 heavy-atom
    names, but in a completely different order (native block in the CIF's own order; docked
@@ -469,22 +469,22 @@ pipeline against a random hard-filters sample.
 
 ## Status
 
-- **Hard filters (`structural_biology/candidates.py`):** implemented via the official `rcsb-api` package — a single
+- **Hard filters (`structural_biology/rcsb_search.py`):** implemented via the official `rcsb-api` package — a single
   structured search query (`build_hard_filters_query`/`search_candidate_ids`) plus batched GraphQL
   metadata fetch (`fetch_entry_metadata`, up to 1000 IDs/request). **Live-verified
   end-to-end against 4HHB (2026-07-04)** — see "Bugs found via live verification" above for
   two real bugs this caught and fixed (wrong field paths; a pagination footgun).
-- **Simulability (`structural_biology/simulability.py` + `structural_biology/composition.py`): fully implemented, all four checks,
+- **Simulability (`structural_biology/validation.py` + `structural_biology/rcsb_composition.py`): fully implemented, all four checks,
   live-verified.** `check_size_and_resolution` (residue-count window + resolution ceiling)
   and `check_completeness` (unmodeled-residue fraction) are pure logic on `CandidateEntry`
   fields the hard filters already fetch. `check_oligomeric_state` and `check_non_standard_residues`
-  need `structural_biology/composition.py`'s separate assembly-level and polymer-entity-level fetches
+  need `structural_biology/rcsb_composition.py`'s separate assembly-level and polymer-entity-level fetches
   (`fetch_oligomeric_state`/`fetch_non_standard_residues`). `check_full_simulability`
   composes all four into one `SimulabilityResult` — oligomeric-state/non-standard-residue
   gating is informational by default (no ceiling / allowed), since PLAN.md never mandated
   a hard rule for either; set `max_oligomeric_count`/`allow_non_standard_residues` to
   actually gate. Full pipeline verified live end-to-end for 4HHB.
-- **Parameterizability (`docking/parameterizability.py` + `docking/meeko_parameterization.py` +
+- **Parameterizability (`docking/rdkit_ligand.py` + `docking/meeko_ligand.py` +
   `docking/ligands.py` + `docking/pocket.py`):** nearly done, one piece remains. RDKit sanitization
   (`check_ligand_parameterizable`/`filter_parameterizable`) and real Meeko
   parameterization (`check_meeko_parameterizable`/`filter_meeko_parameterizable`, SMILES →
@@ -505,7 +505,7 @@ pipeline against a random hard-filters sample.
   **OpenFF (MD-side) parameterization is still not started** — `openmm` (verified real
   PyPI package) is in the `validate` extra for this, but no wrapper exists yet;
   `openff-toolkit` itself remains excluded (its only PyPI release is yanked).
-- **Literature (`bioinformatics/literature.py`): fully implemented, live-verified.** `fetch_literature_count`/
+- **Literature (`bioinformatics/europe_pmc.py`): fully implemented, live-verified.** `fetch_literature_count`/
   `fetch_literature_counts` query Europe PMC's REST search API using the officially
   documented `ACCESSION_ID`/`ACCESSION_TYPE:pdb` fields (verified against the real Web
   Service Reference Guide PDF, not guessed — an earlier guess at `xref_source`/`xref_id`
@@ -541,7 +541,7 @@ pipeline against a random hard-filters sample.
   `effective_difficulty`, composed by `assess_exercise` into one `ExerciseAssessment` per
   exercise. `ScoringWeights` holds every tunable threshold (no external config-file system
   exists elsewhere in this repo, so this dataclass plays that role, same convention as
-  `simulability.py`'s plain keyword defaults). `core/report.py`'s `build_candidate_report`
+  `validation.py`'s plain keyword defaults). `core/report.py`'s `build_candidate_report`
   (pure composition, missing-tolerant field by field) and `build_report_table` (the actual
   join, reading every domain's `store.py` loaders plus `core.validation_store` for all
   three exercises — never calls a network API) produce exactly PLAN.md §8's column
@@ -567,7 +567,7 @@ pipeline against a random hard-filters sample.
   `check_non_standard_residues`'s own verdict, so a candidate that was simply oversized
   showed `nonstd_residues=True`. Fixed by reading the real per-entity `nstd_monomer` flags
   from `entity_composition` instead (`_has_non_standard_residues`).
-- **Validation (`core/validation_result.py` + `molecular_dynamics/md_validation.py`): ex02/ex03/ex04
+- **Validation (`core/validation_result.py` + `molecular_dynamics/openmm_md.py`): ex02/ex03/ex04
   validators all done** (ex02/ex04 detailed further down; ex03 here first since it's the
   original). **Real correction (2026-07-06):** an earlier revision of this file wrongly
   assumed OpenMM's `minimizeEnergy()` had no per-iteration progress hook (same category
@@ -585,7 +585,7 @@ pipeline against a random hard-filters sample.
   suppressions. `core/validation_result.py` holds the shared
   `{ValidationStatus, FailureMode, ValidationResult}` interface PLAN.md §4a calls for
   across all validators — add new `FailureMode` members here, don't invent a parallel
-  enum per validator. `molecular_dynamics/md_validation.py`'s `run_test_md`: real PDBFixer repair then a real short OpenMM MD
+  enum per validator. `molecular_dynamics/openmm_md.py`'s `run_test_md`: real PDBFixer repair then a real short OpenMM MD
   run, **live-verified end-to-end (2026-07-05)** including a real failure case (4HHB
   with HEM left in → `ValueError: No template found for residue 574 (HEM)...`, the
   actual live message, not guessed). **Requires a second, conda-only environment**
@@ -603,34 +603,34 @@ pipeline against a random hard-filters sample.
   tradeoff (~2370s/ns for a 1231-atom apo protein on CPU; explicit solvation triples-or-more
   the atom count and wall clock, against the "sized to the Colab time budget" goal, PLAN.md
   §4a/§9). **OpenFF ligand parameterization (MD side) is now
-  implemented** — `molecular_dynamics/openff_parameterization.py`:
+  implemented** — `molecular_dynamics/openff.py`:
   `check_ligand_openff_parameterizable`/`filter_openff_parameterizable` (SMILES →
   `Molecule.from_smiles` → conformer → SMIRNOFF `ForceField.create_openmm_system`),
   persisted via the new `molecular_dynamics/store.py`'s `openff_parameterization` table
   (keyed by `ligand_id`, separate from `parameterizability`/`meeko_parameterization` — a
   different toolchain, a ligand can pass one and fail the other). `openff.toolkit` is
-  lazily imported, same pattern as `md_validation.py`. **Live-verified (2026-07-06)** in a
+  lazily imported, same pattern as `openmm_md.py`. **Live-verified (2026-07-06)** in a
   throwaway `micromamba` env bootstrapped from `environment-validation.yml` — glucose's
   SMILES parses, embeds, and the SMIRNOFF `openff-2.1.0.offxml` force field builds a real
   OpenMM `System` with no errors. **ex04 (docking/Vina+PLIP) is now implemented and
-  live-verified end-to-end (2026-07-06)** — `docking/vina_docking.py`
+  live-verified end-to-end (2026-07-06)** — `docking/vina.py`
   (`dock_top_pose`/`run_self_dock`: real Vina self-dock + self-dock RMSD to the crystal
-  pose), `docking/plip_analysis.py` (`run_plip_analysis`: real PLIP interaction counts),
-  `docking/docking_validation.py` (`run_docking_validation`: composes both into one
+  pose), `docking/plip.py` (`run_plip_analysis`: real PLIP interaction counts),
+  `docking/validation.py` (`run_docking_validation`: composes both into one
   `ValidationResult` for `exercise="ex04"`). New `FailureMode.DOCKING_QUALITY` for "dock
   itself is poor" (bad RMSD or no interactions), distinct from
   `POCKET`/`PARAMETERIZATION`. `vina`/`plip` are conda-only like `pdbfixer`/`openff-toolkit`
   (verified live: neither builds via pip on this platform — `vina` needs Boost, `plip`'s
   build pip-installs `openbabel` which fails the same way); both plus `openbabel` added to
   `environment-validation.yml`. Full pipeline run for real (1UBQ receptor prepped via
-  `obabel -xr`, ethanol ligand via `meeko_parameterization.py`) → `SUCCESS`, 0.04 Å
+  `obabel -xr`, ethanol ligand via `meeko_ligand.py`) → `SUCCESS`, 0.04 Å
   self-dock RMSD, one real PLIP water-bridge interaction. **Two real, silent bugs caught
-  and fixed by this verification** (see `docking_validation.py`'s docstring): a blank
+  and fixed by this verification** (see `validation.py`'s docstring): a blank
   ligand chain-ID column (real Meeko output) and receptor-PDB records-after-`END` both
   independently made PLIP silently detect zero ligands — neither raised an exception, so
   neither would have been caught by the monkeypatched unit tests alone. Regression tests
   added for both.
-- **Modeling (`modeling/alphafold_lookup.py` + `modeling/modeling_validation.py` +
+- **Modeling (`modeling/alphafold_db.py` + `modeling/validation.py` +
   `modeling/store.py`): ex02 validator done, live-verified end-to-end (2026-07-06).**
   `fetch_alphafold_entry` calls the real AlphaFold DB REST API
   (`GET /api/prediction/{uniprot_accession}`) — confirmed live for a real entry
@@ -665,7 +665,7 @@ pipeline against a random hard-filters sample.
   repair/minimize — residue count is known from hard-filters metadata pre-repair, unlike
   atom count. `MdSimulationConfig.max_minimization_iterations` (default 0 = unbounded)
   plugs into OpenMM's own real `maxIterations` argument to `minimizeEnergy()` — see
-  `md_validation.py`'s status entry below for why that's a real cap, not a guessed one.
+  `openmm_md.py`'s status entry below for why that's a real cap, not a guessed one.
   `MdSimulationConfig`/`PocketDetectionConfig` are optional, off-by-default (need the
   conda env / a local `fpocket` binary respectively; missing either is caught and
   logged, not fatal). **ex04 docking is deliberately NOT auto-wired** — no

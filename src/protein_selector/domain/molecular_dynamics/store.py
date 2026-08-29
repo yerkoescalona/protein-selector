@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from protein_selector.core.db import DEFAULT_DB_PATH, connect
-from protein_selector.domain.molecular_dynamics.openff_parameterization import (
+from protein_selector.domain.molecular_dynamics.openff import (
     OpenFFParameterizationResult,
 )
 

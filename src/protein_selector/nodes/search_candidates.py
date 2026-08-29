@@ -16,7 +16,7 @@ from protein_selector.core.config import (
     _RCSB_MAX_ATOMS_CEILING,
     CandidateSearchConfig,
 )
-from protein_selector.domain.structural_biology.candidates import (
+from protein_selector.domain.structural_biology.rcsb_search import (
     CandidateEntry,
     fetch_entry_metadata,
     search_candidate_ids,

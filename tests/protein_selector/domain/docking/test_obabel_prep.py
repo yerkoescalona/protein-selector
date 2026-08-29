@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.docking.receptor_prep.
+"""Tests for protein_selector.domain.docking.obabel_prep.
 
 subprocess.run is mocked -- this module IS cross-checked against a real
 obabel binary too (2026-07-08, via the persistent micromamba env, including
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from protein_selector.domain.docking.receptor_prep import prepare_receptor_pdbqt
+from protein_selector.domain.docking.obabel_prep import prepare_receptor_pdbqt
 
 
 class TestPrepareReceptorPdbqt:
@@ -22,7 +22,7 @@ class TestPrepareReceptorPdbqt:
         pdb_path.write_text("ATOM ...")
 
         with patch(
-            "protein_selector.domain.docking.receptor_prep.subprocess.run", side_effect=FileNotFoundError
+            "protein_selector.domain.docking.obabel_prep.subprocess.run", side_effect=FileNotFoundError
         ):
             with pytest.raises(FileNotFoundError, match="conda install"):
                 prepare_receptor_pdbqt(pdb_path)
@@ -34,7 +34,7 @@ class TestPrepareReceptorPdbqt:
         fake_result = MagicMock(returncode=0, stdout="", stderr="*** Open Babel Error")
 
         with patch(
-            "protein_selector.domain.docking.receptor_prep.subprocess.run", return_value=fake_result
+            "protein_selector.domain.docking.obabel_prep.subprocess.run", return_value=fake_result
         ):
             with pytest.raises(RuntimeError, match="Open Babel Error"):
                 prepare_receptor_pdbqt(pdb_path, tmp_path / "out.pdbqt")
@@ -48,7 +48,7 @@ class TestPrepareReceptorPdbqt:
         fake_result = MagicMock(returncode=0, stdout="", stderr="0 molecules converted")
 
         with patch(
-            "protein_selector.domain.docking.receptor_prep.subprocess.run", return_value=fake_result
+            "protein_selector.domain.docking.obabel_prep.subprocess.run", return_value=fake_result
         ):
             with pytest.raises(RuntimeError):
                 prepare_receptor_pdbqt(pdb_path, dest_path)
@@ -62,7 +62,7 @@ class TestPrepareReceptorPdbqt:
             dest_path.write_text("REMARK  Name = 1ubq.pdb\n")
             return MagicMock(returncode=0, stdout="", stderr="1 molecule converted")
 
-        with patch("protein_selector.domain.docking.receptor_prep.subprocess.run", side_effect=fake_run):
+        with patch("protein_selector.domain.docking.obabel_prep.subprocess.run", side_effect=fake_run):
             result = prepare_receptor_pdbqt(pdb_path, dest_path)
 
         assert result == dest_path
@@ -76,7 +76,7 @@ class TestPrepareReceptorPdbqt:
             (tmp_path / "1ubq.pdbqt").write_text("REMARK\n")
             return MagicMock(returncode=0, stdout="", stderr="1 molecule converted")
 
-        with patch("protein_selector.domain.docking.receptor_prep.subprocess.run", side_effect=fake_run):
+        with patch("protein_selector.domain.docking.obabel_prep.subprocess.run", side_effect=fake_run):
             result = prepare_receptor_pdbqt(pdb_path)
 
         assert result == tmp_path / "1ubq.pdbqt"

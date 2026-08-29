@@ -23,7 +23,7 @@ from protein_selector.core.validation_result import (
     ValidationResult,
     ValidationStatus,
 )
-from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
 
 
 class TestPredictEx02Difficulty:

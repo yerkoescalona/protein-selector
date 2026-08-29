@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.docking.docking_validation.
+"""Tests for protein_selector.domain.docking.validation.
 
 Both Vina and PLIP are conda-only externals this sandbox can't install, so
 this composition function is tested by monkeypatching its two building
@@ -13,14 +13,14 @@ from __future__ import annotations
 import pytest
 
 from protein_selector.core.validation_result import FailureMode, ValidationStatus
-from protein_selector.domain.docking import docking_validation
-from protein_selector.domain.docking.docking_validation import (
+from protein_selector.domain.docking import validation as docking_validation
+from protein_selector.domain.docking.plip import PlipAnalysisResult
+from protein_selector.domain.docking.validation import (
     _assemble_complex_pdb,
     _force_chain_id,
     _pdbqt_pose_to_pdb_hetatm_block,
     run_docking_validation,
 )
-from protein_selector.domain.docking.plip_analysis import PlipAnalysisResult
 
 # Four heavy atoms, not two: PLAN.md §28 B.1's coverage guard rejects an RMSD computed
 # over fewer than 3 corresponding atoms (or under half the reference ligand), so a

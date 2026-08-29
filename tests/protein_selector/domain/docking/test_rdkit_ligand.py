@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.docking.parameterizability.
+"""Tests for protein_selector.domain.docking.rdkit_ligand.
 
 Uses real RDKit calls (not mocked) -- sanitization is a pure, local, no-network
 library operation, unlike the RCSB/Europe PMC/AlphaFold boundaries this repo
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.domain.docking.parameterizability import (
+from protein_selector.domain.docking.rdkit_ligand import (
     check_ligand_parameterizable,
     filter_parameterizable,
 )

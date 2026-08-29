@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from protein_selector.core.db import DEFAULT_DB_PATH, connect
-from protein_selector.domain.docking.meeko_parameterization import (
+from protein_selector.domain.docking.fpocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
-from protein_selector.domain.docking.parameterizability import ParameterizabilityResult
-from protein_selector.domain.docking.pocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.docking.rdkit_ligand import ParameterizabilityResult
 
 
 def upsert_parameterizability(

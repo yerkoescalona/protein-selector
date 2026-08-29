@@ -12,10 +12,10 @@ import requests
 
 from protein_selector.core.validation_result import FailureMode
 from protein_selector.domain.docking import target as target_module
-from protein_selector.domain.docking.meeko_parameterization import (
+from protein_selector.domain.docking.fpocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
-from protein_selector.domain.docking.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.domain.docking.target import resolve_docking_target
 
 _NATIVE_BLOCK = (

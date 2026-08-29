@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from rcsbapi.data import DataQuery
 
-from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
 
 
 def _nonpolymer_entity_compound_ids(entry: CandidateEntry) -> list[str]:

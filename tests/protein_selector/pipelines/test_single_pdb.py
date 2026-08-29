@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
-from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
 from protein_selector.pipelines import single_pdb as single_pdb_module
 from protein_selector.pipelines.single_pdb import validate_single_pdb
 

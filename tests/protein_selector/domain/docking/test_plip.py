@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.docking.plip_analysis.
+"""Tests for protein_selector.domain.docking.plip.
 
 PLIP is conda-only (see the module docstring for why it isn't
 pip-installable) -- the ImportError path is exercised even without it
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from protein_selector.domain.docking.plip_analysis import run_plip_analysis
+from protein_selector.domain.docking.plip import run_plip_analysis
 
 
 class _FakeLigand:

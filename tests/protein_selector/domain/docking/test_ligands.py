@@ -10,7 +10,7 @@ from protein_selector.domain.docking.ligands import (
     fetch_ligand_ccd_codes,
     fetch_smiles_for_ccd_codes,
 )
-from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
 
 
 def _entry(pdb_id="4HHB", non_polymer_entity_ids=None) -> CandidateEntry:

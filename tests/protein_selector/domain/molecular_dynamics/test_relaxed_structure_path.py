@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.molecular_dynamics.md_validation.relaxed_structure_path.
+"""Tests for protein_selector.domain.molecular_dynamics.openmm_md.relaxed_structure_path.
 
 Pure path logic, no pdbfixer/openmm needed -- deliberately kept in its own file (not
 test_md_validation.py, which `pytest.importorskip`s the whole module on those heavy
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from protein_selector.domain.molecular_dynamics.md_validation import (
+from protein_selector.domain.molecular_dynamics.openmm_md import (
     relaxed_structure_path,
 )
 

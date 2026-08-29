@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.bioinformatics.literature.
+"""Tests for protein_selector.domain.bioinformatics.europe_pmc.
 
 Network-touching calls (requests.get / requests.Session) are mocked -- see
 .claude/CLAUDE.md "Testing" for the mocked-boundary rationale, and "Bugs
@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from protein_selector.domain.bioinformatics.literature import (
+from protein_selector.domain.bioinformatics.europe_pmc import (
     fetch_literature_count,
     fetch_literature_counts,
 )
@@ -82,7 +82,7 @@ class TestFetchLiteratureCount:
         assert fetch_literature_count("4HHB", session=session) is None
 
     def test_uses_module_level_requests_when_no_session_given(self):
-        with patch("protein_selector.domain.bioinformatics.literature.requests") as mock_requests:
+        with patch("protein_selector.domain.bioinformatics.europe_pmc.requests") as mock_requests:
             mock_requests.get.return_value = _mock_response(hit_count=5)
             mock_requests.RequestException = requests.RequestException
 
@@ -97,7 +97,7 @@ class TestFetchLiteratureCounts:
         assert fetch_literature_counts([]) == {}
 
     def test_fetches_one_result_per_pdb_id_reusing_one_session(self):
-        with patch("protein_selector.domain.bioinformatics.literature.requests.Session") as mock_session_cls:
+        with patch("protein_selector.domain.bioinformatics.europe_pmc.requests.Session") as mock_session_cls:
             mock_session = MagicMock()
             mock_session.get.side_effect = [
                 _mock_response(hit_count=39),
@@ -111,7 +111,7 @@ class TestFetchLiteratureCounts:
         assert mock_session_cls.call_count == 1  # one Session for the whole batch
 
     def test_per_id_failures_surface_as_none_not_dropped(self):
-        with patch("protein_selector.domain.bioinformatics.literature.requests.Session") as mock_session_cls:
+        with patch("protein_selector.domain.bioinformatics.europe_pmc.requests.Session") as mock_session_cls:
             mock_session = MagicMock()
             mock_session.get.side_effect = [
                 _mock_response(hit_count=39),

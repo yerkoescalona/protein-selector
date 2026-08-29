@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from protein_selector.domain.docking.meeko_parameterization import (
+from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
 from protein_selector.domain.docking.native_ligand import (

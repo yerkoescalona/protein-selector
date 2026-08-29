@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.structural_biology.candidates.
+"""Tests for protein_selector.domain.structural_biology.rcsb_search.
 
 Network-touching calls (Session.exec / DataQuery.exec+get_response) are mocked --
 this sandbox has no outbound access to search.rcsb.org/data.rcsb.org, and the real
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from protein_selector.domain.structural_biology.candidates import (
+from protein_selector.domain.structural_biology.rcsb_search import (
     CandidateEntry,
     ExperimentalMethod,
     _first_or_none,

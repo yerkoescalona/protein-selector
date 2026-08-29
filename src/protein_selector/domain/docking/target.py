@@ -26,26 +26,26 @@ import requests
 
 from protein_selector.core.validation_result import FailureMode
 from protein_selector.core.validation_store import load_validation_results
+from protein_selector.domain.docking.fpocket import select_containing_pocket
 from protein_selector.domain.docking.ligands import fetch_smiles_for_ccd_codes
 from protein_selector.domain.docking.native_ligand import (
     ligand_bounding_box,
     ligand_centroid,
     pick_largest_organic_ligand,
 )
-from protein_selector.domain.docking.pdb_download import fetch_pdb_text
-from protein_selector.domain.docking.pocket import select_containing_pocket
+from protein_selector.domain.docking.rcsb_pdb_file import fetch_pdb_text
 from protein_selector.domain.docking.store import (
     load_ligand_ccd_codes,
     load_meeko_parameterization,
     load_pocket_detection,
 )
-from protein_selector.domain.molecular_dynamics.md_validation import (
+from protein_selector.domain.molecular_dynamics.openmm_md import (
     EXERCISE_NAME as MD_EXERCISE_NAME,
 )
-from protein_selector.domain.molecular_dynamics.md_validation import (
+from protein_selector.domain.molecular_dynamics.openmm_md import (
     relaxed_structure_path,
 )
-from protein_selector.domain.molecular_dynamics.structure_alignment import (
+from protein_selector.domain.molecular_dynamics.pymol_align import (
     align_ligand_into_md_frame,
 )
 

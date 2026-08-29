@@ -15,7 +15,7 @@ import sys
 
 def test_models_module_never_imports_rcsbapi():
     # A subprocess, not sys.modules bookkeeping in-process: another test in this same
-    # run may have already imported protein_selector.domain.structural_biology.candidates
+    # run may have already imported protein_selector.domain.structural_biology.rcsb_search
     # (which DOES need rcsbapi for its own live-fetch functions), polluting sys.modules
     # for the rest of the process regardless of what this one test does. Only a fresh
     # interpreter proves models.py itself never triggers the import.
@@ -34,14 +34,18 @@ def test_models_module_never_imports_rcsbapi():
 
 
 def test_candidates_reexports_are_identical_objects():
-    from protein_selector.domain.structural_biology import candidates, models
+    from protein_selector.domain.structural_biology import models
+    from protein_selector.domain.structural_biology import rcsb_search as candidates
 
     assert candidates.CandidateEntry is models.CandidateEntry
     assert candidates.ExperimentalMethod is models.ExperimentalMethod
 
 
 def test_composition_reexports_are_identical_objects():
-    from protein_selector.domain.structural_biology import composition, models
+    from protein_selector.domain.structural_biology import models
+    from protein_selector.domain.structural_biology import (
+        rcsb_composition as composition,
+    )
 
     assert composition.AssemblyInfo is models.AssemblyInfo
     assert composition.EntityCompositionInfo is models.EntityCompositionInfo

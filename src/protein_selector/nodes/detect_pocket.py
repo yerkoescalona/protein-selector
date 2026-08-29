@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 
 from protein_selector.core.config import PocketDetectionConfig
-from protein_selector.domain.docking.pocket import (
+from protein_selector.domain.docking.fpocket import (
     PocketDetectionResult,
     check_pocket_detected,
 )
@@ -20,7 +20,7 @@ from protein_selector.domain.docking.store import (
     load_pocket_detection,
     upsert_pocket_detection,
 )
-from protein_selector.domain.molecular_dynamics.md_validation import (
+from protein_selector.domain.molecular_dynamics.openmm_md import (
     relaxed_structure_path,
 )
 

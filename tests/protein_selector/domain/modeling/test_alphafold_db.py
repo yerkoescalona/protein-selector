@@ -1,4 +1,4 @@
-"""Tests for protein_selector.domain.modeling.alphafold_lookup.
+"""Tests for protein_selector.domain.modeling.alphafold_db.
 
 Network-touching calls (requests.get) are mocked -- see .claude/CLAUDE.md
 "Testing" for the mocked-boundary rationale. The mocked response bodies
@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
-from protein_selector.domain.modeling.alphafold_lookup import (
+from protein_selector.domain.modeling.alphafold_db import (
     AlphaFoldEntry,
     fetch_alphafold_entry,
 )
