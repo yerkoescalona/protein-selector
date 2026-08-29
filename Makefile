@@ -77,12 +77,25 @@ ray-graph:
 # run starts its own private cluster that the dashboard never sees -- confusing, because
 # everything still succeeds. Needs the `ray` group (ray[default] carries the dashboard's
 # runtime deps; the frontend itself ships in the wheel).
+#
+# Guarded rather than bare `ray start`: starting a second head node raises a
+# ConnectionError traceback and fails the target, which reads like the dashboard is broken
+# when in fact it is already serving. `--disable-usage-stats` is deliberate too -- Ray
+# enables telemetry silently in a non-interactive shell, and a run here should not phone
+# home without the operator choosing to.
 ray-head:
-	./.venv/bin/ray start --head --dashboard-host=127.0.0.1 --dashboard-port=8265
-	@echo "Ray dashboard: http://127.0.0.1:8265"
+	@if ./.venv/bin/ray status >/dev/null 2>&1; then \
+		echo "Ray is already running -- dashboard: http://127.0.0.1:8265"; \
+		echo "(use 'make ray-stop' first if you want a fresh cluster)"; \
+	else \
+		./.venv/bin/ray start --head --disable-usage-stats \
+			--dashboard-host=127.0.0.1 --dashboard-port=8265 \
+		&& echo "Ray dashboard: http://127.0.0.1:8265"; \
+	fi
 
 ray-stop:
-	./.venv/bin/ray stop
+	@./.venv/bin/ray stop 2>/dev/null || true
+	@echo "Ray cluster stopped (no-op if none was running)." 
 
 # PLAN.md §36: the DOMAIN view Ray's dashboard cannot give -- the graph by stage, each
 # node's state, per-candidate progress, and which input socket a pending node is waiting
