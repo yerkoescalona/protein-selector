@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§37** | **Integration (2026-08-29).** 17 hermetic tests over the seams between tiers, plus a live full-chain run. Found a real Ray constraint: cluster and driver must share an exact Python version, so the venv head cannot serve conda slow lanes. |
 | **§36** | **Watching a run (2026-08-29).** `make ray-head` for Ray's own dashboard, and `make ray-watch` for the domain view Ray cannot give — the graph by stage with per-candidate progress and the socket a pending node waits on. |
 | **§35** | **The node card (2026-08-29): sockets, wires, and a pre-flight graph check.** Makes missing links findable before a run. Found a real dropped consumer on its first run (P.4) and a wire missing from its own declaration (P.2). |
 | **§34** | **Target structure (2026-08-29): pipelines / stages / nodes / domain.** A code-organization taxonomy, orthogonal to the runner. Fixes a ~2,445-call double AFDB fetch and §25g's layering inversion on the way. Work order in §34e. |
@@ -2441,3 +2442,53 @@ going.
 - [ ] **D.6** No per-node timing in the view yet, though `Node.execute` is the natural place
       to record it (§35f) and `benchmark:`-style data was §29e O.1's whole point.
       *Done when:* each node row can show its own wall-clock, sourced from one place.
+
+## 37. Integration: does it hold together? (2026-08-29)
+
+Every other test file checks one piece. §34-§36 added four tiers, a graph checker, a status
+board and two views, each green on its own -- which is precisely the situation where the
+*seams* are where things break.
+
+### 37a. The committed test
+
+- [x] **I.1** (2026-08-29) `tests/protein_selector/test_integration.py`, 17 tests,
+      deliberately **hermetic** -- no network, no conda, no Ray cluster, no live store, so
+      it runs on a fresh clone in CI. It asserts the tiers still describe the *same*
+      pipeline: the shipped graph has no missing links; the slow-lane ordering (§18/§24) is
+      visible in the sockets rather than only in prose; every node class is claimed by
+      exactly one stage and every pipeline lists only real stages; conda-only work is
+      confined to `validation` (§9's cheap-lane promise); every node can be instantiated,
+      refuses an undeclared socket, and per-candidate nodes refuse to run without a
+      candidate; the plan and the dashboard agree on denominators; the report builds and is
+      deterministically ranked; and nothing in the read paths deletes a row (§4b, asserted
+      rather than trusted).
+
+      Each of those seams has already failed once during §34-§36 -- empty node outputs, a
+      status board reporting names matching no node, file-backed sockets read as missing --
+      and no per-file test could see any of them.
+
+### 37b. A real conflict the live run found
+
+- [x] **I.2** (2026-08-29) **Ray requires the cluster and every driver to share an exact
+      Python version, patch included.** The venv runs 3.12.14 and the validation conda env
+      3.12.13, so a slow-lane driver launched from conda **cannot attach** to a head started
+      by `make ray-head`: *"Version mismatch: ... Python: 3.12.14 / 3.12.13"*. Both halves
+      work alone; only together do they fail, which is exactly what an integration exercise
+      is for.
+
+      Resolved by making the constraint explicit rather than papering over it: `make
+      ray-head` (venv) serves cheap-lane runs and the dashboard, and a new
+      `make ray-head-validation` starts the head **from the conda env** for runs including
+      md/dock/complex_md. `ray-stop` now stops either. **Neither is required** -- with no
+      cluster up a run starts its own private one and works fine, it simply is not visible
+      in the dashboard.
+
+### 37c. Open
+
+- [ ] **I.3** The hermetic test cannot cover the science path (network + conda). Live runs
+      are recorded in §33/§36 and re-verified here, but there is no *automated* end-to-end.
+      *Done when:* a marked, opt-in test runs one candidate through the full chain in the
+      validation env, skipped by default like the other conda-only tests.
+- [ ] **I.4** Align the two Python patch versions so one cluster can serve both lanes, which
+      would remove `ray-head-validation` entirely. *Done when:* `make ray-head` alone
+      supports a slow-lane run.

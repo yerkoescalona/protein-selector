@@ -1,4 +1,6 @@
-.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-graph ray-status ray-head ray-stop ray-watch provenance clean
+VALIDATION_ENV ?= /home/yerko/miniconda3/envs/protein-selector-validation
+
+.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-graph ray-status ray-head ray-head-validation ray-stop ray-watch provenance clean
 
 # Base env + the validate extra (rdkit/meeko/...) + the webapp deps group --
 # what `make test`/`make serve` below both need. `uv sync` alone (no flags)
@@ -78,6 +80,16 @@ ray-graph:
 # everything still succeeds. Needs the `ray` group (ray[default] carries the dashboard's
 # runtime deps; the frontend itself ships in the wheel).
 #
+# **Ray requires the cluster and every driver to share an EXACT Python version**, patch
+# included -- live-discovered 2026-08-29: the venv runs 3.12.14 and the validation conda
+# env 3.12.13, so a slow-lane driver launched from conda cannot attach to a head started
+# from the venv ("Version mismatch: ... Python: 3.12.14 / 3.12.13"). Two consequences:
+#   * `ray-head` (venv) is for CHEAP-LANE runs and the dashboard;
+#   * `ray-head-validation` starts the head from the conda env, for runs that include
+#     md/dock/complex_md. Use whichever matches the driver you are about to run.
+# Neither is required: with no cluster up, a run starts its own private one and works
+# fine -- it just is not visible in the dashboard.
+#
 # Guarded rather than bare `ray start`: starting a second head node raises a
 # ConnectionError traceback and fails the target, which reads like the dashboard is broken
 # when in fact it is already serving. `--disable-usage-stats` is deliberate too -- Ray
@@ -93,8 +105,20 @@ ray-head:
 		&& echo "Ray dashboard: http://127.0.0.1:8265"; \
 	fi
 
+# Head node started FROM the validation conda env, so slow-lane drivers (which must run
+# there for openmm/vina/ambertools) can attach. See the Python-version note above.
+ray-head-validation:
+	@if $(VALIDATION_ENV)/bin/ray status >/dev/null 2>&1; then \
+		echo "Ray is already running -- dashboard: http://127.0.0.1:8265"; \
+	else \
+		$(VALIDATION_ENV)/bin/ray start --head --disable-usage-stats \
+			--dashboard-host=127.0.0.1 --dashboard-port=8265 \
+		&& echo "Ray dashboard: http://127.0.0.1:8265 (validation env)"; \
+	fi
+
 ray-stop:
 	@./.venv/bin/ray stop 2>/dev/null || true
+	@$(VALIDATION_ENV)/bin/ray stop 2>/dev/null || true
 	@echo "Ray cluster stopped (no-op if none was running)." 
 
 # PLAN.md §36: the DOMAIN view Ray's dashboard cannot give -- the graph by stage, each
