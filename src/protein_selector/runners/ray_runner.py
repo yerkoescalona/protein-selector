@@ -43,6 +43,7 @@ from protein_selector.core.config import (
     PocketDetectionConfig,
 )
 from protein_selector.core.db import DEFAULT_DB_PATH
+from protein_selector.runners.status_board import NAMESPACE as BOARD_NAMESPACE
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +258,22 @@ def run_pipeline_on_ray(
     from protein_selector.nodes.search_candidates_node import search_candidates
 
     if not ray.is_initialized():
-        ray.init(num_cpus=num_cpus, logging_level=logging.WARNING, include_dashboard=False)
+        # Attach to a cluster started by `make ray-head` if one is running, so its
+        # dashboard and any detached status board actually see this run. Falling straight
+        # through to a private cluster would start a SECOND one whose work the dashboard
+        # never shows -- a confusing failure, since everything still succeeds.
+        try:
+            ray.init(address="auto", namespace=BOARD_NAMESPACE,
+                     logging_level=logging.WARNING)
+            logger.info("🔗 attached to the running Ray cluster")
+        except (ConnectionError, ValueError, RuntimeError):
+            ray.init(
+                num_cpus=num_cpus,
+                namespace=BOARD_NAMESPACE,
+                logging_level=logging.WARNING,
+                include_dashboard=False,
+            )
+            logger.info("🆕 started a private Ray cluster (none was running)")
 
     # PLAN.md §32: a live view of in-flight work -- the one thing the store cannot report,
     # since a row only appears once a stage has finished and a failure persists no row at
@@ -265,84 +281,89 @@ def run_pipeline_on_ray(
     from protein_selector.runners.status_board import board_actor_name, create_board
 
     run_id = run_id or f"ray-{int(time.time())}"
-    steps = ["search", "simulability", "ligands", "literature", "modeling", "chemistry"]
+    # Board step names ARE node names (PLAN.md §36): the dashboard maps live state onto
+    # the graph by name, so anything else silently shows no state at all.
+    steps = [
+        "search_candidates", "check_simulability", "resolve_ligands",
+        "count_literature", "lookup_alphafold", "parameterize_ligand",
+    ]
     if config.md_simulation.enabled:
-        steps.append("md_simulation")
+        steps.append("simulate_md")
     if config.pocket_detection.enabled:
-        steps.append("pocket_detection")
+        steps.append("detect_pocket")
     if config.docking.enabled:
-        steps.append("docking")
+        steps.append("dock_ligand")
     if config.complex_md_simulation.enabled:
-        steps.append("complex_md_simulation")
+        steps.append("simulate_complex_md")
     board = create_board(run_id, steps)
     if board is not None:
         logger.info("📋 status board: %s (run_id=%s)", board_actor_name(run_id), run_id)
 
     @ray.remote
     def _search() -> list[str]:
-        _report(board, "mark_running", "search")
+        _report(board, "mark_running", "search_candidates")
         try:
             if config.candidate_ids is not None:
                 ids = list(config.candidate_ids)
-                _report(board, "mark_completed", "search", f"{len(ids)} frozen ids")
+                _report(board, "mark_completed", "search_candidates", f"{len(ids)} frozen ids")
                 return ids
             entries = search_candidates(config.candidate_search)
-            _report(board, "mark_completed", "search", f"{len(entries)} fetched")
+            _report(board, "mark_completed", "search_candidates", f"{len(entries)} fetched")
             return [e.pdb_id for e in entries]
         except Exception as exc:
-            _report(board, "mark_failed", "search", f"{type(exc).__name__}: {exc}")
+            _report(board, "mark_failed", "search_candidates", f"{type(exc).__name__}: {exc}")
             raise
 
     @ray.remote
     def _simulability(pdb_ids: list[str]) -> list[str]:
-        _report(board, "mark_running", "simulability")
+        _report(board, "mark_running", "check_simulability")
         # fetch, never load -- see resolve_entries' docstring for the regression this
         # caused when it read the store instead.
         entries = resolve_entries(pdb_ids, db_path)
         try:
             survivors = check_simulability(entries, config.candidate_filter, db_path)
         except Exception as exc:
-            _report(board, "mark_failed", "simulability", f"{type(exc).__name__}: {exc}")
+            _report(board, "mark_failed", "check_simulability", f"{type(exc).__name__}: {exc}")
             raise
-        _report(board, "mark_completed", "simulability", f"{len(survivors)} survivors")
+        _report(board, "mark_completed", "check_simulability", f"{len(survivors)} survivors")
         # Return ids, not CandidateEntry objects: everything downstream re-reads from the
         # store anyway, and ids keep what crosses Ray's object store small and picklable.
         return [e.pdb_id for e in survivors]
 
     @ray.remote
     def _ligands(survivors: list[str]) -> int:
-        _report(board, "mark_running", "ligands")
+        _report(board, "mark_running", "resolve_ligands")
         entries = [e for p, e in load_candidates(db_path).items() if p in set(survivors)]
         try:
             resolve_ligands(entries, db_path=db_path)
         except Exception as exc:
-            _report(board, "mark_failed", "ligands", f"{type(exc).__name__}: {exc}")
+            _report(board, "mark_failed", "resolve_ligands", f"{type(exc).__name__}: {exc}")
             raise
-        _report(board, "mark_completed", "ligands", f"{len(entries)} candidates")
+        _report(board, "mark_completed", "resolve_ligands", f"{len(entries)} candidates")
         return len(entries)
 
     @ray.remote
     def _literature(survivors: list[str]) -> int:
-        _report(board, "mark_running", "literature")
+        _report(board, "mark_running", "count_literature")
         try:
             count_literature(survivors, db_path, force_refresh=config.force_refresh)
         except Exception as exc:
-            _report(board, "mark_failed", "literature", f"{type(exc).__name__}: {exc}")
+            _report(board, "mark_failed", "count_literature", f"{type(exc).__name__}: {exc}")
             raise
-        _report(board, "mark_completed", "literature", f"{len(survivors)} candidates")
+        _report(board, "mark_completed", "count_literature", f"{len(survivors)} candidates")
         return len(survivors)
 
     @ray.remote
     def _modeling(survivors: list[str]) -> int:
-        _report(board, "mark_running", "modeling")
+        _report(board, "mark_running", "lookup_alphafold")
         entries = [e for p, e in load_candidates(db_path).items() if p in set(survivors)]
         try:
             lookup_alphafold(entries, config.modeling_lookup, db_path,
                            force_refresh=config.force_refresh)
         except Exception as exc:
-            _report(board, "mark_failed", "modeling", f"{type(exc).__name__}: {exc}")
+            _report(board, "mark_failed", "lookup_alphafold", f"{type(exc).__name__}: {exc}")
             raise
-        _report(board, "mark_completed", "modeling", f"{len(entries)} candidates")
+        _report(board, "mark_completed", "lookup_alphafold", f"{len(entries)} candidates")
         return len(entries)
 
     # ---- cheap lane ---------------------------------------------------------
@@ -367,7 +388,7 @@ def run_pipeline_on_ray(
             sanitize_ligand,
         )
 
-        _report(board, "mark_running", "chemistry")
+        _report(board, "mark_running", "parameterize_ligand")
         try:
             codes = sorted({c for cs in load_ligand_ccd_codes(db_path).values() for c in cs})
             smiles = load_ligand_smiles(db_path)
@@ -377,9 +398,9 @@ def run_pipeline_on_ray(
             sanitize_ligand(smiles, db_path, force_refresh=config.force_refresh)
             parameterize_ligand(codes, smiles, db_path, force_refresh=config.force_refresh)
         except Exception as exc:
-            _report(board, "mark_failed", "chemistry", f"{type(exc).__name__}: {exc}")
+            _report(board, "mark_failed", "parameterize_ligand", f"{type(exc).__name__}: {exc}")
             raise
-        _report(board, "mark_completed", "chemistry", f"{len(codes)} ligands")
+        _report(board, "mark_completed", "parameterize_ligand", f"{len(codes)} ligands")
         return len(codes)
 
     chemistry_ref = _chemistry.remote(ligands_ref)
@@ -439,16 +460,16 @@ def run_pipeline_on_ray(
             if config.restrict_md_to_dockable
             else survivors
         )
-        _report(board, "mark_running", "md_simulation")
+        _report(board, "mark_running", "simulate_md")
         md_refs = {p: _md.remote(p, gate) for p in md_pool}
         md_ok = ray.get(list(md_refs.values()))
-        _report(board, "mark_completed", "md_simulation",
+        _report(board, "mark_completed", "simulate_md",
                 f"{sum(md_ok)}/{len(md_pool)} succeeded")
 
         if config.pocket_detection.enabled:
-            _report(board, "mark_running", "pocket_detection")
+            _report(board, "mark_running", "detect_pocket")
             n = sum(ray.get([_pocket.remote(p, md_refs[p]) for p in md_pool]))
-            _report(board, "mark_completed", "pocket_detection", f"{n}/{len(md_pool)} found")
+            _report(board, "mark_completed", "detect_pocket", f"{n}/{len(md_pool)} found")
 
         if config.docking.enabled:
             from protein_selector.nodes.resolve_docking_targets_node import (
@@ -456,18 +477,18 @@ def run_pipeline_on_ray(
             )
 
             shortlist = resolve_docking_targets(md_pool, db_path)
-            _report(board, "mark_running", "docking")
+            _report(board, "mark_running", "dock_ligand")
             dock_refs = {
                 p: _dock.remote(p, md_refs[p], True) for p in shortlist if p in md_refs
             }
             dock_ok = ray.get(list(dock_refs.values()))
-            _report(board, "mark_completed", "docking",
+            _report(board, "mark_completed", "dock_ligand",
                     f"{sum(dock_ok)}/{len(dock_refs)} succeeded")
 
             if config.complex_md_simulation.enabled:
-                _report(board, "mark_running", "complex_md_simulation")
+                _report(board, "mark_running", "simulate_complex_md")
                 n = sum(ray.get([_complex_md.remote(p, r) for p, r in dock_refs.items()]))
-                _report(board, "mark_completed", "complex_md_simulation",
+                _report(board, "mark_completed", "simulate_complex_md",
                         f"{n}/{len(dock_refs)} succeeded")
 
     logger.info("✅ ray pipeline complete: %d simulability survivors", len(survivors))

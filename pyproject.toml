@@ -95,7 +95,11 @@ webapp = [
 # Deliberately NOT `ray[default]`: the dashboard/cluster-launcher extras are not needed
 # for a single-node DAG, and `ray.workflow` is deprecated (§30c) so nothing here uses it.
 ray = [
-    "ray>=2.40",
+    # PLAN.md §36: `ray[default]` (not bare `ray`) because the dashboard's runtime deps --
+    # aiohttp, prometheus-client, opencensus, grpcio -- ship in that extra. The dashboard
+    # FRONTEND is already bundled in the wheel; without these it simply never starts, with
+    # no error that says so. Needed for `make ray-head`.
+    "ray[default]>=2.40",
 ]
 
 [build-system]

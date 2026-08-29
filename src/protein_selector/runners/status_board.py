@@ -166,6 +166,13 @@ def format_board(snapshot: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+# A FIXED namespace, so a board created by one process is findable from another (PLAN.md
+# §36). Ray puts detached actors in an anonymous per-session namespace by default, and then
+# warns that you must reconnect with that random namespace to reach them -- which makes
+# `make ray-watch` in a second terminal impossible. Naming it removes the guesswork.
+NAMESPACE = "protein-selector"
+
+
 def board_actor_name(run_id: str) -> str:
     """Deterministic actor name, so any process in the cluster can find a run's board."""
     return f"protein-selector-status-{run_id}"
@@ -182,7 +189,7 @@ def get_board(run_id: str):
 
         if not ray.is_initialized():
             return None
-        return ray.get_actor(board_actor_name(run_id))
+        return ray.get_actor(board_actor_name(run_id), namespace=NAMESPACE)
     except Exception:
         return None
 
@@ -201,10 +208,12 @@ def create_board(run_id: str, step_names: list[str]):
             return None
         name = board_actor_name(run_id)
         try:  # replace a board left behind by a previous run of the same id
-            ray.kill(ray.get_actor(name))
+            ray.kill(ray.get_actor(name, namespace=NAMESPACE))
         except Exception:
             pass
-        board = RunStatusBoard.options(name=name, lifetime="detached").remote(run_id)
+        board = RunStatusBoard.options(
+            name=name, namespace=NAMESPACE, lifetime="detached"
+        ).remote(run_id)
         ray.get(board.register.remote(step_names))
         return board
     except Exception:

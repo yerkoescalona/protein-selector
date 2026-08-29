@@ -1,4 +1,4 @@
-.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-graph ray-status provenance clean
+.PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-graph ray-status ray-head ray-stop ray-watch provenance clean
 
 # Base env + the validate extra (rdkit/meeko/...) + the webapp deps group --
 # what `make test`/`make serve` below both need. `uv sync` alone (no flags)
@@ -70,6 +70,26 @@ ray-run:
 # consumed. Base deps only; runs nothing.
 ray-graph:
 	./.venv/bin/python scripts/run_ray_pipeline.py --graph
+
+# PLAN.md §36: a PERSISTENT Ray cluster with its dashboard on :8265. Start it before
+# `make ray-run` and the run attaches to it (ray_runner tries address="auto" first), so
+# the dashboard and any detached status board actually observe the work. Without this each
+# run starts its own private cluster that the dashboard never sees -- confusing, because
+# everything still succeeds. Needs the `ray` group (ray[default] carries the dashboard's
+# runtime deps; the frontend itself ships in the wheel).
+ray-head:
+	./.venv/bin/ray start --head --dashboard-host=127.0.0.1 --dashboard-port=8265
+	@echo "Ray dashboard: http://127.0.0.1:8265"
+
+ray-stop:
+	./.venv/bin/ray stop
+
+# PLAN.md §36: the DOMAIN view Ray's dashboard cannot give -- the graph by stage, each
+# node's state, per-candidate progress, and which input socket a pending node is waiting
+# on. Reads the store (and the status board if a cluster is up); writes nothing, so
+# watching a run can never disturb it. RUN=<id> to follow a specific run.
+ray-watch:
+	./.venv/bin/python scripts/run_ray_pipeline.py --watch $(RUN)
 
 ray-status:
 	./.venv/bin/python scripts/run_ray_pipeline.py --status $(RUN)

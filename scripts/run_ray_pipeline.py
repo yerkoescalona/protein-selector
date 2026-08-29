@@ -32,6 +32,7 @@ from protein_selector.runners.ray_runner import (
     format_plan,
     plan_pipeline,
 )
+from protein_selector.runners.status_board import NAMESPACE as BOARD_NAMESPACE
 
 
 def _filter_from_workflow_config(path: Path) -> CandidateFilterConfig:
@@ -54,6 +55,10 @@ def main() -> None:
     parser.add_argument("--ids", type=Path, help="frozen candidate id list (PLAN.md §16c)")
     parser.add_argument("--plan", action="store_true", help="dry run: what would be done")
     parser.add_argument("--run", action="store_true", help="execute the Ray DAG")
+    parser.add_argument("--watch", metavar="RUN_ID", nargs="?", const="",
+                        help="live view of the graph as it executes (PLAN.md §36)")
+    parser.add_argument("--interval", type=float, default=2.0,
+                        help="--watch refresh interval in seconds")
     parser.add_argument("--graph", action="store_true",
                         help="print the node graph and every missing link (PLAN.md §35)")
     parser.add_argument("--status", metavar="RUN_ID",
@@ -63,6 +68,39 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if args.watch is not None:
+        import time
+
+        from protein_selector.runners.dashboard import build_view, render
+        from protein_selector.runners.status_board import get_board
+
+        run_id = args.watch or None
+        try:
+            while True:
+                snapshot = None
+                state = None
+                if run_id:
+                    # Best effort: the board only exists while a cluster is up. Without it
+                    # the view degrades to store-only rather than failing (§36).
+                    try:
+                        import ray
+
+                        if not ray.is_initialized():
+                            ray.init(address="auto", namespace=BOARD_NAMESPACE,
+                                     logging_level=logging.ERROR)
+                        board = get_board(run_id)
+                        if board is not None:
+                            snapshot = ray.get(board.snapshot.remote())
+                            state = snapshot.get("run_state")
+                    except Exception:
+                        snapshot = None
+                print("\033[2J\033[H", end="")  # clear, home
+                print(render(build_view(args.db_path, snapshot), run_id, state))
+                print(f"\n  refreshing every {args.interval:g}s -- Ctrl-C to stop")
+                time.sleep(args.interval)
+        except KeyboardInterrupt:
+            return
 
     if args.graph:
         from protein_selector.core.registry import NODES, STAGE_ORDER, validate_graph
@@ -86,7 +124,8 @@ def main() -> None:
 
         from protein_selector.runners.status_board import format_board, get_board
 
-        ray.init(address="auto", logging_level=logging.WARNING)
+        ray.init(address="auto", namespace=BOARD_NAMESPACE,
+                     logging_level=logging.WARNING)
         board = get_board(args.status)
         if board is None:
             print(f"no status board found for run {args.status!r} "

@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§36** | **Watching a run (2026-08-29).** `make ray-head` for Ray's own dashboard, and `make ray-watch` for the domain view Ray cannot give — the graph by stage with per-candidate progress and the socket a pending node waits on. |
 | **§35** | **The node card (2026-08-29): sockets, wires, and a pre-flight graph check.** Makes missing links findable before a run. Found a real dropped consumer on its first run (P.4) and a wire missing from its own declaration (P.2). |
 | **§34** | **Target structure (2026-08-29): pipelines / stages / nodes / domain.** A code-organization taxonomy, orthogonal to the runner. Fixes a ~2,445-call double AFDB fetch and §25g's layering inversion on the way. Work order in §34e. |
 | **§33** | **Snakemake removed (2026-08-29).** Y.1 (slow lanes under Ray, conda-env driver) and Y.2 (both runners produce byte-identical stores) both passed first. 961 lines of orchestration → 643; 2,830 marker files gone. Open cost: Y.4, the SLURM shape. |
@@ -2369,3 +2370,74 @@ survivors and looked like a clean no-op.
       read a table it never declared and nothing would notice. *Done when:* a node reading
       an undeclared table fails a test — most cheaply by having the node wrapper pass only
       its declared sockets.
+
+## 36. Watching a run: Ray's dashboard and a domain view (2026-08-29)
+
+Two views, answering different questions. Neither replaces the other, and the distinction
+is the same one §29b drew about Snakemake's report.
+
+| | shows | answers |
+|---|---|---|
+| **Ray dashboard** (`:8265`) | Ray tasks, workers, CPU/memory, object store | *is the cluster healthy, is anything stuck* |
+| **`make ray-watch`** | the graph by stage, node state, per-candidate progress | *where is the run, in candidates* |
+
+Ray's dashboard has never heard of a candidate. It cannot say "21 of 27 passed MD" or
+"docking is waiting on `relaxed_structure`". That is not a deficiency — it is a different
+layer — but it does mean a job-level view alone cannot tell you how a screening run is
+going.
+
+### 36a. A persistent cluster
+
+- [x] **D.1** (2026-08-29) `make ray-head` / `make ray-stop`. **`ray[default]`, not bare
+      `ray`:** the dashboard *frontend* ships in the wheel, but its runtime deps
+      (aiohttp, prometheus-client, opencensus, grpcio) live in that extra, and without them
+      the dashboard simply never starts with nothing saying why. Verified serving:
+      `HTTP 200` from `127.0.0.1:8265` and a real `/api/version` payload.
+- [x] **D.2** (2026-08-29) **The runner now attaches to a running cluster** (`address="auto"`,
+      falling back to a private one). Without this each run started its own cluster that
+      the dashboard never observed — everything still *succeeded*, so the failure mode was
+      a dashboard that just showed nothing.
+- [x] **D.3** (2026-08-29) **Fixed namespace for the status board.** Ray puts detached
+      actors in an anonymous per-session namespace and warns you must reconnect with that
+      random name to reach them — which made watching from a second terminal impossible.
+      Live-verified before and after: the board is now readable from a separate process.
+
+### 36b. The domain view
+
+- [x] **D.4** (2026-08-29) `runners/dashboard.py` + `make ray-watch [RUN=<id>]`, redrawing
+      every 2 s. Node state comes from the status board when a cluster is up; progress
+      comes from the store, which is the only authority on what is done (§31a). **Reads
+      only** — watching a run cannot disturb it — and with no cluster it degrades to a
+      store-only view rather than failing.
+
+      **The "waiting on ..." line is the payoff from the node cards (§35).** A pending node
+      is pending *for a reason*, and the reason is a wire, so the view names the socket
+      instead of printing "pending":
+
+      ```
+      validation     simulate_md              ██████████ 2387/2477
+                     detect_pocket            2051 rows
+                     dock_ligand              ██████░░░░ 429/685
+                     resolve_docking_targets  waiting on relaxed_structure
+      ```
+
+      Two things this surfaced while being built, both now fixed: **artifact sockets are
+      files, so a table-count check never saw them** — every node downstream of
+      `simulate_md` read as blocked even with thousands of relaxed structures on disk; and
+      the **status board reported step names from the pre-§34 era**, which matched no node,
+      so live state mapped onto nothing.
+
+      **Denominators are taken from `plan_pipeline`, not re-derived.** Getting an eligible
+      pool wrong has bitten this project twice (docking counted against every candidate —
+      2,065 phantom jobs; modeling counted candidates with no UniProt accession — 28 more).
+      The view asks the one place those were fixed rather than making the mistake a third
+      time.
+
+### 36c. Open
+
+- [ ] **D.5** The watch view is per-run and forgets finished runs once the cluster stops.
+      Mirroring board snapshots into the existing `runs` table would make a post-mortem
+      survive a restart — the same gap §32e Z.1 already records.
+- [ ] **D.6** No per-node timing in the view yet, though `Node.execute` is the natural place
+      to record it (§35f) and `benchmark:`-style data was §29e O.1's whole point.
+      *Done when:* each node row can show its own wall-clock, sourced from one place.
