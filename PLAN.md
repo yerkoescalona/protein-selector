@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§38** | **One config file + SLURM (2026-08-29).** `make ray-run` honours all of `workflow/config.yaml` (it was reading 3 of 27 keys); `slurm/run_pipeline.sbatch` runs the pipeline as one allocation. |
 | **§37** | **Integration (2026-08-29).** 17 hermetic tests over the seams between tiers, plus a live full-chain run. Found a real Ray constraint: cluster and driver must share an exact Python version, so the venv head cannot serve conda slow lanes. |
 | **§36** | **Watching a run (2026-08-29).** `make ray-head` for Ray's own dashboard, and `make ray-watch` for the domain view Ray cannot give — the graph by stage with per-candidate progress and the socket a pending node waits on. |
 | **§35** | **The node card (2026-08-29): sockets, wires, and a pre-flight graph check.** Makes missing links findable before a run. Found a real dropped consumer on its first run (P.4) and a wire missing from its own declaration (P.2). |
@@ -2514,3 +2515,57 @@ board and two views, each green on its own -- which is precisely the situation w
 - [ ] **I.4** Align the two Python patch versions so one cluster can serve both lanes, which
       would remove `ray-head-validation` entirely. *Done when:* `make ray-head` alone
       supports a slow-lane run.
+
+## 38. One config file, and running under SLURM (2026-08-29)
+
+### 38a. `workflow/config.yaml` now actually drives a run
+
+- [x] **C.1** (2026-08-29) **`make ray-run` was reading 3 of 27 keys.** It built a
+      `CandidateFilterConfig` from `min_residues`/`max_residues`/`max_resolution` and
+      silently ignored everything else -- so a config file saying `run_md: true`,
+      `run_dock: true`, `dock_exhaustiveness: 8` produced a **cheap-lane-only run**, with
+      nothing reporting that its instructions had been dropped. Worse than a gap: the file
+      stated an intent the runner did not honour.
+
+      `core/config.py` gained `load_run_config` plus one `*_from(config)` builder per lane,
+      and the CLI now assembles the whole `CourseCandidatesConfig` from them. A run logs
+      which lanes the file turned on (`⚙️ workflow/config.yaml -> lanes: md, pocket, dock`),
+      so a mismatch between intent and behaviour is visible in the first line of output.
+
+- [x] **C.2** (2026-08-29) Removed the five keys that only ever meant something to
+      Snakemake -- `shortlist_path`, `docking_candidates_path`, `docking_shortlist_path`,
+      `stage_marker_dir`, `validation_conda_prefix`. The store is the ledger now (§31a), so
+      there are no marker paths to configure. The file survived the engine removal because
+      it was always *run* configuration -- thresholds, lane switches, resource counts --
+      rather than workflow-engine configuration; only those five were the exception.
+
+### 38b. SLURM
+
+- [x] **C.3** (2026-08-29) `slurm/run_pipeline.sbatch`: the pipeline as **one** SLURM job
+      holding a private Ray cluster. Three things it encodes rather than leaves to memory:
+
+      * **Why one allocation.** Snakemake's SLURM executor submitted one sbatch per
+        candidate, which backfills well on a busy queue. Ray's driver and workers must live
+        inside a single allocation, so that option is gone. §30e records the trade
+        honestly; §33e **Y.4** is still open and should be *measured* on the real cluster
+        rather than argued.
+      * **One interpreter throughout** (§37b): cluster and driver must match to the patch
+        version, and if any slow lane is on it has to be the validation conda env.
+      * **`--cpus` from `$SLURM_CPUS_PER_TASK`**, not a guess -- the oversubscription
+        constraint §15 originally gave Snakemake's scheduler, now given to Ray's.
+
+      It dry-runs `--graph` and `--plan` before allocating any real work, since a wiring
+      error found there costs seconds instead of the whole allocation (§35c). No
+      `ray start`: the driver owns its cluster and tears it down on exit, so a cancelled
+      job leaves nothing behind.
+
+      Verified as far as this machine allows -- `bash -n` clean, and the script body run
+      locally against the real store with the validation interpreter. **Not yet run under a
+      real `sbatch`**, which is C.4.
+
+### 38c. Open
+
+- [ ] **C.4** Submit it on the real cluster. *Done when:* one `sbatch` completes and its
+      rows are in the store.
+- [ ] **C.5** GPU line is commented out and untested -- nothing in screening needs one.
+      Revisit with the design work (§30). *Done when:* a GPU lane requests and uses one.

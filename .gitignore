@@ -31,3 +31,4 @@ results/
 # deliberately, don't add a second exception pattern here for future demo artifacts.
 !demo/protein_selector_demo.db
 !demo/report_demo.csv
+slurm/logs/

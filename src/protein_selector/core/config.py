@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from protein_selector.domain.structural_biology.rcsb_search import ExperimentalMethod
 
@@ -96,3 +97,76 @@ class DockingConfig:
     # self-dock failures (PLAN.md §15h/§17h).
     rmsd_threshold_angstrom: float = 2.5  # self-dock success cutoff (see
     # docking.vina_docking._DEFAULT_RMSD_THRESHOLD_ANGSTROM for why 2.5, not 2.0).
+
+
+def load_run_config(path: Path | str = Path("workflow/config.yaml")) -> dict:
+    """Read the run config file into a plain dict (PLAN.md §38).
+
+    One file describes a run, and every runner reads it. It survived the Snakemake removal
+    unchanged because it was always *run* configuration rather than workflow-engine
+    configuration -- thresholds, lane switches, resource counts.
+    """
+    import yaml
+
+    path = Path(path)
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text()) or {}
+
+
+def candidate_filter_from(config: dict) -> CandidateFilterConfig:
+    """The client-side screening window (§7a)."""
+    return CandidateFilterConfig(
+        min_residues=config.get("min_residues", CandidateFilterConfig().min_residues),
+        max_residues=config.get("max_residues", CandidateFilterConfig().max_residues),
+        max_resolution=config.get("max_resolution", CandidateFilterConfig().max_resolution),
+    )
+
+
+def candidate_search_from(config: dict) -> CandidateSearchConfig:
+    """The RCSB query terms (§7a)."""
+    return CandidateSearchConfig(
+        max_candidates=config.get("max_candidates", CandidateSearchConfig().max_candidates),
+        max_resolution=config.get("max_resolution", CandidateSearchConfig().max_resolution),
+    )
+
+
+def md_simulation_from(config: dict) -> MdSimulationConfig:
+    """The ex03 MD lane. Off unless `run_md` says otherwise."""
+    return MdSimulationConfig(
+        enabled=bool(config.get("run_md", False)),
+        n_steps=config.get("md_n_steps"),
+        max_minimization_iterations=config.get("md_max_minimization_iterations", 0),
+    )
+
+
+def pocket_detection_from(config: dict) -> PocketDetectionConfig:
+    """Fpocket. Tied to `run_dock`: pocket data only ever feeds the docking path (§20)."""
+    return PocketDetectionConfig(
+        enabled=bool(config.get("run_dock", False)),
+        box_padding_angstroms=config.get(
+            "dock_box_padding", PocketDetectionConfig().box_padding_angstroms
+        ),
+    )
+
+
+def docking_from(config: dict) -> DockingConfig:
+    """The ex04 docking lane."""
+    return DockingConfig(
+        enabled=bool(config.get("run_dock", False)),
+        exhaustiveness=config.get("dock_exhaustiveness", DockingConfig().exhaustiveness),
+        rmsd_threshold_angstrom=config.get(
+            "dock_rmsd_threshold", DockingConfig().rmsd_threshold_angstrom
+        ),
+    )
+
+
+def complex_md_from(config: dict) -> ComplexMdSimulationConfig:
+    """The receptor+ligand complex MD lane (§24). Off by default -- needs ambertools."""
+    return ComplexMdSimulationConfig(
+        enabled=bool(config.get("run_complex_md", False)),
+        n_steps=config.get("complex_md_n_steps"),
+        max_minimization_iterations=config.get(
+            "complex_md_max_minimization_iterations", 0
+        ),
+    )

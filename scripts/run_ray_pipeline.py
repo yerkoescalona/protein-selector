@@ -23,10 +23,17 @@ import argparse
 import logging
 from pathlib import Path
 
-import yaml
-
-from protein_selector.core.config import CandidateFilterConfig
+from protein_selector.core.config import (
+    candidate_filter_from,
+    candidate_search_from,
+    complex_md_from,
+    docking_from,
+    load_run_config,
+    md_simulation_from,
+    pocket_detection_from,
+)
 from protein_selector.core.db import DEFAULT_DB_PATH
+from protein_selector.pipelines.course_candidates_pipeline import CourseCandidatesConfig
 from protein_selector.runners.ray_runner import (
     RayPipelineConfig,
     format_plan,
@@ -35,15 +42,24 @@ from protein_selector.runners.ray_runner import (
 from protein_selector.runners.status_board import NAMESPACE as BOARD_NAMESPACE
 
 
-def _filter_from_workflow_config(path: Path) -> CandidateFilterConfig:
-    """Reuse workflow/config.yaml so the Ray and Snakemake runners cannot drift apart."""
-    if not path.exists():
-        return CandidateFilterConfig()
-    cfg = yaml.safe_load(path.read_text())
-    return CandidateFilterConfig(
-        min_residues=cfg.get("min_residues", 50),
-        max_residues=cfg.get("max_residues", 200),
-        max_resolution=cfg.get("max_resolution", 3.0),
+def _pipeline_config(path: Path, ids: list[str] | None) -> CourseCandidatesConfig:
+    """Build the whole run config from ``workflow/config.yaml`` (PLAN.md §38).
+
+    Every lane switch and threshold in that file is honoured. The previous version read
+    exactly three keys -- min/max residues and resolution -- and silently ignored the other
+    24, so a file saying ``run_md: true`` produced a cheap-lane-only run with nothing
+    reporting that its instructions had been dropped.
+    """
+    config = load_run_config(path)
+    return CourseCandidatesConfig(
+        candidate_search=candidate_search_from(config),
+        candidate_filter=candidate_filter_from(config),
+        md_simulation=md_simulation_from(config),
+        pocket_detection=pocket_detection_from(config),
+        docking=docking_from(config),
+        complex_md_simulation=complex_md_from(config),
+        candidate_ids=ids,
+        restrict_md_to_dockable=bool(config.get("restrict_md_to_dockable", True)),
     )
 
 
@@ -145,9 +161,29 @@ def main() -> None:
 
     from protein_selector.runners.ray_runner import run_pipeline_on_ray
 
+    config = _pipeline_config(args.config, ids)
+    lanes = [
+        name
+        for name, on in (
+            ("md", config.md_simulation.enabled),
+            ("pocket", config.pocket_detection.enabled),
+            ("dock", config.docking.enabled),
+            ("complex_md", config.complex_md_simulation.enabled),
+        )
+        if on
+    ]
+    logging.info("⚙️  %s -> lanes: %s", args.config, ", ".join(lanes) or "cheap lane only")
+
     survivors = run_pipeline_on_ray(
         RayPipelineConfig(
-            candidate_ids=ids, candidate_filter=_filter_from_workflow_config(args.config)
+            candidate_search=config.candidate_search,
+            candidate_filter=config.candidate_filter,
+            md_simulation=config.md_simulation,
+            pocket_detection=config.pocket_detection,
+            docking=config.docking,
+            complex_md_simulation=config.complex_md_simulation,
+            candidate_ids=config.candidate_ids,
+            restrict_md_to_dockable=config.restrict_md_to_dockable,
         ),
         db_path=args.db_path,
         num_cpus=args.cpus,

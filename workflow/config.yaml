@@ -1,13 +1,14 @@
-# Snakemake config (PLAN.md §16). Same db as protein_selector.core.db.DEFAULT_DB_PATH --
-# override on the CLI with `snakemake --config db_path=... max_candidates=...`.
+# Run configuration (PLAN.md §38). ONE file describes a run, and the runner reads all of
+# it: `make ray-run` honours every lane switch and threshold below.
+#
+# It outlived Snakemake (§33) unchanged because it was always *run* config -- thresholds,
+# lane switches, resource counts -- not workflow-engine config. The keys that WERE
+# engine-specific (shortlist_path, docking_candidates_path, docking_shortlist_path,
+# stage_marker_dir, validation_conda_prefix) were removed when the engine went; the store
+# is the ledger now (§31a), so there are no marker paths to configure.
 db_path: cache/protein_selector.db
 candidate_ids_path: results/candidate_ids.txt  # frozen sample, PLAN.md §16c
-shortlist_path: results/shortlist.txt
-docking_candidates_path: results/docking_candidates.txt  # scripts/ligand_filter_fix_brief.md
-# Problem 3: cheap pre-MD docking-eligibility gate, frozen the same way as shortlist_path.
-docking_shortlist_path: results/docking_shortlist.txt  # PLAN.md §17c, frozen the same way
 report_csv_path: results/report.csv
-stage_marker_dir: results/stages  # ligands/parameterizability/meeko/pocket_detect/literature/modeling markers
 max_candidates: 2000  # doubled 2026-07-19 to grow real MD+docking coverage beyond the
 # first 1000-candidate sample (168 shortlist / 36 dockable) -- candidate_ids.txt deleted
 # alongside this change to force a fresh, larger sample (PLAN.md §16c).
@@ -63,7 +64,6 @@ restrict_md_to_dockable: true  # scripts/ligand_filter_fix_brief.md, Problem 3 -
 # under this conda env) needs it directly for `docking.pdb_download.fetch_pdb_text` --
 # unlike `md_validate` (PDBFixer fetches its own structure, no `requests` call), so
 # `requests` was never in this env's original MD-only package list and must be added too.
-validation_conda_prefix: /home/yerko/miniconda3/envs/protein-selector-validation
 md_threads: 2
 md_n_steps: 50  # short smoke test (§15.0/PLAN.md §5b: setup/stability failure modes
 # surface in minutes, not a converged trajectory -- see PLAN.md §15f for why cutting
