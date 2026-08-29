@@ -21,7 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
-| **§39** | **SLURM setup (2026-08-29).** Everything installed and munge active; the sole blocker was a missing `/etc/slurm/slurm.conf`. Config generated for this hardware + `slurm/SETUP.md`. Daemons not yet started (needs sudo). |
+| **§39** | **SLURM (2026-08-29): live.** Config generated for this hardware; cluster running and `sbatch` jobs completing. Found two real bugs — an 86-byte truncated config, and a sbatch script that put the interpreter on PATH but not its binaries. |
 | **§38** | **One config file + SLURM (2026-08-29).** `make ray-run` honours all of `workflow/config.yaml` (it was reading 3 of 27 keys); `slurm/run_pipeline.sbatch` runs the pipeline as one allocation. |
 | **§37** | **Integration (2026-08-29).** 17 hermetic tests over the seams between tiers, plus a live full-chain run. Found a real Ray constraint: cluster and driver must share an exact Python version, so the venv head cannot serve conda slow lanes. |
 | **§36** | **Watching a run (2026-08-29).** `make ray-head` for Ray's own dashboard, and `make ray-watch` for the domain view Ray cannot give — the graph by stage with per-candidate progress and the socket a pending node waits on. |
@@ -2608,3 +2608,42 @@ board and two views, each green on its own -- which is precisely the situation w
 - [ ] **S.5** Then §38c **C.4**: `sbatch slurm/run_pipeline.sbatch` completes and its rows
       land in the store — which finally makes §33e **Y.4** (one held allocation vs. many
       small jobs) measurable rather than arguable.
+
+### 39b. Live on the cluster — and two real bugs it found
+
+- [x] **S.4** (2026-08-29) **SLURM is running.** `sinfo` shows partition `local`, node
+      `debian`, state `idle`, 16 CPUs; `srun -n1 hostname` returns `debian`.
+
+      **The first failure was a truncated config**, worth recording because the symptom
+      pointed elsewhere: `/etc/slurm/slurm.conf` contained **86 bytes** — nothing but the
+      `NodeName=` line, copied out of a chat message rather than from the file. With no
+      `SlurmctldHost`, both daemons exit instantly and `sinfo` falls back to a DNS-SRV
+      lookup, which produces an error about *DNS* that says nothing about the real cause.
+      The `NodeName` line is now deliberately kept on ONE line: SLURM accepts a backslash
+      continuation, but a wrapped line is easy to copy in half.
+
+- [x] **S.5** (2026-08-29) `sbatch slurm/run_pipeline.sbatch` **completes** — job 2,
+      `JobState=COMPLETED`, `AllocTRES=cpu=8,mem=16G`. §38c **C.4** closed.
+
+      **And it immediately exposed a real bug in the sbatch script.** The job exited 0 and
+      wrote nothing. The cause: the script set `PS_PYTHON` to the conda interpreter but
+      never put that env's `bin/` on `PATH`. Python *imports* therefore worked — openmm,
+      vina and rdkit are packages — while every subprocess call to a *binary* failed:
+      **the whole docking lane died on 91 candidates with "obabel binary not found on
+      PATH"**, and the job still reported success, because a missing validator binary is a
+      per-candidate skip by design (§16b) rather than a crash.
+
+      That is a failure mode worth naming: **an exit code of 0 from a batch job proves the
+      script ran, not that the work happened.** Fixed with `export PATH="$PS_ENV/bin:$PATH"`;
+      the re-submitted job shows **zero** PATH errors and is doing real Vina work.
+
+### 39c. Open
+
+- [ ] **S.6** Now that jobs actually run, §33e **Y.4** is finally measurable: one held
+      allocation (this) versus the many small right-sized jobs Snakemake's executor would
+      have submitted. *Done when:* both shapes are timed on this cluster and the answer is
+      a number.
+- [ ] **S.7** `slurmd -C` reports `Gres=gpu:phoenix1:1` — the integrated Radeon 780M is
+      visible to SLURM. Not declared in `slurm.conf` and not useful for the CUDA-based
+      design tooling §30 anticipates, but worth knowing it exists before assuming the
+      machine has no GPU at all.

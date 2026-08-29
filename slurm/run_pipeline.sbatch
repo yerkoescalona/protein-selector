@@ -38,6 +38,13 @@ PS_PYTHON="${PS_PYTHON:-$PS_ENV/bin/python}"
 cd "$PS_ROOT"
 mkdir -p slurm/logs
 
+# The env's bin/ must be on PATH, not just its python. Live-discovered under sbatch
+# (§39b): setting PS_PYTHON alone makes Python IMPORTS work -- openmm, vina and rdkit are
+# packages -- while every subprocess call to a BINARY fails. The whole docking lane died
+# with "obabel binary not found on PATH" on 91 candidates, and the job still exited 0,
+# because a missing validator binary is a per-candidate skip by design (§16b), not a crash.
+export PATH="$PS_ENV/bin:$PATH"
+
 echo "host        : $(hostname)"
 echo "job         : ${SLURM_JOB_ID:-none}"
 echo "cpus        : ${SLURM_CPUS_PER_TASK:-?}"
