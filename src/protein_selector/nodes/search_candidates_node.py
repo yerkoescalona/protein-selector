@@ -16,24 +16,32 @@ from protein_selector.core.config import (
     _RCSB_MAX_ATOMS_CEILING,
     CandidateSearchConfig,
 )
-from protein_selector.core.registry import Granularity, NodeSpec, collection
+from protein_selector.core.registry import Granularity, collection
 from protein_selector.domain.structural_biology.rcsb_search import (
     CandidateEntry,
     fetch_entry_metadata,
     search_candidate_ids,
 )
+from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
-# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
-# wherever a socket name here matches one on another node. Nothing outside these
-# sockets may be read or written -- if it is not on the card, it does not exist.
-NODE = NodeSpec(
-    "search_candidates",
-    stage="screening",
-    granularity=Granularity.BATCH,
-    inputs=(),
-    outputs=(collection("candidate_entries"),),
-    needs_network=True,
-)
+
+class SearchCandidatesNode(Node):
+    """The card (PLAN.md §35): what this node needs, what it gives.
+
+    A wire exists wherever a socket name here matches one on another node.
+    Nothing outside these sockets may be read -- ``ctx.get`` refuses the rest.
+    """
+
+    name = "search_candidates"
+    granularity = Granularity.BATCH
+    inputs = ()
+    outputs = (collection("candidate_entries"),)
+    needs_network = True
+
+    def run(self, ctx: NodeContext) -> NodeResult:
+        """Delegates to the module function, which stays the implementation."""
+        entries = search_candidates(ctx.config)
+        return NodeResult(outputs={"candidate_entries": entries})
 
 logger = logging.getLogger(__name__)
 

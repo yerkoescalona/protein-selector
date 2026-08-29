@@ -27,14 +27,16 @@ from protein_selector.core.config import (
     PocketDetectionConfig,
 )
 from protein_selector.domain.structural_biology.models import CandidateEntry
-from protein_selector.nodes import detect_pocket as detect_pocket_module
-from protein_selector.nodes import lookup_alphafold as lookup_alphafold_module
-from protein_selector.nodes import parameterize_ligand as parameterize_ligand_module
-from protein_selector.nodes import simulate_md as simulate_md_module
-from protein_selector.nodes.detect_pocket import detect_pocket
-from protein_selector.nodes.lookup_alphafold import lookup_alphafold
-from protein_selector.nodes.parameterize_ligand import parameterize_ligand
-from protein_selector.nodes.simulate_md import simulate_md
+from protein_selector.nodes import detect_pocket_node as detect_pocket_module
+from protein_selector.nodes import lookup_alphafold_node as lookup_alphafold_module
+from protein_selector.nodes import (
+    parameterize_ligand_node as parameterize_ligand_module,
+)
+from protein_selector.nodes import simulate_md_node as simulate_md_module
+from protein_selector.nodes.detect_pocket_node import detect_pocket
+from protein_selector.nodes.lookup_alphafold_node import lookup_alphafold
+from protein_selector.nodes.parameterize_ligand_node import parameterize_ligand
+from protein_selector.nodes.simulate_md_node import simulate_md
 
 
 def _entry(pdb_id="1ABC", uniprot=None, n_residues=100):

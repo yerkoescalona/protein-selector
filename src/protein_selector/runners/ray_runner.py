@@ -250,11 +250,11 @@ def run_pipeline_on_ray(
 
     # Imported inside the function so the module imports without the heavy stage chain.
     from protein_selector.domain.structural_biology.store import load_candidates
-    from protein_selector.nodes.check_simulability import check_simulability
-    from protein_selector.nodes.count_literature import count_literature
-    from protein_selector.nodes.lookup_alphafold import lookup_alphafold
-    from protein_selector.nodes.resolve_ligands import resolve_ligands
-    from protein_selector.nodes.search_candidates import search_candidates
+    from protein_selector.nodes.check_simulability_node import check_simulability
+    from protein_selector.nodes.count_literature_node import count_literature
+    from protein_selector.nodes.lookup_alphafold_node import lookup_alphafold
+    from protein_selector.nodes.resolve_ligands_node import resolve_ligands
+    from protein_selector.nodes.search_candidates_node import search_candidates
 
     if not ray.is_initialized():
         ray.init(num_cpus=num_cpus, logging_level=logging.WARNING, include_dashboard=False)
@@ -362,8 +362,8 @@ def run_pipeline_on_ray(
             load_ligand_ccd_codes,
             load_ligand_smiles,
         )
-        from protein_selector.nodes.parameterize_ligand import parameterize_ligand
-        from protein_selector.nodes.sanitize_ligand import (
+        from protein_selector.nodes.parameterize_ligand_node import parameterize_ligand
+        from protein_selector.nodes.sanitize_ligand_node import (
             sanitize_ligand,
         )
 
@@ -390,7 +390,7 @@ def run_pipeline_on_ray(
     # per candidate, with no marker files and no fan-out declarations.
     @ray.remote(num_cpus=config.md_threads)
     def _md(pdb_id: str, _gate: int) -> bool:
-        from protein_selector.nodes.simulate_md import simulate_md
+        from protein_selector.nodes.simulate_md_node import simulate_md
 
         result = simulate_md(
             pdb_id, config.md_simulation, db_path, force_refresh=config.force_refresh
@@ -399,7 +399,7 @@ def run_pipeline_on_ray(
 
     @ray.remote
     def _pocket(pdb_id: str, _md_ok: bool) -> bool:
-        from protein_selector.nodes.detect_pocket import detect_pocket
+        from protein_selector.nodes.detect_pocket_node import detect_pocket
 
         return detect_pocket(
             pdb_id, config.pocket_detection, db_path, force_refresh=config.force_refresh
@@ -407,7 +407,7 @@ def run_pipeline_on_ray(
 
     @ray.remote(num_cpus=config.dock_threads)
     def _dock(pdb_id: str, _md_ok: bool, _pocket_done: bool) -> bool:
-        from protein_selector.nodes.dock_ligand import dock_ligand
+        from protein_selector.nodes.dock_ligand_node import dock_ligand
 
         result = dock_ligand(
             pdb_id, config.docking, db_path, force_refresh=config.force_refresh
@@ -416,7 +416,7 @@ def run_pipeline_on_ray(
 
     @ray.remote(num_cpus=config.md_threads)
     def _complex_md(pdb_id: str, _dock_done: bool) -> bool:
-        from protein_selector.nodes.simulate_complex_md import (
+        from protein_selector.nodes.simulate_complex_md_node import (
             simulate_complex_md,
         )
 
@@ -430,7 +430,7 @@ def run_pipeline_on_ray(
     gate = ray.get(chemistry_ref)
 
     if config.md_simulation.enabled:
-        from protein_selector.nodes.select_dockable import (
+        from protein_selector.nodes.select_dockable_node import (
             select_dockable,
         )
 
@@ -451,7 +451,7 @@ def run_pipeline_on_ray(
             _report(board, "mark_completed", "pocket_detection", f"{n}/{len(md_pool)} found")
 
         if config.docking.enabled:
-            from protein_selector.nodes.resolve_docking_targets import (
+            from protein_selector.nodes.resolve_docking_targets_node import (
                 resolve_docking_targets,
             )
 

@@ -14,7 +14,6 @@ import logging
 from protein_selector.core.config import ComplexMdSimulationConfig
 from protein_selector.core.registry import (
     Granularity,
-    NodeSpec,
     artifact,
     collection,
     table,
@@ -30,19 +29,30 @@ from protein_selector.domain.molecular_dynamics.amber_complex import (
     complex_relaxed_structure_path,
     run_complex_md_validation,
 )
+from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
-# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
-# wherever a socket name here matches one on another node. Nothing outside these
-# sockets may be read or written -- if it is not on the card, it does not exist.
-NODE = NodeSpec(
-    "simulate_complex_md",
-    stage="validation",
-    granularity=Granularity.PER_CANDIDATE,
-    inputs=(collection("docking_shortlist"), artifact("relaxed_structure"), table("validation")),
-    outputs=(table("validation"), artifact("complex_relaxed_structure")),
-    needs_conda=True,
-    needs_network=True,
-)
+
+class SimulateComplexMdNode(Node):
+    """The card (PLAN.md §35): what this node needs, what it gives.
+
+    A wire exists wherever a socket name here matches one on another node.
+    Nothing outside these sockets may be read -- ``ctx.get`` refuses the rest.
+    """
+
+    name = "simulate_complex_md"
+    granularity = Granularity.PER_CANDIDATE
+    inputs = (collection("docking_shortlist"), artifact("relaxed_structure"), table("validation"),)
+    outputs = (table("validation"), artifact("complex_relaxed_structure"),)
+    needs_conda = True
+    needs_network = True
+
+    def run(self, ctx: NodeContext) -> NodeResult:
+        """Delegates to the module function, which stays the implementation."""
+        result = simulate_complex_md(
+            ctx.candidate(), ctx.config, ctx.db_path,
+            force_refresh=ctx.force_refresh,
+        )
+        return NodeResult(outputs={"validation": result, "complex_relaxed_structure": result})
 
 logger = logging.getLogger(__name__)
 

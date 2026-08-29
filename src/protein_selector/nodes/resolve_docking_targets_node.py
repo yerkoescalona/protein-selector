@@ -21,25 +21,32 @@ import logging
 
 from protein_selector.core.registry import (
     Granularity,
-    NodeSpec,
     artifact,
     collection,
     table,
 )
 from protein_selector.domain.docking.target import resolve_docking_target
+from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
-# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
-# wherever a socket name here matches one on another node. Nothing outside these
-# sockets may be read or written -- if it is not on the card, it does not exist.
-NODE = NodeSpec(
-    "resolve_docking_targets",
-    stage="validation",
-    granularity=Granularity.BATCH,
-    inputs=(table("ligand_ccd_codes"), table("meeko_parameterization"), artifact("relaxed_structure"), table("pocket_detection", required=False)),
-    outputs=(collection("docking_shortlist"),),
-    needs_conda=True,
-    needs_network=True,
-)
+
+class ResolveDockingTargetsNode(Node):
+    """The card (PLAN.md §35): what this node needs, what it gives.
+
+    A wire exists wherever a socket name here matches one on another node.
+    Nothing outside these sockets may be read -- ``ctx.get`` refuses the rest.
+    """
+
+    name = "resolve_docking_targets"
+    granularity = Granularity.BATCH
+    inputs = (table("ligand_ccd_codes"), table("meeko_parameterization"), artifact("relaxed_structure"), table("pocket_detection", required=False),)
+    outputs = (collection("docking_shortlist"),)
+    needs_conda = True
+    needs_network = True
+
+    def run(self, ctx: NodeContext) -> NodeResult:
+        """Delegates to the module function, which stays the implementation."""
+        ids = resolve_docking_targets(ctx.get("ligand_ccd_codes"), ctx.db_path)
+        return NodeResult(outputs={"docking_shortlist": ids})
 
 logger = logging.getLogger(__name__)
 

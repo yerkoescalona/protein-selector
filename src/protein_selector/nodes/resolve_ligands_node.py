@@ -7,25 +7,33 @@ don't need to re-fetch SMILES for codes this stage already resolved.
 
 from __future__ import annotations
 
-from protein_selector.core.registry import Granularity, NodeSpec, collection, table
+from protein_selector.core.registry import Granularity, collection, table
 from protein_selector.domain.docking.ligands import (
     fetch_ligand_ccd_codes,
     fetch_smiles_for_ccd_codes,
 )
 from protein_selector.domain.docking.store import upsert_ligand_ccd_codes
 from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
+from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
-# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
-# wherever a socket name here matches one on another node. Nothing outside these
-# sockets may be read or written -- if it is not on the card, it does not exist.
-NODE = NodeSpec(
-    "resolve_ligands",
-    stage="annotation",
-    granularity=Granularity.BATCH,
-    inputs=(collection("survivors"), table("candidates")),
-    outputs=(table("ligand_ccd_codes"), table("ligand_smiles")),
-    needs_network=True,
-)
+
+class ResolveLigandsNode(Node):
+    """The card (PLAN.md §35): what this node needs, what it gives.
+
+    A wire exists wherever a socket name here matches one on another node.
+    Nothing outside these sockets may be read -- ``ctx.get`` refuses the rest.
+    """
+
+    name = "resolve_ligands"
+    granularity = Granularity.BATCH
+    inputs = (collection("survivors"), table("candidates"),)
+    outputs = (table("ligand_ccd_codes"), table("ligand_smiles"),)
+    needs_network = True
+
+    def run(self, ctx: NodeContext) -> NodeResult:
+        """Delegates to the module function, which stays the implementation."""
+        smiles = resolve_ligands(ctx.get("survivors"), db_path=ctx.db_path)
+        return NodeResult(outputs={"ligand_ccd_codes": smiles})
 
 
 def resolve_ligands(entries: list[CandidateEntry], db_path) -> dict[str, str | None]:

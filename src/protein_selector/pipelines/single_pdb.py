@@ -24,18 +24,18 @@ from protein_selector.core.config import (
 from protein_selector.core.report import build_report_table
 from protein_selector.domain.docking.store import load_ligand_ccd_codes
 from protein_selector.domain.structural_biology.rcsb_search import fetch_entry_metadata
-from protein_selector.nodes.check_simulability import check_simulability
-from protein_selector.nodes.count_literature import count_literature
-from protein_selector.nodes.detect_pocket import detect_pocket
-from protein_selector.nodes.dock_ligand import dock_ligand
-from protein_selector.nodes.lookup_alphafold import lookup_alphafold
-from protein_selector.nodes.parameterize_ligand import parameterize_ligand
-from protein_selector.nodes.resolve_ligands import resolve_ligands
-from protein_selector.nodes.sanitize_ligand import sanitize_ligand
-from protein_selector.nodes.simulate_complex_md import (
+from protein_selector.nodes.check_simulability_node import check_simulability
+from protein_selector.nodes.count_literature_node import count_literature
+from protein_selector.nodes.detect_pocket_node import detect_pocket
+from protein_selector.nodes.dock_ligand_node import dock_ligand
+from protein_selector.nodes.lookup_alphafold_node import lookup_alphafold
+from protein_selector.nodes.parameterize_ligand_node import parameterize_ligand
+from protein_selector.nodes.resolve_ligands_node import resolve_ligands
+from protein_selector.nodes.sanitize_ligand_node import sanitize_ligand
+from protein_selector.nodes.simulate_complex_md_node import (
     simulate_complex_md,
 )
-from protein_selector.nodes.simulate_md import simulate_md
+from protein_selector.nodes.simulate_md_node import simulate_md
 
 logger = logging.getLogger(__name__)
 

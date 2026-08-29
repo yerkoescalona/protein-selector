@@ -2327,7 +2327,30 @@ survivors and looked like a clean no-op.
       collecting the graph pulls in **no** rdkit/openmm/vina/ray/pymol/openff/meeko --
       the property that makes cards-on-nodes safe, and the same
       network-at-import trap W1.2 had to undo, in a new place.
-- [ ] **P.5b** Enforce the card at runtime, not just on paper. Today a node *could* still
+- [x] **P.6** (2026-08-29) **Base classes for all three tiers.** `nodes/base.py`
+      (`Node`, `NodeContext`, `NodeResult`), `stages/base.py` (`Stage`, `StageContext`,
+      `StageResult`), `pipelines/base.py` (`Pipeline`, `PipelineContext`). Explicit
+      suffixed names throughout -- `CountLiteratureNode`, `AnnotationStage`,
+      `CourseCandidatesPipeline` -- and filenames suffixed to match (`count_literature_node.py`,
+      `annotation_stage.py`), so a tier is readable from a traceback line, which the four
+      files previously all called `validation.py` were not.
+      **This closes P.5b:** `NodeContext.get` refuses any socket the node did not declare,
+      and `Node.execute` refuses any output it did not declare -- the card is a contract at
+      runtime, not documentation. Cards are also checked *at class-definition time*: a
+      missing `name`, a duplicated socket, or a node claimed by two stages raises on
+      import, so a malformed node cannot reach a run. All three verified live.
+      **The stage owns membership** (per the user's decision): a node no longer names its
+      stage, each `Stage` lists its node classes, and `core.registry.discover_nodes()`
+      resolves the assignment from that single side.
+      **A real bug the graph checker caught, in this very change:** the generator that
+      wrote the classes dropped single-element `outputs=(x,)` tuples, silently emptying the
+      outputs of 4 nodes -- `validate_graph()` reported 5 required inputs with no producer
+      and named every one. That is the check paying for itself on the commit that
+      introduced it.
+- [ ] **P.7** Move each node's body out of the module function and into `run(ctx)`. Today
+      `run` delegates to the function, which keeps this conversion behaviour-preserving --
+      deliberately, since the classes and the 60 call sites moved in one change already.
+      *Done when:* no node module has both a class and a top-level implementation function. Today a node *could* still
       read a table it never declared and nothing would notice. *Done when:* a node reading
       an undeclared table fails a test — most cheaply by having the node wrapper pass only
       its declared sockets.

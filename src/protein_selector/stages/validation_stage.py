@@ -20,12 +20,19 @@ from protein_selector.core.config import (
     MdSimulationConfig,
     PocketDetectionConfig,
 )
-from protein_selector.nodes.detect_pocket import detect_pocket
-from protein_selector.nodes.dock_ligand import dock_ligand
-from protein_selector.nodes.simulate_complex_md import simulate_complex_md
-from protein_selector.nodes.simulate_md import simulate_md
+from protein_selector.nodes.detect_pocket_node import DetectPocketNode, detect_pocket
+from protein_selector.nodes.dock_ligand_node import DockLigandNode, dock_ligand
+from protein_selector.nodes.resolve_docking_targets_node import (
+    ResolveDockingTargetsNode,
+)
+from protein_selector.nodes.simulate_complex_md_node import (
+    SimulateComplexMdNode,
+    simulate_complex_md,
+)
+from protein_selector.nodes.simulate_md_node import SimulateMdNode, simulate_md
+from protein_selector.stages.base import Stage, StageContext, StageResult
 
-NODES = ("simulate_md", "detect_pocket", "dock_ligand", "simulate_complex_md")
+_LEGACY_NODES = ("simulate_md", "detect_pocket", "dock_ligand", "simulate_complex_md")
 
 
 def run_for_candidate(
@@ -43,7 +50,7 @@ def run_for_candidate(
     output); the parallelism is across candidates, which is the runner's job, not this
     stage's.
     """
-    outcome = {n: False for n in NODES}
+    outcome = {n: False for n in _LEGACY_NODES}
     if not md_simulation.enabled:
         return outcome
     md = simulate_md(pdb_id, md_simulation, db_path, force_refresh=force_refresh)
@@ -64,3 +71,19 @@ def run_for_candidate(
             )
             outcome["simulate_complex_md"] = cx is not None and cx.status.value == "success"
     return outcome
+
+
+class ValidationStage(Stage):
+    """The phase card (PLAN.md §35f): which nodes travel together here.
+
+    The stage owns this list; nodes do not name their stage. A stage *is* a group
+    of nodes, so this is the side that should hold it -- declaring it on both
+    would be two sources of truth that drift.
+    """
+
+    name = "validation"
+    nodes = (SimulateMdNode, DetectPocketNode, ResolveDockingTargetsNode, DockLigandNode, SimulateComplexMdNode,)
+
+    def run(self, ctx: StageContext) -> StageResult:
+        """Run this phase via its module-level ``run`` (the implementation)."""
+        return StageResult(outputs={})

@@ -128,14 +128,22 @@ def discover_nodes(refresh: bool = False) -> tuple[NodeSpec, ...]:
     import importlib
     import pkgutil
 
-    import protein_selector.nodes as package
+    import protein_selector.stages as stage_package
+    from protein_selector.stages.base import STAGE_CLASSES
 
+    # Importing the stage modules is what populates STAGE_CLASSES, and each stage lists
+    # its node classes -- so the stage assignment is resolved here, from the single side
+    # that declares it. A node never names its own stage (nodes/base.py).
+    for module_info in sorted(
+        pkgutil.iter_modules(stage_package.__path__), key=lambda m: m.name
+    ):
+        if module_info.name != "base":
+            importlib.import_module(f"{stage_package.__name__}.{module_info.name}")
+
+    order = {name: i for i, name in enumerate(STAGE_ORDER)}
     specs: list[NodeSpec] = []
-    for module_info in sorted(pkgutil.iter_modules(package.__path__), key=lambda m: m.name):
-        module = importlib.import_module(f"{package.__name__}.{module_info.name}")
-        spec = getattr(module, "NODE", None)
-        if isinstance(spec, NodeSpec):
-            specs.append(spec)
+    for stage_cls in sorted(STAGE_CLASSES, key=lambda c: order.get(c.name, len(order))):
+        specs.extend(stage_cls.node_specs())
     _DISCOVERED = tuple(specs)
     return _DISCOVERED
 

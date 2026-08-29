@@ -10,10 +10,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from protein_selector.nodes.parameterize_ligand import parameterize_ligand
-from protein_selector.nodes.sanitize_ligand import sanitize_ligand
+from protein_selector.nodes.parameterize_ligand_node import (
+    ParameterizeLigandNode,
+    parameterize_ligand,
+)
+from protein_selector.nodes.sanitize_ligand_node import (
+    SanitizeLigandNode,
+    sanitize_ligand,
+)
+from protein_selector.nodes.select_dockable_node import SelectDockableNode
+from protein_selector.stages.base import Stage, StageContext, StageResult
 
-NODES = ("sanitize_ligand", "parameterize_ligand")
+_LEGACY_NODES = ("sanitize_ligand", "parameterize_ligand")
 
 
 def run(db_path: Path, force_refresh: bool = False) -> int:
@@ -32,3 +40,19 @@ def run(db_path: Path, force_refresh: bool = False) -> int:
     sanitize_ligand(smiles, db_path, force_refresh=force_refresh)
     parameterize_ligand(codes, smiles, db_path, force_refresh=force_refresh)
     return len(codes)
+
+
+class ChemistryStage(Stage):
+    """The phase card (PLAN.md §35f): which nodes travel together here.
+
+    The stage owns this list; nodes do not name their stage. A stage *is* a group
+    of nodes, so this is the side that should hold it -- declaring it on both
+    would be two sources of truth that drift.
+    """
+
+    name = "chemistry"
+    nodes = (SanitizeLigandNode, ParameterizeLigandNode, SelectDockableNode,)
+
+    def run(self, ctx: StageContext) -> StageResult:
+        """Run this phase via its module-level ``run`` (the implementation)."""
+        return StageResult(outputs={})

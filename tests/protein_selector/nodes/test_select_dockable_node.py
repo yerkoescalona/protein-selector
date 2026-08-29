@@ -9,8 +9,8 @@ from __future__ import annotations
 from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
-from protein_selector.nodes import select_dockable as select_dockable_module
-from protein_selector.nodes.select_dockable import select_dockable
+from protein_selector.nodes import select_dockable_node as select_dockable_module
+from protein_selector.nodes.select_dockable_node import select_dockable
 
 
 def test_keeps_only_candidates_with_a_dockable_ligand(monkeypatch):

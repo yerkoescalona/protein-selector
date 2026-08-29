@@ -10,18 +10,29 @@ from __future__ import annotations
 
 import logging
 
-from protein_selector.core.registry import Granularity, NodeSpec, table
+from protein_selector.core.registry import Granularity, table
+from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
-# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
-# wherever a socket name here matches one on another node. Nothing outside these
-# sockets may be read or written -- if it is not on the card, it does not exist.
-NODE = NodeSpec(
-    "parameterize_ligand",
-    stage="chemistry",
-    granularity=Granularity.BATCH,
-    inputs=(table("ligand_ccd_codes"), table("ligand_smiles")),
-    outputs=(table("meeko_parameterization"),),
-)
+
+class ParameterizeLigandNode(Node):
+    """The card (PLAN.md §35): what this node needs, what it gives.
+
+    A wire exists wherever a socket name here matches one on another node.
+    Nothing outside these sockets may be read -- ``ctx.get`` refuses the rest.
+    """
+
+    name = "parameterize_ligand"
+    granularity = Granularity.BATCH
+    inputs = (table("ligand_ccd_codes"), table("ligand_smiles"),)
+    outputs = (table("meeko_parameterization"),)
+
+    def run(self, ctx: NodeContext) -> NodeResult:
+        """Delegates to the module function, which stays the implementation."""
+        parameterize_ligand(
+            list(ctx.get("ligand_ccd_codes")), ctx.get("ligand_smiles"),
+            ctx.db_path, force_refresh=ctx.force_refresh,
+        )
+        return NodeResult(outputs={"meeko_parameterization": True})
 
 logger = logging.getLogger(__name__)
 

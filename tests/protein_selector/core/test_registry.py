@@ -50,16 +50,24 @@ class TestRegistryMatchesTheSchema:
         assert not unaccounted, f"tables no node claims to write: {sorted(unaccounted)}"
 
 
+def _node_modules() -> set[str]:
+    """Node modules, excluding the base class module."""
+    return {m.name for m in pkgutil.iter_modules(nodes_pkg.__path__) if m.name != "base"}
+
+
 class TestRegistryMatchesThePackage:
     def test_every_declared_node_has_a_module(self):
-        modules = {m.name for m in pkgutil.iter_modules(nodes_pkg.__path__)}
-        declared = {n.name for n in NODES}
-        assert declared <= modules, f"declared with no module: {sorted(declared - modules)}"
+        # PLAN.md §35f: a node lives in `<name>_node.py` and its class is `<Name>Node`.
+        declared = {f"{n.name}_node" for n in NODES}
+        assert declared <= _node_modules(), (
+            f"declared with no module: {sorted(declared - _node_modules())}"
+        )
 
     def test_every_node_module_is_declared(self):
-        modules = {m.name for m in pkgutil.iter_modules(nodes_pkg.__path__)}
-        declared = {n.name for n in NODES}
-        assert modules <= declared, f"module with no spec: {sorted(modules - declared)}"
+        declared = {f"{n.name}_node" for n in NODES}
+        assert _node_modules() <= declared, (
+            f"module with no node class: {sorted(_node_modules() - declared)}"
+        )
 
 
 class TestRegistryIsInternallyConsistent:
@@ -213,25 +221,38 @@ class TestGraphValidation:
 class TestCardsLiveOnTheNodes:
     """PLAN.md §35e: each node declares its own card; the registry only collects them."""
 
-    def test_every_node_module_declares_a_card(self):
-        import pkgutil
-
-        import protein_selector.nodes as pkg
-        from protein_selector.core.registry import BY_NAME
-
-        modules = {m.name for m in pkgutil.iter_modules(pkg.__path__)}
-        assert modules == set(BY_NAME), (
-            "every node module must define NODE, and every card must have a module"
-        )
-
-    def test_a_cards_name_matches_its_module_name(self):
+    def test_every_node_module_defines_exactly_one_node_class(self):
         import importlib
+        import inspect
+
+        from protein_selector.nodes.base import Node
+
+        for module_name in _node_modules():
+            module = importlib.import_module(f"protein_selector.nodes.{module_name}")
+            classes = [
+                obj for _, obj in inspect.getmembers(module, inspect.isclass)
+                if issubclass(obj, Node) and obj is not Node
+                and obj.__module__ == module.__name__
+            ]
+            assert len(classes) == 1, f"{module_name}: expected one Node class, got {classes}"
+
+    def test_a_class_name_matches_its_module_name(self):
+        import importlib
+        import inspect
 
         from protein_selector.core.registry import discover_nodes
+        from protein_selector.nodes.base import Node
 
         for spec in discover_nodes():
-            module = importlib.import_module(f"protein_selector.nodes.{spec.name}")
-            assert module.NODE.name == spec.name
+            module = importlib.import_module(f"protein_selector.nodes.{spec.name}_node")
+            cls = next(
+                obj for _, obj in inspect.getmembers(module, inspect.isclass)
+                if issubclass(obj, Node) and obj is not Node
+                and obj.__module__ == module.__name__
+            )
+            assert cls.name == spec.name
+            expected = "".join(part.title() for part in spec.name.split("_")) + "Node"
+            assert cls.__name__ == expected, f"{cls.__name__} should be {expected}"
 
     def test_collecting_the_graph_pulls_in_no_heavy_dependency(self):
         # This is the property that makes cards-on-nodes safe. Collecting imports all 14

@@ -65,7 +65,7 @@ def run(
     Delegates execution to the Ray runner rather than reimplementing the DAG -- the same
     nodes, the same store, the same resume-from-store semantics (§31a).
     """
-    from protein_selector.nodes.build_report import build_report
+    from protein_selector.nodes.build_report_node import build_report
     from protein_selector.runners.ray_runner import (
         RayPipelineConfig,
         run_pipeline_on_ray,

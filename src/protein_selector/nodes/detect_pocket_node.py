@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 
 from protein_selector.core.config import PocketDetectionConfig
-from protein_selector.core.registry import Granularity, NodeSpec, artifact, table
+from protein_selector.core.registry import Granularity, artifact, table
 from protein_selector.domain.docking.fpocket import (
     PocketDetectionResult,
     check_pocket_detected,
@@ -24,18 +24,29 @@ from protein_selector.domain.docking.store import (
 from protein_selector.domain.molecular_dynamics.openmm_md import (
     relaxed_structure_path,
 )
+from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
-# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
-# wherever a socket name here matches one on another node. Nothing outside these
-# sockets may be read or written -- if it is not on the card, it does not exist.
-NODE = NodeSpec(
-    "detect_pocket",
-    stage="validation",
-    granularity=Granularity.PER_CANDIDATE,
-    inputs=(artifact("relaxed_structure"),),
-    outputs=(table("pocket_detection"),),
-    needs_conda=True,
-)
+
+class DetectPocketNode(Node):
+    """The card (PLAN.md §35): what this node needs, what it gives.
+
+    A wire exists wherever a socket name here matches one on another node.
+    Nothing outside these sockets may be read -- ``ctx.get`` refuses the rest.
+    """
+
+    name = "detect_pocket"
+    granularity = Granularity.PER_CANDIDATE
+    inputs = (artifact("relaxed_structure"),)
+    outputs = (table("pocket_detection"),)
+    needs_conda = True
+
+    def run(self, ctx: NodeContext) -> NodeResult:
+        """Delegates to the module function, which stays the implementation."""
+        result = detect_pocket(
+            ctx.candidate(), ctx.config, ctx.db_path,
+            force_refresh=ctx.force_refresh,
+        )
+        return NodeResult(outputs={"pocket_detection": result})
 
 logger = logging.getLogger(__name__)
 

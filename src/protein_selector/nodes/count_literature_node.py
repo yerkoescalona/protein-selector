@@ -9,24 +9,33 @@ from __future__ import annotations
 
 import logging
 
-from protein_selector.core.registry import Granularity, NodeSpec, collection, table
+from protein_selector.core.registry import Granularity, collection, table
 from protein_selector.domain.bioinformatics.europe_pmc import fetch_literature_counts
 from protein_selector.domain.bioinformatics.store import (
     load_literature_counts,
     upsert_literature_counts,
 )
+from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
-# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
-# wherever a socket name here matches one on another node. Nothing outside these
-# sockets may be read or written -- if it is not on the card, it does not exist.
-NODE = NodeSpec(
-    "count_literature",
-    stage="annotation",
-    granularity=Granularity.BATCH,
-    inputs=(collection("survivors"),),
-    outputs=(table("literature"),),
-    needs_network=True,
-)
+
+class CountLiteratureNode(Node):
+    """The card (PLAN.md §35): what this node needs, what it gives.
+
+    A wire exists wherever a socket name here matches one on another node.
+    Nothing outside these sockets may be read -- ``ctx.get`` refuses the rest.
+    """
+
+    name = "count_literature"
+    granularity = Granularity.BATCH
+    inputs = (collection("survivors"),)
+    outputs = (table("literature"),)
+    needs_network = True
+
+    def run(self, ctx: NodeContext) -> NodeResult:
+        """Delegates to the module function, which stays the implementation."""
+        ids = [e.pdb_id for e in ctx.get("survivors")]
+        count_literature(ids, ctx.db_path, force_refresh=ctx.force_refresh)
+        return NodeResult(outputs={"literature": len(ids)})
 
 logger = logging.getLogger(__name__)
 

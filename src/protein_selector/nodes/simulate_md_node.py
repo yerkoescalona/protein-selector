@@ -12,7 +12,6 @@ import logging
 from protein_selector.core.config import MdSimulationConfig
 from protein_selector.core.registry import (
     Granularity,
-    NodeSpec,
     artifact,
     collection,
     table,
@@ -27,18 +26,29 @@ from protein_selector.domain.molecular_dynamics.openmm_md import (
     relaxed_structure_path,
     run_test_md,
 )
+from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
-# The card (PLAN.md §35): what this node needs, what it gives. A wire exists
-# wherever a socket name here matches one on another node. Nothing outside these
-# sockets may be read or written -- if it is not on the card, it does not exist.
-NODE = NodeSpec(
-    "simulate_md",
-    stage="validation",
-    granularity=Granularity.PER_CANDIDATE,
-    inputs=(table("candidates"), collection("dockable_ids", required=False)),
-    outputs=(table("validation"), artifact("relaxed_structure")),
-    needs_conda=True,
-)
+
+class SimulateMdNode(Node):
+    """The card (PLAN.md §35): what this node needs, what it gives.
+
+    A wire exists wherever a socket name here matches one on another node.
+    Nothing outside these sockets may be read -- ``ctx.get`` refuses the rest.
+    """
+
+    name = "simulate_md"
+    granularity = Granularity.PER_CANDIDATE
+    inputs = (table("candidates"), collection("dockable_ids", required=False),)
+    outputs = (table("validation"), artifact("relaxed_structure"),)
+    needs_conda = True
+
+    def run(self, ctx: NodeContext) -> NodeResult:
+        """Delegates to the module function, which stays the implementation."""
+        result = simulate_md(
+            ctx.candidate(), ctx.config, ctx.db_path,
+            force_refresh=ctx.force_refresh,
+        )
+        return NodeResult(outputs={"validation": result, "relaxed_structure": result})
 
 logger = logging.getLogger(__name__)
 
