@@ -16,13 +16,13 @@ from protein_selector.core.validation_result import (
     ValidationStatus,
 )
 from protein_selector.core.validation_store import upsert_validation_results
+from protein_selector.domain.structural_biology.models import CandidateEntry
+from protein_selector.domain.structural_biology.store import upsert_candidates
 from protein_selector.runners.ray_runner import (
     StagePlan,
     format_plan,
     plan_pipeline,
 )
-from protein_selector.structural_biology.models import CandidateEntry
-from protein_selector.structural_biology.store import upsert_candidates
 
 
 def _seed(db_path, n_candidates=3, uniprot=True):

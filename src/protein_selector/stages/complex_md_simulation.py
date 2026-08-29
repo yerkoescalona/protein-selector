@@ -16,7 +16,7 @@ from protein_selector.core.validation_store import (
     load_validation_results,
     upsert_validation_results,
 )
-from protein_selector.molecular_dynamics.complex_md_validation import (
+from protein_selector.domain.molecular_dynamics.complex_md_validation import (
     EXERCISE_NAME,
     complex_relaxed_structure_path,
     run_complex_md_validation,

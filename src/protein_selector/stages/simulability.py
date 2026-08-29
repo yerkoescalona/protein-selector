@@ -14,19 +14,21 @@ from __future__ import annotations
 
 import logging
 
-from protein_selector.stages.config import CandidateFilterConfig
-from protein_selector.structural_biology.candidates import CandidateEntry
-from protein_selector.structural_biology.composition import (
+from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.composition import (
     fetch_non_standard_residues,
     fetch_oligomeric_state,
 )
-from protein_selector.structural_biology.simulability import check_full_simulability
-from protein_selector.structural_biology.store import (
+from protein_selector.domain.structural_biology.simulability import (
+    check_full_simulability,
+)
+from protein_selector.domain.structural_biology.store import (
     upsert_candidates,
     upsert_entity_composition,
     upsert_oligomeric_state,
     upsert_simulability,
 )
+from protein_selector.stages.config import CandidateFilterConfig
 
 logger = logging.getLogger(__name__)
 

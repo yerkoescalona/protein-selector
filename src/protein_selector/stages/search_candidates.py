@@ -12,14 +12,14 @@ from __future__ import annotations
 import logging
 import random
 
-from protein_selector.stages.config import (
-    _RCSB_MAX_ATOMS_CEILING,
-    CandidateSearchConfig,
-)
-from protein_selector.structural_biology.candidates import (
+from protein_selector.domain.structural_biology.candidates import (
     CandidateEntry,
     fetch_entry_metadata,
     search_candidate_ids,
+)
+from protein_selector.stages.config import (
+    _RCSB_MAX_ATOMS_CEILING,
+    CandidateSearchConfig,
 )
 
 logger = logging.getLogger(__name__)

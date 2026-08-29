@@ -14,7 +14,8 @@ import logging
 from pathlib import Path
 
 from protein_selector.core.report import build_report_table
-from protein_selector.docking.store import load_ligand_ccd_codes
+from protein_selector.domain.docking.store import load_ligand_ccd_codes
+from protein_selector.domain.structural_biology.candidates import fetch_entry_metadata
 from protein_selector.stages.complex_md_simulation import (
     run_complex_md_simulation_stage,
 )
@@ -35,7 +36,6 @@ from protein_selector.stages.modeling import run_modeling_stage
 from protein_selector.stages.parameterizability import run_parameterizability_stage
 from protein_selector.stages.pocket_detection import run_pocket_detection_stage
 from protein_selector.stages.simulability import run_simulability_stage
-from protein_selector.structural_biology.candidates import fetch_entry_metadata
 
 logger = logging.getLogger(__name__)
 

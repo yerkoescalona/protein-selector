@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from protein_selector.structural_biology.candidates import ExperimentalMethod
+from protein_selector.domain.structural_biology.candidates import ExperimentalMethod
 
 _RCSB_MAX_ATOMS_CEILING = 50_000  # RCSB has no residue-count query field; this is a loose
 # safety ceiling on the search itself, not a pedagogical knob (see CandidateSearchConfig).

@@ -24,8 +24,8 @@ from protein_selector.core.report_schema import (
     _EXERCISE_ASSESSMENT_SUFFIXES,
     REPORT_COLUMNS,
 )
-from protein_selector.structural_biology.candidates import CandidateEntry
-from protein_selector.structural_biology.store import upsert_candidates
+from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.store import upsert_candidates
 
 _CANDIDATE = CandidateEntry(pdb_id="4HHB", title="Hemoglobin")
 

@@ -26,11 +26,11 @@ def run_meeko_stage(
     are fetched fresh via ``docking.ligands.fetch_smiles_for_ccd_codes``.
     """
     try:
-        from protein_selector.docking.ligands import fetch_smiles_for_ccd_codes
-        from protein_selector.docking.meeko_parameterization import (
+        from protein_selector.domain.docking.ligands import fetch_smiles_for_ccd_codes
+        from protein_selector.domain.docking.meeko_parameterization import (
             filter_meeko_parameterizable,
         )
-        from protein_selector.docking.store import (
+        from protein_selector.domain.docking.store import (
             load_meeko_parameterization,
             upsert_ligand_smiles,
             upsert_meeko_parameterization,

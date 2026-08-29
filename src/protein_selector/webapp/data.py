@@ -26,22 +26,22 @@ import pandas as pd
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.core.report import build_report_table, rows_to_dataframe
 from protein_selector.core.validation_store import load_validation_results
-from protein_selector.docking.docking_validation import (
+from protein_selector.domain.docking.docking_validation import (
     EXERCISE_NAME as DOCKING_EXERCISE,
 )
-from protein_selector.docking.store import (
+from protein_selector.domain.docking.store import (
     load_ligand_ccd_codes,
     load_meeko_parameterization,
     load_pocket_detection,
 )
-from protein_selector.modeling.modeling_validation import (
+from protein_selector.domain.modeling.modeling_validation import (
     EXERCISE_NAME as MODELING_EXERCISE,
 )
-from protein_selector.modeling.store import load_alphafold_entries
-from protein_selector.molecular_dynamics.md_validation import (
+from protein_selector.domain.modeling.store import load_alphafold_entries
+from protein_selector.domain.molecular_dynamics.md_validation import (
     EXERCISE_NAME as MD_SIMULATION_EXERCISE,
 )
-from protein_selector.structural_biology.store import load_candidates
+from protein_selector.domain.structural_biology.store import load_candidates
 
 
 def load_report_df(db_path: Path = DEFAULT_DB_PATH) -> pd.DataFrame:

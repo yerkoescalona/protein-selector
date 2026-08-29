@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from protein_selector.bioinformatics.store import load_literature_counts
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.core.difficulty import (
     ExerciseAssessment,
@@ -36,33 +35,36 @@ from protein_selector.core.validation_result import (
     ValidationStatus,
 )
 from protein_selector.core.validation_store import load_validation_results
-from protein_selector.docking.docking_validation import (
+from protein_selector.domain.bioinformatics.store import load_literature_counts
+from protein_selector.domain.docking.docking_validation import (
     EXERCISE_NAME as DOCKING_EXERCISE,
 )
-from protein_selector.docking.meeko_parameterization import MeekoParameterizationResult
-from protein_selector.docking.parameterizability import ParameterizabilityResult
-from protein_selector.docking.pocket import PocketDetectionResult
-from protein_selector.docking.store import (
+from protein_selector.domain.docking.meeko_parameterization import (
+    MeekoParameterizationResult,
+)
+from protein_selector.domain.docking.parameterizability import ParameterizabilityResult
+from protein_selector.domain.docking.pocket import PocketDetectionResult
+from protein_selector.domain.docking.store import (
     load_ligand_ccd_codes,
     load_ligand_smiles,
     load_meeko_parameterization,
     load_parameterizability,
     load_pocket_detection,
 )
-from protein_selector.modeling.alphafold_lookup import AlphaFoldEntry
-from protein_selector.modeling.modeling_validation import (
+from protein_selector.domain.modeling.alphafold_lookup import AlphaFoldEntry
+from protein_selector.domain.modeling.modeling_validation import (
     EXERCISE_NAME as MODELING_EXERCISE,
 )
-from protein_selector.modeling.store import load_alphafold_entries
-from protein_selector.molecular_dynamics.md_validation import (
+from protein_selector.domain.modeling.store import load_alphafold_entries
+from protein_selector.domain.molecular_dynamics.md_validation import (
     EXERCISE_NAME as MD_SIMULATION_EXERCISE,
 )
-from protein_selector.structural_biology.models import (
+from protein_selector.domain.structural_biology.models import (
     CandidateEntry,
     EntityCompositionInfo,
 )
-from protein_selector.structural_biology.simulability import SimulabilityResult
-from protein_selector.structural_biology.store import (
+from protein_selector.domain.structural_biology.simulability import SimulabilityResult
+from protein_selector.domain.structural_biology.store import (
     load_candidates,
     load_entity_composition,
     load_simulability,

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 
-from protein_selector.bioinformatics.literature import fetch_literature_counts
-from protein_selector.bioinformatics.store import (
+from protein_selector.domain.bioinformatics.literature import fetch_literature_counts
+from protein_selector.domain.bioinformatics.store import (
     load_literature_counts,
     upsert_literature_counts,
 )

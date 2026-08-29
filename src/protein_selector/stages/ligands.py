@@ -7,12 +7,12 @@ don't need to re-fetch SMILES for codes this stage already resolved.
 
 from __future__ import annotations
 
-from protein_selector.docking.ligands import (
+from protein_selector.domain.docking.ligands import (
     fetch_ligand_ccd_codes,
     fetch_smiles_for_ccd_codes,
 )
-from protein_selector.docking.store import upsert_ligand_ccd_codes
-from protein_selector.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.docking.store import upsert_ligand_ccd_codes
+from protein_selector.domain.structural_biology.candidates import CandidateEntry
 
 
 def run_ligands_stage(entries: list[CandidateEntry], db_path) -> dict[str, str | None]:

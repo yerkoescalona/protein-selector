@@ -10,20 +10,22 @@ import pytest
 
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
 from protein_selector.core.validation_store import upsert_validation_results
-from protein_selector.docking.docking_validation import (
+from protein_selector.domain.docking.docking_validation import (
     EXERCISE_NAME as DOCKING_EXERCISE,
 )
-from protein_selector.docking.meeko_parameterization import MeekoParameterizationResult
-from protein_selector.docking.pocket import PocketDetectionResult, PocketInfo
-from protein_selector.docking.store import (
+from protein_selector.domain.docking.meeko_parameterization import (
+    MeekoParameterizationResult,
+)
+from protein_selector.domain.docking.pocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.docking.store import (
     upsert_ligand_ccd_codes,
     upsert_meeko_parameterization,
     upsert_pocket_detection,
 )
-from protein_selector.modeling.alphafold_lookup import AlphaFoldEntry
-from protein_selector.modeling.store import upsert_alphafold_entry
-from protein_selector.structural_biology.candidates import CandidateEntry
-from protein_selector.structural_biology.store import upsert_candidates
+from protein_selector.domain.modeling.alphafold_lookup import AlphaFoldEntry
+from protein_selector.domain.modeling.store import upsert_alphafold_entry
+from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.store import upsert_candidates
 from protein_selector.webapp.data import candidate_graph, load_report_df
 
 

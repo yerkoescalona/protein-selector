@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import logging
 
-from protein_selector.docking.native_ligand import is_dockable_ligand_code
-from protein_selector.docking.store import (
+from protein_selector.domain.docking.native_ligand import is_dockable_ligand_code
+from protein_selector.domain.docking.store import (
     load_ligand_ccd_codes,
     load_meeko_parameterization,
 )

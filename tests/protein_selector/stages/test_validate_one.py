@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
+from protein_selector.domain.structural_biology.candidates import CandidateEntry
 from protein_selector.stages import validate_one as validate_one_module
 from protein_selector.stages.validate_one import run_validate_one_stage
-from protein_selector.structural_biology.candidates import CandidateEntry
 
 
 @pytest.fixture(autouse=True)

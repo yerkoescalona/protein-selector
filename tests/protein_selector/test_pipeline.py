@@ -13,8 +13,10 @@ import pytest
 import requests
 
 import protein_selector.pipeline as pipeline_module
-from protein_selector.docking.pocket import PocketDetectionResult, PocketInfo
-from protein_selector.modeling.alphafold_lookup import AlphaFoldEntry
+from protein_selector.domain.docking.pocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.modeling.alphafold_lookup import AlphaFoldEntry
+from protein_selector.domain.structural_biology.candidates import CandidateEntry
+from protein_selector.domain.structural_biology.composition import AssemblyInfo
 from protein_selector.pipeline import (
     CandidateFilterConfig,
     MdSimulationConfig,
@@ -22,8 +24,6 @@ from protein_selector.pipeline import (
     PocketDetectionConfig,
     run_pipeline,
 )
-from protein_selector.structural_biology.candidates import CandidateEntry
-from protein_selector.structural_biology.composition import AssemblyInfo
 
 _ENTRY = CandidateEntry(
     pdb_id="4HHB",
@@ -87,7 +87,7 @@ class TestRunPipelineAlwaysOnStages:
         assert rows[0].literature_count == 39
 
     def test_persists_ligand_ccd_and_parameterizability(self, db_path):
-        from protein_selector.docking.store import (
+        from protein_selector.domain.docking.store import (
             load_ligand_ccd_codes,
             load_parameterizability,
         )
@@ -105,7 +105,7 @@ class TestRunPipelineAlwaysOnStages:
         real_import = builtins.__import__
 
         def fake_import(name, *args, **kwargs):
-            if name == "protein_selector.docking.meeko_parameterization":
+            if name == "protein_selector.domain.docking.meeko_parameterization":
                 raise ImportError("simulated missing rdkit/meeko")
             return real_import(name, *args, **kwargs)
 
@@ -156,7 +156,7 @@ class TestRunPipelineAlwaysOnStages:
 
 class TestRunPipelineModelingLookup:
     def test_persists_alphafold_entry_and_validation_result(self, monkeypatch, db_path):
-        from protein_selector.modeling.store import load_alphafold_entries
+        from protein_selector.domain.modeling.store import load_alphafold_entries
 
         entry = AlphaFoldEntry(
             uniprot_accession="P69905",
@@ -213,7 +213,7 @@ class TestRunPipelineMdSimulation:
         assert rows[0].md_simulation.status == "not_run"
 
     def test_missing_conda_env_stops_gracefully(self, monkeypatch, db_path):
-        import protein_selector.molecular_dynamics.md_validation as md_validation_module
+        import protein_selector.domain.molecular_dynamics.md_validation as md_validation_module
 
         def fake_run_test_md(*args, **kwargs):
             raise ImportError("simulated missing openmm/pdbfixer")
@@ -245,8 +245,8 @@ class TestRunPipelineMdSimulation:
         entirely (never persisted as a `candidates` row, never reaches MD or
         any other stage) rather than reaching MD and failing there.
         """
-        import protein_selector.molecular_dynamics.md_validation as md_validation_module
-        from protein_selector.structural_biology.store import load_candidates
+        import protein_selector.domain.molecular_dynamics.md_validation as md_validation_module
+        from protein_selector.domain.structural_biology.store import load_candidates
 
         called = []
         monkeypatch.setattr(
@@ -264,7 +264,7 @@ class TestRunPipelineMdSimulation:
         assert load_candidates(db_path=db_path) == {}
 
     def test_candidate_within_max_residues_is_attempted(self, monkeypatch, db_path):
-        import protein_selector.molecular_dynamics.md_validation as md_validation_module
+        import protein_selector.domain.molecular_dynamics.md_validation as md_validation_module
         from protein_selector.core.validation_result import (
             ValidationResult,
             ValidationStatus,
@@ -288,7 +288,7 @@ class TestRunPipelineMdSimulation:
     def test_n_steps_and_max_minimization_iterations_are_passed_through(
         self, monkeypatch, db_path
     ):
-        import protein_selector.molecular_dynamics.md_validation as md_validation_module
+        import protein_selector.domain.molecular_dynamics.md_validation as md_validation_module
         from protein_selector.core.validation_result import (
             ValidationResult,
             ValidationStatus,

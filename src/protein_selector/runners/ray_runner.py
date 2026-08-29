@@ -116,14 +116,14 @@ def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
     of ligand-free candidates, and fixing it needs a per-candidate "ligands were resolved"
     marker the store does not currently keep.
     """
-    from protein_selector.bioinformatics.store import load_literature_counts
     from protein_selector.core.validation_store import load_validation_results
-    from protein_selector.docking.store import (
+    from protein_selector.domain.bioinformatics.store import load_literature_counts
+    from protein_selector.domain.docking.store import (
         load_ligand_ccd_codes,
         load_meeko_parameterization,
         load_parameterizability,
     )
-    from protein_selector.structural_biology.store import (
+    from protein_selector.domain.structural_biology.store import (
         load_candidates,
         load_simulability,
     )
@@ -147,7 +147,7 @@ def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
     # (stages.docking_common.resolve_docking_target), so the plan can never disagree with
     # what would actually run -- the reason that predicate was centralised in the first
     # place (PLAN.md §17a).
-    from protein_selector.docking.native_ligand import is_dockable_ligand_code
+    from protein_selector.domain.docking.native_ligand import is_dockable_ligand_code
 
     meeko = load_meeko_parameterization(db_path)
     dockable = {
@@ -200,7 +200,9 @@ def resolve_entries(pdb_ids: list[str], db_path: Path):
     """
     if not pdb_ids:
         return []
-    from protein_selector.structural_biology.candidates import fetch_entry_metadata
+    from protein_selector.domain.structural_biology.candidates import (
+        fetch_entry_metadata,
+    )
 
     return fetch_entry_metadata(pdb_ids)
 
@@ -247,12 +249,12 @@ def run_pipeline_on_ray(
     config = config or RayPipelineConfig()
 
     # Imported inside the function so the module imports without the heavy stage chain.
+    from protein_selector.domain.structural_biology.store import load_candidates
     from protein_selector.stages.ligands import run_ligands_stage
     from protein_selector.stages.literature import run_literature_stage
     from protein_selector.stages.modeling import run_modeling_stage
     from protein_selector.stages.search_candidates import run_search_candidates_stage
     from protein_selector.stages.simulability import run_simulability_stage
-    from protein_selector.structural_biology.store import load_candidates
 
     if not ray.is_initialized():
         ray.init(num_cpus=num_cpus, logging_level=logging.WARNING, include_dashboard=False)
@@ -355,8 +357,8 @@ def run_pipeline_on_ray(
     @ray.remote
     def _chemistry(_ligands_done: int) -> int:
         """RDKit sanitization + Meeko parameterization over every persisted CCD code."""
-        from protein_selector.docking.ligands import fetch_smiles_for_ccd_codes
-        from protein_selector.docking.store import (
+        from protein_selector.domain.docking.ligands import fetch_smiles_for_ccd_codes
+        from protein_selector.domain.docking.store import (
             load_ligand_ccd_codes,
             load_ligand_smiles,
         )

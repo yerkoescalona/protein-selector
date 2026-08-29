@@ -53,11 +53,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from protein_selector.core.db import DEFAULT_DB_PATH, connect
-from protein_selector.structural_biology.candidates import (
+from protein_selector.domain.structural_biology.candidates import (
     fetch_entry_metadata,
     search_candidate_ids,
 )
-from protein_selector.structural_biology.composition import (
+from protein_selector.domain.structural_biology.composition import (
     fetch_non_standard_residues,
     fetch_oligomeric_state,
 )

@@ -85,6 +85,13 @@ environment-validation.yml              A SECOND, conda-only environment for the
                                 usable pip release, see its header comment. Not managed
                                 by uv/pyproject.toml.
 src/protein_selector/
+  domain/                       **The science library the nodes call (PLAN.md §34).**
+                                One package per discipline; each holds adapters (one
+                                external tool each), validators (-> ValidationResult) and
+                                a store. Nested under `domain/` since §34 so the tree
+                                states the tier rather than a CONTEXT.md paragraph doing
+                                it. Dependency arrow is one-way:
+                                pipelines -> stages -> nodes -> domain -> core.
   core/                         Cross-domain infrastructure, not biology:
                                  db.py (SQLite connection + full schema, all tables),
                                  validation_result.py (an earlier revision named this file with a numeric stage
@@ -98,7 +105,7 @@ src/protein_selector/
                                  output, PLAN.md §7b), paths.py (shared per-candidate
                                  structure directory layout under `cache/structures/`,
                                  PLAN.md §22c)
-  structural_biology/            models.py (PLAN.md §27d W1.2, added 2026-08-23:
+  domain/structural_biology/            models.py (PLAN.md §27d W1.2, added 2026-08-23:
                                  dependency-free CandidateEntry/ExperimentalMethod/
                                  AssemblyInfo/EntityCompositionInfo dataclasses -- moved
                                  here from candidates.py/composition.py because
@@ -115,9 +122,9 @@ src/protein_selector/
                                  from models.py, not candidates.py/composition.py, to stay
                                  network-free), store.py (persistence for this domain's
                                  tables; same models.py-not-candidates.py import choice)
-  bioinformatics/                literature.py (Europe PMC evidence count, complete),
+  domain/bioinformatics/                literature.py (Europe PMC evidence count, complete),
                                  store.py
-  docking/                       parameterizability.py + meeko_parameterization.py +
+  domain/docking/                       parameterizability.py + meeko_parameterization.py +
                                  ligands.py + pocket.py (parameterizability ligand chemistry, nearly
                                  complete — needs the `validate` extra), store.py, plus
                                  the ex04 docking validator: vina_docking.py (real Vina
@@ -155,7 +162,7 @@ src/protein_selector/
                                  explicitly; re-verify before trusting a real run (PLAN.md
                                  §17g). `receptor_prep.py` (`obabel -xr` wrapper producing
                                  the Vina-ready receptor PDBQT ex04 needed and didn't have).
-  molecular_dynamics/            md_validation.py (ex03 MD validator, needs
+  domain/molecular_dynamics/            md_validation.py (ex03 MD validator, needs
                                  `environment-validation.yml`, NOT the `validate` extra) +
                                  openff_parameterization.py (OpenFF ligand parameterization
                                  for the *OpenMM* force field, so ex03 can eventually
@@ -169,7 +176,7 @@ src/protein_selector/
                                  complex_md_validation.py (GAFF2/AMBER receptor+ligand
                                  complex MD, needs `ambertools` in the conda env, PLAN.md
                                  §24).
-  modeling/                      ex02 validator: alphafold_lookup.py (fetch-only —
+  domain/modeling/                      ex02 validator: alphafold_lookup.py (fetch-only —
                                  `fetch_alphafold_entry` calls the real AlphaFold DB REST
                                  API, live-verified; deliberately never runs a new
                                  AlphaFold prediction, deliberately doesn't attempt full
@@ -179,7 +186,7 @@ src/protein_selector/
                                  FailureMode.COMPLETENESS, too-low-confidence →
                                  FailureMode.CONFIDENCE), store.py (persists
                                  `alphafold_entries`, keyed by `uniprot_accession`).
-  protein_design/                **Planned, not yet created, deferred past v0.**
+  domain/protein_design/                **Planned, not yet created, deferred past v0.**
                                  Mutation-focused work (RFdiffusion/ProteinMPNN-adjacent —
                                  matches the parent course repo's lecture 12 territory).
                                  Kept separate from `modeling/` even though both touch

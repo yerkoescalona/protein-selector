@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import logging
 
-from protein_selector.docking.pocket import PocketDetectionResult, check_pocket_detected
-from protein_selector.docking.store import (
+from protein_selector.domain.docking.pocket import (
+    PocketDetectionResult,
+    check_pocket_detected,
+)
+from protein_selector.domain.docking.store import (
     load_pocket_detection,
     upsert_pocket_detection,
 )
-from protein_selector.molecular_dynamics.md_validation import relaxed_structure_path
+from protein_selector.domain.molecular_dynamics.md_validation import (
+    relaxed_structure_path,
+)
 from protein_selector.stages.config import PocketDetectionConfig
 
 logger = logging.getLogger(__name__)

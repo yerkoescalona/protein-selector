@@ -16,14 +16,14 @@ from protein_selector.core.validation_store import (
     load_validation_results,
     upsert_validation_results,
 )
-from protein_selector.modeling.alphafold_lookup import fetch_alphafold_entry
-from protein_selector.modeling.modeling_validation import (
+from protein_selector.domain.modeling.alphafold_lookup import fetch_alphafold_entry
+from protein_selector.domain.modeling.modeling_validation import (
     EXERCISE_NAME as MODELING_EXERCISE,
 )
-from protein_selector.modeling.modeling_validation import run_modeling_validation
-from protein_selector.modeling.store import upsert_alphafold_entry
+from protein_selector.domain.modeling.modeling_validation import run_modeling_validation
+from protein_selector.domain.modeling.store import upsert_alphafold_entry
+from protein_selector.domain.structural_biology.candidates import CandidateEntry
 from protein_selector.stages.config import ModelingLookupConfig
-from protein_selector.structural_biology.candidates import CandidateEntry
 
 logger = logging.getLogger(__name__)
 

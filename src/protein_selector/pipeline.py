@@ -34,11 +34,6 @@ from pathlib import Path
 import requests
 from tqdm.auto import tqdm
 
-from protein_selector.bioinformatics.literature import fetch_literature_counts
-from protein_selector.bioinformatics.store import (
-    load_literature_counts,
-    upsert_literature_counts,
-)
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.core.difficulty import ScoringWeights
 from protein_selector.core.report import (
@@ -51,39 +46,46 @@ from protein_selector.core.validation_store import (
     load_validation_results,
     upsert_validation_results,
 )
-from protein_selector.docking.ligands import (
+from protein_selector.domain.bioinformatics.literature import fetch_literature_counts
+from protein_selector.domain.bioinformatics.store import (
+    load_literature_counts,
+    upsert_literature_counts,
+)
+from protein_selector.domain.docking.ligands import (
     fetch_ligand_ccd_codes,
     fetch_smiles_for_ccd_codes,
 )
-from protein_selector.docking.parameterizability import filter_parameterizable
-from protein_selector.docking.pocket import check_pocket_detected
-from protein_selector.docking.store import (
+from protein_selector.domain.docking.parameterizability import filter_parameterizable
+from protein_selector.domain.docking.pocket import check_pocket_detected
+from protein_selector.domain.docking.store import (
     load_parameterizability,
     load_pocket_detection,
     upsert_ligand_ccd_codes,
     upsert_parameterizability,
     upsert_pocket_detection,
 )
-from protein_selector.modeling.alphafold_lookup import fetch_alphafold_entry
-from protein_selector.modeling.modeling_validation import (
+from protein_selector.domain.modeling.alphafold_lookup import fetch_alphafold_entry
+from protein_selector.domain.modeling.modeling_validation import (
     EXERCISE_NAME as MODELING_EXERCISE,
 )
-from protein_selector.modeling.modeling_validation import run_modeling_validation
-from protein_selector.modeling.store import upsert_alphafold_entry
-from protein_selector.molecular_dynamics.md_validation import (
+from protein_selector.domain.modeling.modeling_validation import run_modeling_validation
+from protein_selector.domain.modeling.store import upsert_alphafold_entry
+from protein_selector.domain.molecular_dynamics.md_validation import (
     EXERCISE_NAME as MD_SIMULATION_EXERCISE,
 )
-from protein_selector.structural_biology.candidates import (
+from protein_selector.domain.structural_biology.candidates import (
     ExperimentalMethod,
     fetch_entry_metadata,
     search_candidate_ids,
 )
-from protein_selector.structural_biology.composition import (
+from protein_selector.domain.structural_biology.composition import (
     fetch_non_standard_residues,
     fetch_oligomeric_state,
 )
-from protein_selector.structural_biology.simulability import check_full_simulability
-from protein_selector.structural_biology.store import (
+from protein_selector.domain.structural_biology.simulability import (
+    check_full_simulability,
+)
+from protein_selector.domain.structural_biology.store import (
     upsert_candidates,
     upsert_entity_composition,
     upsert_oligomeric_state,
@@ -364,10 +366,10 @@ def run_pipeline(
     # be raised (meeko_parameterization.py's own pre-flight check, added for the
     # same reason -- see its docstring).
     try:
-        from protein_selector.docking.meeko_parameterization import (
+        from protein_selector.domain.docking.meeko_parameterization import (
             filter_meeko_parameterizable,
         )
-        from protein_selector.docking.store import (
+        from protein_selector.domain.docking.store import (
             load_meeko_parameterization,
             upsert_meeko_parameterization,
         )
@@ -446,7 +448,7 @@ def run_pipeline(
         )
 
     if md_simulation.enabled:
-        from protein_selector.molecular_dynamics.md_validation import run_test_md
+        from protein_selector.domain.molecular_dynamics.md_validation import run_test_md
 
         already_md_validated = (
             set() if force_refresh else set(load_validation_results(MD_SIMULATION_EXERCISE, db_path).keys())

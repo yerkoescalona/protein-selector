@@ -14,7 +14,7 @@ from protein_selector.core.validation_store import (
     load_validation_results,
     upsert_validation_results,
 )
-from protein_selector.molecular_dynamics.md_validation import (
+from protein_selector.domain.molecular_dynamics.md_validation import (
     EXERCISE_NAME,
     relaxed_structure_path,
     run_test_md,

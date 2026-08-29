@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from protein_selector.core.validation_result import ValidationResult, ValidationStatus
-from protein_selector.structural_biology.models import CandidateEntry
+from protein_selector.domain.structural_biology.models import CandidateEntry
 
 
 @dataclass

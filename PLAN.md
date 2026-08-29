@@ -21,6 +21,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§34** | **Target structure (2026-08-29): pipelines / stages / nodes / domain.** A code-organization taxonomy, orthogonal to the runner. Fixes a ~2,445-call double AFDB fetch and §25g's layering inversion on the way. Work order in §34e. |
 | **§33** | **Snakemake removed (2026-08-29).** Y.1 (slow lanes under Ray, conda-env driver) and Y.2 (both runners produce byte-identical stores) both passed first. 961 lines of orchestration → 643; 2,830 marker files gone. Open cost: Y.4, the SLURM shape. |
 | **§32** | **Run status board (2026-08-29).** The liveness view the store structurally cannot provide — which step is running, which *failed* (a failure persists no row), and per-step timing. Board is a view, never an authority. |
 | **§31** | **Ray runner built and live-verified (2026-08-29).** S4.2 gate passed — the store is a strict superset of the marker files. Cheap lane runs on Ray Core in 7.3 s with zero markers. Snakefile untouched; retirement gated on Y.2. |
@@ -2069,3 +2070,117 @@ same stage functions. Only the *runbook* parts died with the Snakefile's docstri
       Snakemake gone the case for retiring it is stronger, not weaker. *Done when:* its 17
       tests and `notebooks/run_real_pipeline.ipynb` are migrated onto the runner or the
       stage functions.
+
+## 34. Target structure: pipelines / stages / nodes / domain (2026-08-29)
+
+A three-level orchestration taxonomy, adopted at the user's request and matched to a
+fourth, explicitly-named library tier.
+
+| level | folder | named by | examples |
+|---|---|---|---|
+| **Pipeline** | `pipelines/` | the outcome — *why* you run it | `course_candidates`, `single_pdb` |
+| **Stage** | `stages/` | the phase — *where* you are | `screening`, `validation` |
+| **Node** | `nodes/` | verb + thing — *what* it does | `dock_ligand`, `simulate_md` |
+| **Domain** | `domain/` | the discipline — the library nodes call | `docking/`, `molecular_dynamics/` |
+
+**This is a code-organization convention, not an executor feature.** Ray Core has exactly
+two primitives, tasks and actors; it has no notion of a stage or a pipeline (and
+`ray.workflow`, which never provided this either, is deprecated — §30c). The taxonomy is
+therefore *orthogonal to the runner*, which is the point: it survives a runner swap, the
+same reason §29d put the contract outside the engine.
+
+### 34a. Why the discipline folders get nested
+
+The first draft of this section left `structural_biology/`, `docking/`,
+`molecular_dynamics/` etc. as siblings of `nodes/`/`stages/`/`pipelines/`, with the tier
+distinction explained in `CONTEXT.md` prose. **That was wrong, and the objection is the
+repo's own Layer 0:** *"filesystem structure does the orchestration."* Encoding a tier in
+prose while the tree says otherwise contradicts the methodology this repo is built on.
+The five disciplines move under `domain/`, so the tree *is* the taxonomy.
+
+Cost measured, not guessed: **258 import references across 70 files** — a pure path
+rewrite with no logic change, verified by the gate. Deliberately distinguished from the
+kind of change that caused §34's sibling regression (`load` vs `fetch`, a behaviour
+change): a rename sweep and a semantics change carry very different risk.
+
+### 34b. The tree
+
+```
+src/protein_selector/
+├── pipelines/   course_candidates · single_pdb · demo_slice · recompute_docking
+├── stages/      screening · annotation · chemistry · validation · reporting
+├── nodes/       search_candidates · check_simulability · resolve_ligands · count_literature
+│               lookup_alphafold · sanitize_ligand · parameterize_ligand · select_dockable
+│               detect_pocket · simulate_md · resolve_docking_targets · dock_ligand
+│               simulate_complex_md · build_report
+├── domain/
+│     structural_biology/  rcsb_search · rcsb_composition · models · validation · store
+│     bioinformatics/      europe_pmc · store
+│     modeling/            alphafold_db · validation · store
+│     molecular_dynamics/  openmm_md · amber_complex · openff · pymol_align · validation · store
+│     docking/             vina · plip · fpocket · meeko_ligand · rdkit_ligand · obabel_prep
+│                          rcsb_pdb_file · ligands · native_ligand · target · validation · store
+├── core/        db · paths · runs · validation_result · validation_store · difficulty
+│               calibration · report · report_schema · config · registry
+├── runners/     ray_runner · status_board
+└── webapp/
+```
+
+### 34c. The rule that keeps tiers clean
+
+```
+pipelines → stages → nodes → domain → core          (runners execute a pipeline)
+```
+
+| tier | may import | may NOT |
+|---|---|---|
+| adapter (`vina.py`, `alphafold_db.py`) | one external tool, `core/` | the DB, other adapters, `ValidationResult` |
+| validator (`validation.py`) | its own adapters, `core.validation_result` | the DB, other domains |
+| store | `core.db` | adapters, validators |
+| node | one validator + one store + `core.config` | another node |
+| stage | nodes | validators, adapters |
+| pipeline | stages | nodes directly |
+
+Import lines become self-documenting — the tier is readable from the path alone, which is
+exactly what is missing today.
+
+### 34d. Real defects this fixes, beyond tidiness
+
+- **A double AlphaFold fetch, ~2,445 redundant HTTP calls.** `stages/modeling.py` fetches
+  the AFDB record, then calls `run_modeling_validation`, which fetches *the same record
+  again*. Nobody writes that deliberately; it happens when "who owns fetching" is unstated.
+  Under the rule above it cannot recur: node → validator → adapter, once.
+- **§25g's layering inversion**, for free: `stages/docking_common.py` becomes
+  `domain/docking/target.py`, so `molecular_dynamics/` stops reaching up into `stages/`.
+- **`md_validation.py` (322 lines) is two things at once** — the OpenMM wrapper *and* the
+  pass/fail decision — while `modeling/` and `docking/` split them. Same concept, three
+  shapes. The split makes all three consistent.
+- **`validate_one` is a pipeline living in `stages/`** — the taxonomy catches it.
+- **`pipeline.py` (530 lines, legacy)** becomes redundant and can finally go (§33e Y.5).
+- **`core/registry.py`** makes the structure enforceable rather than aspirational: a drift
+  test asserts every node declares a real stage and real tables, exactly as
+  `report_schema.py` already guards column names (§7b).
+
+### 34e. Order of work
+
+- [x] **N.1** (2026-08-29) `domain/` created; `structural_biology`, `bioinformatics`,
+      `docking`, `molecular_dynamics`, `modeling` moved under it via `git mv` (history
+      preserved), and all **258 import references across 70 files** rewritten by one sed
+      per module path. `tests/protein_selector/` mirrored the same way, keeping the
+      1:1-with-src convention. `.claude/CLAUDE.md`'s layout tree and `CONTEXT.md`'s
+      routing paths updated. **Done when verified:** zero un-nested
+      `protein_selector.<discipline>` references remain and zero `domain.domain`
+      double-nestings were introduced; ruff/ty clean; **428 passed, 2 skipped**; and three
+      real functional checks -- `make demo` (300 rows), `make calibration`, and
+      `make ray-plan` against the live 2,540-candidate store -- all still work.
+- [ ] **N.2** `pipelines/` + `core/registry.py`, additive; move `validate_one`.
+      *Done when:* `course_candidates` runs the same DAG the runner runs today.
+- [ ] **N.3** Fix the double AFDB fetch. *Done when:* one fetch per candidate, asserted.
+- [ ] **N.4** `stages/` → `nodes/`, one node per commit, verb+thing names.
+      *Done when:* 97 `run_*_stage` references are gone and the gate is green.
+- [ ] **N.5** Role split (adapter / validator / store) inside each domain folder, one
+      discipline per commit. *Done when:* every domain has the same three-role shape.
+- [ ] **N.6** Re-add `stages/` as thin phase groupings; delete `pipeline.py`.
+      *Done when:* §33e Y.5 is closed.
+- [ ] **N.7** Registry drift test. *Done when:* renaming a table without updating its node
+      spec fails `pytest`.

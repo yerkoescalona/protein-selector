@@ -11,8 +11,10 @@ from __future__ import annotations
 import requests
 
 from protein_selector.core.validation_result import FailureMode
-from protein_selector.docking.meeko_parameterization import MeekoParameterizationResult
-from protein_selector.docking.pocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.docking.meeko_parameterization import (
+    MeekoParameterizationResult,
+)
+from protein_selector.domain.docking.pocket import PocketDetectionResult, PocketInfo
 from protein_selector.stages import docking_common as docking_common_module
 from protein_selector.stages.docking_common import resolve_docking_target
 

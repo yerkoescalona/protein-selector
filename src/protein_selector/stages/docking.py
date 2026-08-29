@@ -22,15 +22,17 @@ from protein_selector.core.validation_store import (
     load_validation_results,
     upsert_validation_results,
 )
-from protein_selector.docking.docking_validation import (
+from protein_selector.domain.docking.docking_validation import (
     EXERCISE_NAME,
     ligand_comparison_pdb_path,
     run_docking_validation,
     write_ligand_comparison_pml,
 )
-from protein_selector.docking.native_ligand import prepare_ligand_pdbqt
-from protein_selector.docking.receptor_prep import prepare_receptor_pdbqt
-from protein_selector.molecular_dynamics.md_validation import relaxed_structure_path
+from protein_selector.domain.docking.native_ligand import prepare_ligand_pdbqt
+from protein_selector.domain.docking.receptor_prep import prepare_receptor_pdbqt
+from protein_selector.domain.molecular_dynamics.md_validation import (
+    relaxed_structure_path,
+)
 from protein_selector.stages.config import DockingConfig
 from protein_selector.stages.docking_common import resolve_docking_target
 
