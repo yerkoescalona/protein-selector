@@ -6,6 +6,14 @@ VALIDATION_ENV ?= $(HOME)/miniconda3/envs/protein-selector-validation
 #     make ray-watch RAY_PYTHON=$(VALIDATION_ENV)/bin/python
 RAY_PYTHON ?= ./.venv/bin/python
 
+# The environment `make check`'s three steps run in. Pinned explicitly, and identically
+# across lint/typecheck/test, for two reasons: `uv run` re-syncs whenever the flags change,
+# so differing flags between targets would rebuild the venv on every `make check`; and a
+# bare `uv run` resolves against whatever the venv happens to contain, which made
+# `ty check` pass locally (a venv with the ray group) while failing in CI (without it).
+# `--group ray` is here because src/protein_selector/runners/ imports ray at module level.
+CHECK_ENV ?= --extra validate --group ray
+
 .PHONY: env test coverage lint typecheck check serve demo calibration ray-plan ray-run ray-graph ray-status ray-head ray-head-validation ray-stop ray-watch provenance clean
 
 # Base env + the validate extra (rdkit/meeko/...) + the webapp deps group --
@@ -15,17 +23,17 @@ env:
 	uv sync --extra validate --group webapp --group ray
 
 test:
-	uv run --extra validate pytest -q
+	uv run $(CHECK_ENV) pytest -q
 
 # PLAN.md §27d W5.3: a coverage baseline, not a target -- see pyproject.toml's dev group.
 coverage:
-	uv run --extra validate pytest -q --cov=protein_selector --cov-report=term-missing
+	uv run $(CHECK_ENV) pytest -q --cov=protein_selector --cov-report=term-missing
 
 lint:
-	uv run ruff check .
+	uv run $(CHECK_ENV) ruff check .
 
 typecheck:
-	uv run ty check
+	uv run $(CHECK_ENV) ty check
 
 # The full pre-commit gate this repo's .claude/CLAUDE.md calls for, run
 # together, in the same order.

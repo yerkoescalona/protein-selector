@@ -25,8 +25,15 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Sync (base + validate extra + dev group, no conda)
-        run: uv sync --extra validate
+      # `--group ray` matters: src/protein_selector/runners/ imports ray at module level,
+      # so without it `ty check` fails with 6 unresolved-import errors while every other
+      # step still passes. That is exactly how this workflow broke when the Ray runner
+      # landed, and it went unnoticed because a local venv built by `make env` HAS the
+      # group. `make check` now pins the same set (Makefile's CHECK_ENV), so local and CI
+      # resolve identically. Still no conda: openff-toolkit/ambertools remain conda-only
+      # and the two tests needing them skip gracefully.
+      - name: Sync (base + validate extra + ray group + dev group, no conda)
+        run: uv sync --extra validate --group ray
 
       - name: Lint (ruff)
         run: uv run ruff check .
