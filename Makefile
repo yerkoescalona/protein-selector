@@ -1,4 +1,4 @@
-VALIDATION_ENV ?= /home/yerko/miniconda3/envs/protein-selector-validation
+VALIDATION_ENV ?= $(HOME)/miniconda3/envs/protein-selector-validation
 
 # Which interpreter the ray-* CLIENT targets use. Ray requires a driver to match the
 # cluster's Python EXACTLY, patch included (PLAN.md §37b), so when the head was started

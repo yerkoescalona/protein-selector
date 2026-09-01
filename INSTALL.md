@@ -55,7 +55,7 @@ other.
 uv sync                      # base deps: requests, pandas, biopython, rcsb-api
 uv sync --extra validate     # + parameterizability stack (rdkit, meeko, openmm,
                               #   openmmforcefields -- these ARE pip-installable)
-uv sync --group workflow     # + Snakemake, needed to run the pipeline as a DAG
+uv sync --group ray          # + Ray, needed to run the pipeline as a DAG
 uv sync --group notebook     # + Jupyter, only if you want the db_explorer notebooks
 uv sync --group webapp       # + Dash, only if you want the interactive DB view
 ```
@@ -78,14 +78,12 @@ builds) — and ambertools supplies the `sqm` binary behind AM1-BCC charges, so 
 reaches the numbers. The pinned set is a transcript of a working Colab-built env; see that
 file's header for the full table and for how to move to newer versions deliberately.
 
-**Snakemake's `--sdm conda` needs a real `conda`/`mamba` binary — `micromamba` alone is not
-enough for THAT.** Snakemake shells out to the literal `conda`/`mamba` CLI (live-discovered,
-this repo, 2026-07-18). If you only have `micromamba`, install Miniconda/Miniforge alongside
-it; you don't have to remove micromamba, just have `conda` on `PATH` too.
-**But for simply *creating* this env, `micromamba` works fine** — verified on Colab
-(2026-08-02), where `micromamba create -f environment-validation.yml` built the complete
-environment successfully. The limitation above is specific to Snakemake's conda frontend,
-not to the env itself.
+**`micromamba` alone is now sufficient (updated 2026-09-01).** An earlier revision of this
+section required a real `conda`/`mamba` binary, because Snakemake's `--sdm conda` frontend
+shelled out to the literal CLI. Snakemake was removed on 2026-08-29 (PLAN.md §33) and the Ray
+runner has no conda frontend at all: it simply runs under whichever interpreter you launch it
+with. Creating the env with `micromamba` was already verified on Colab (2026-08-02), where
+`micromamba create -f environment-validation.yml` built it completely.
 
 **Build incrementally, not via `environment-validation.yml`'s one-shot solve.** A full
 `conda env create -f environment-validation.yml` in one command has OOM-killed a 15 GB
@@ -130,20 +128,43 @@ conda create -p <prefix> --file environment-validation.lock.txt   # exact rebuil
   `conda`/Snakemake to read back correctly later — always use `conda install` (or `conda
   install --freeze-installed`) on this env, even though `micromamba` is faster.
 
-Register it in `workflow/config.yaml`'s `validation_conda_prefix` (defaults to
-`~/miniconda3/envs/protein-selector-validation` — change if yours lives elsewhere).
+Point the tooling at it. There is no longer a config key for this (`validation_conda_prefix`
+went away with Snakemake): the env is selected by whichever driver launches the run.
 
-### 3. The one PATH gotcha that will otherwise cost you an hour
+- `make`: `VALIDATION_ENV` at the top of the `Makefile`, defaulting to
+  `$HOME/miniconda3/envs/protein-selector-validation`. Override per invocation with
+  `make ray-head-validation VALIDATION_ENV=/path/to/env`.
+- SLURM: `PS_ENV` in `slurm/run_pipeline.sbatch`.
 
-**Always prepend `PATH="$HOME/miniconda3/bin:$PATH"` (or wherever your conda lives) when
-invoking Snakemake with `--sdm conda` through `uv run`.** Without it, `uv run`'s own venv
-activation silently wins a `PATH`-ordering race against Snakemake's conda activation — every
-`conda:`-gated rule then runs under the **wrong Python** (the base `uv` venv's, which has
-`openmm` but not `openff-toolkit`/`ambertools`/`pdbfixer`/`vina`), and every job fails with a
-misleading `ModuleNotFoundError` that looks like a real chemistry/parametrization problem,
-not an invocation bug (live-discovered 2026-07-21, cost real debugging time). Every `make
-workflow-*` target in `README.md` already has this baked in — if you ever invoke `snakemake
---sdm conda` directly instead of via `make`, always include this prefix.
+### 3. The two gotchas that will otherwise cost you an hour
+
+Both are live-discovered, both fail in ways that do not look like the actual cause, and the
+`make` targets and `slurm/run_pipeline.sbatch` already have both baked in. They bite when you
+invoke things by hand.
+
+**a. Put the validation env's `bin/` on PATH, not just its interpreter.** Naming the conda
+env's `python` is enough for `import openmm` / `import vina` / `import rdkit`, because those
+are packages. It is *not* enough for `obabel` and `fpocket`, which are called as binaries. A
+missing validator binary is a per-candidate **skip** by design (PLAN.md §16b), not a crash, so
+the whole docking lane dies quietly and the job still exits 0. Live-discovered under `sbatch`
+(§39b): 91 candidates silently skipped with `obabel binary not found on PATH`.
+
+```bash
+export PATH="$HOME/miniconda3/envs/protein-selector-validation/bin:$PATH"
+```
+
+**b. Never launch the Ray runner through `uv run`.** Invoke the interpreter directly
+(`./.venv/bin/python scripts/run_ray_pipeline.py ...`). `uv run` exports `VIRTUAL_ENV`, which
+makes Ray's worker bootstrap re-sync a fresh project venv inside its session directory. That
+venv is built from the default dependencies and therefore lacks the optional `ray` group, so
+every worker dies with `ModuleNotFoundError: No module named 'ray'` (live-discovered
+2026-08-29).
+
+A related constraint: **Ray requires the cluster and every driver to run the exact same Python
+version, patch included.** This repo's venv is on 3.12.14 and the validation conda env on
+3.12.13, so a slow-lane driver cannot attach to a head started from the venv. Use
+`make ray-head` for cheap-lane runs and `make ray-head-validation` for runs including
+md/dock/complex_md.
 
 ---
 
@@ -195,6 +216,11 @@ else that only needed rdkit/meeko/openmm now passes.
 
 ### 3. `workflow` / `notebook` / `webapp` groups
 
+> **Superseded (2026-08-29):** the `workflow` group held Snakemake and was removed with it
+> (PLAN.md §33); the command below now errors with `Group 'workflow' is not defined`. The
+> equivalent today is `uv sync --extra validate --group ray --group notebook --group webapp`.
+> Left as written because this is a dated log of what was actually run.
+
 ```bash
 uv sync --extra validate --group workflow --group notebook --group webapp
 ```
@@ -204,9 +230,9 @@ stacks). `ruff check .` and `pytest -q` still pass identically to step 2 (354/2)
 
 ### 4. System-level packages
 
-- **`sqlite3` CLI** — not present. Needs `sudo apt install sqlite3`; **not run** by
-  Claude in this session (no passwordless sudo available) — run manually if you need the
-  "Exploring results" `sqlite3` query step.
+- **`sqlite3` CLI** — not present. Needs `sudo apt install sqlite3`; **not run** during this
+  log (no passwordless sudo available) — run it manually if you want the "Exploring results"
+  query step.
 - **conda/mamba** — not present. Installed Miniconda (latest) to `~/miniconda3`,
   non-interactively (`-b -p`), no root needed.
 

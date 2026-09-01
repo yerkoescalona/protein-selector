@@ -115,7 +115,7 @@ _PLAN_ENTRY_OF_NODE = {
 
 
 def _relaxed_structures_exist(db_path: Path) -> bool:
-    """Has any MD-relaxed receptor been written? (the ARTIFACT socket, §35b)
+    """Has any MD-relaxed receptor been written (the ARTIFACT socket, §35b)?
 
     Artifact sockets are files, not tables, so a table-count check can never see them --
     which made every downstream node read as "waiting on relaxed_structure" even when

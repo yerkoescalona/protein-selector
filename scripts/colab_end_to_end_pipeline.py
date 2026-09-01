@@ -7,10 +7,9 @@
 #
 # **PDB 2PK4** (human plasminogen Kringle 4, 80 residues -- the smallest protein in this
 # repo's own real 38-row "passed md_simulation + docking + complex_md_simulation" table,
-# `scripts/candidates_table_2026-07-20.md` row 1), bound to **ACA**
+# reproducible with `scripts/course_candidates.sql`), bound to **ACA**
 # (6-aminohexanoic acid / epsilon-aminocaproic acid, a real antifibrinolytic drug, not a
-# crystallization artifact -- see `scripts/candidate_assignment_priority_2026-07-22.md`
-# group A). Chosen deliberately, not live-searched: a random hard-filters hit very often
+# crystallization artifact). Chosen deliberately, not live-searched: a random hard-filters hit very often
 # has no real dockable ligand (most bound "non-polymer entities" are buffer/cryoprotectant
 # artifacts -- `docking/native_ligand.py`'s `_EXCLUDED_CCD_CODES` denylist exists for
 # exactly this reason), and this repo's own anti-hallucination rule forbids inventing a
@@ -46,61 +45,30 @@ DB_PATH_STR = "colab_run/protein_selector_colab_test.db"  # clearly separate fro
 # %% [markdown]
 # ## Part A, cell 1: get this repo onto the Colab filesystem
 #
-# `protein-selector` is a private repo (confirmed: anonymous GitHub API access returns
-# 404) -- Colab cannot `pip install git+https://...` it without credentials. This cell
-# DOES something instead of just describing options: if `GITHUB_TOKEN` (below) is set, it
-# clones directly; otherwise, in Colab, it opens a real upload picker right here and
-# extracts whatever zip you give it. Either way you end up with `REPO_DIR` populated, no
-# extra cell to write yourself.
+# `protein-selector` is a public repo, so this is a plain anonymous clone: no token, no
+# credentials, no upload step. Set `REPO_REF` to pin a tag or commit if you want this
+# notebook to keep running against one fixed revision.
 #
-# `GITHUB_TOKEN`: a GitHub fine-grained PAT (github.com -> Settings -> Developer settings
-# -> Personal access tokens) scoped to read-only access on `yerkoescalona/protein-selector`
-# specifically. Paste it directly into the Colab cell (not into this file -- never commit
-# a token). Leave it as `None` to use the upload picker instead.
+# If you are running this file OUTSIDE Colab (VS Code, a local Jupyter) and already have a
+# checkout, point `REPO_DIR` at it and the clone is skipped.
 
 # %%
-GITHUB_TOKEN: str | None = None  # paste your PAT here IN COLAB, don't commit a real value
+REPO_URL = "https://github.com/yerkoescalona/protein-selector.git"
+REPO_REF: str | None = None  # e.g. "v0.1.0" or a commit SHA; None = default branch
 
 # %%
 import subprocess
-import zipfile
 from pathlib import Path
 
 REPO_DIR = Path("protein-selector")
 
 if not REPO_DIR.exists():
-    try:
-        from google.colab import files
-
-        IN_COLAB = True
-    except ImportError:
-        IN_COLAB = False
-
-    if GITHUB_TOKEN:
-        subprocess.run(
-            [
-                "git", "clone",
-                f"https://{GITHUB_TOKEN}@github.com/yerkoescalona/protein-selector.git",
-                str(REPO_DIR),
-            ],
-            check=True,
-        )
-        print(f"Cloned into {REPO_DIR}/")
-    elif IN_COLAB:
-        print(
-            "No GITHUB_TOKEN set -- opening an upload picker. On your OWN machine first:\n"
-            "  cd protein-selector && zip -r /tmp/protein-selector.zip . "
-            "-x '.venv/*' '.git/*' 'cache/*'\n"
-            "then pick /tmp/protein-selector.zip in the widget that just appeared below."
-        )
-        uploaded = files.upload()  # blocks until you actually pick a file in the Colab UI
-        zip_name = next(iter(uploaded))
-        zipfile.ZipFile(zip_name).extractall(REPO_DIR)
-        print(f"Extracted into {REPO_DIR}/")
-    else:
-        raise FileNotFoundError(
-            f"{REPO_DIR} not found and not running in Colab -- point REPO_DIR at your local checkout."
-        )
+    subprocess.run(["git", "clone", "--depth", "1", REPO_URL, str(REPO_DIR)], check=True)
+    if REPO_REF:
+        # A shallow clone has only the default branch, so fetch the pinned ref explicitly.
+        subprocess.run(["git", "fetch", "--depth", "1", "origin", REPO_REF], cwd=REPO_DIR, check=True)
+        subprocess.run(["git", "checkout", "FETCH_HEAD"], cwd=REPO_DIR, check=True)
+    print(f"Cloned into {REPO_DIR}/" + (f" at {REPO_REF}" if REPO_REF else ""))
 else:
     print(f"Found {REPO_DIR}, proceeding.")
 

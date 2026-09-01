@@ -1,4 +1,4 @@
-"""Does the whole thing hold together? (PLAN.md §37)
+"""Does the whole thing hold together (PLAN.md §37)?
 
 Every other test file checks one piece. This one checks that the pieces still *fit*: that
 the registry, the node cards, the stage membership, the pipelines, the graph checker, the

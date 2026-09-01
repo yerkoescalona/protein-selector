@@ -2,7 +2,7 @@
 
 ## Problem 1 — "organic" ligand filter is too permissive
 
-`src/protein_selector/docking/native_ligand.py::pick_largest_organic_ligand` defines
+`src/protein_selector/domain/docking/native_ligand.py::pick_largest_organic_ligand` defines
 "organic" as "passed Meeko parameterization." Small polyatomic crystallization ions
 (nitrate NO3, sulfate SO4, phosphate PO4, etc.) have real covalent bonds, so they pass
 Meeko's chemistry checks even though they aren't meaningful biological ligands. Confirmed

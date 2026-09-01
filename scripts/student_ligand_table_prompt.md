@@ -66,7 +66,7 @@ table-wide warnings belong, not repeated in every row's column 9.
    `ligand_ccd_codes` lists every non-polymer entity in the deposited structure, including
    crystallization additives and ions — NOT what the pipeline picked to dock. Cross-check
    `meeko_parameterization` (`passed=1`) for the specific CCD codes present; the pipeline's
-   `pick_largest_organic_ligand` (see `src/protein_selector/docking/native_ligand.py`)
+   `pick_largest_organic_ligand` (see `src/protein_selector/domain/docking/native_ligand.py`)
    picks the largest Meeko-passing one. If a candidate has 2+ Meeko-passing ligands, or the
    HETATM list shows a code that failed Meeko, call this out explicitly in the table — this
    is exactly the kind of mistake a student will otherwise make (e.g. `186L` has both `HED`

@@ -22,15 +22,14 @@ max_residues: 200
 max_resolution: 3.0
 
 # Slow lane (PLAN.md §16b) -- ON by default as of 2026-07-19: both the MD and docking
-# validators are now fully built, live-verified, and their conda env complete (PLAN.md
-# §17e/§18/§19) -- a plain `snakemake --cores N --sdm conda` invocation (`make workflow`)
-# now exercises the WHOLE pipeline (cheap lane + MD + docking) with no extra `--config`
-# flags needed. Still needs a real conda/mamba binary on PATH (Snakemake's
-# `--sdm conda`/`--use-conda` frontend requires the literal `conda`/`mamba` CLI --
-# `micromamba` alone does NOT satisfy it, live-discovered 2026-07-18) plus `--sdm conda`
-# passed on the command line -- without it, `conda:`-gated rules just run in the base env
-# and correctly fail loudly (missing binaries), never silently skip. Set back to `false`
-# (or pass `--config run_md=false` on the CLI) for a cheap-lane-only run.
+# validators are fully built, live-verified, and their conda env complete (PLAN.md
+# §17e/§18/§19), so `make ray-run` exercises the WHOLE pipeline (cheap lane + MD +
+# docking) with no extra flags. It must be DRIVEN from the validation conda env, whose
+# `bin/` has to be on PATH and not merely its interpreter: openmm/vina/rdkit are imported
+# as packages, but obabel and fpocket are called as binaries, and a missing binary is a
+# per-candidate skip by design (§16b), not a crash, so the lane quietly does nothing
+# instead of failing loudly. See `slurm/run_pipeline.sbatch` for the exact incantation.
+# Set to `false` for a cheap-lane-only run, which needs no conda env at all.
 run_md: true
 restrict_md_to_dockable: true  # scripts/ligand_filter_fix_brief.md, Problem 3 -- turned
 # on 2026-07-19 to cut real compute: of the 280-candidate sim shortlist, only ~52 ever
@@ -47,8 +46,11 @@ restrict_md_to_dockable: true  # scripts/ligand_filter_fix_brief.md, Problem 3 -
 # `--config restrict_md_to_dockable=false` for one run) -- nothing about the fix is
 # destructive, already-persisted `validation` rows for previously-run candidates are
 # untouched either way.
-# Points Snakemake's `conda:` directive at an already-built env prefix (skip
-# env creation) -- built via `conda`, NOT `environment-validation.yml`'s own
+# NOTE: the `validation_conda_prefix` key this block used to document was removed with the
+# Snakemake layer (§33). The validation env is now selected by the driver you launch the
+# run with: `VALIDATION_ENV` in the Makefile, `PS_ENV` in `slurm/run_pipeline.sbatch`.
+# The build advice below still applies to creating that env.
+# Build it via `conda`, NOT via `environment-validation.yml`'s own
 # "one shot, all ten packages" solve: that monolithic solve was tried twice
 # on this machine and both times drove available RAM under 1GB before being
 # killed (real, live-discovered, not a guess -- conda-forge's own solver

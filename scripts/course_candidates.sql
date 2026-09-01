@@ -7,14 +7,16 @@
 -- receptor+ligand GAFF2/AMBER complex MD (exercise="complex_md_simulation",
 -- PLAN.md §23a -- off by default, uncomment the cmd.status filter below).
 --
--- Run against cache/protein_selector.db, e.g.:
+-- Runs against the committed demo slice with no setup at all (88 rows there):
+--   sqlite3 -header -column demo/protein_selector_demo.db < scripts/course_candidates.sql
+-- or against a real run's own store:
 --   sqlite3 -header -column cache/protein_selector.db < scripts/course_candidates.sql
 --
 -- Excludes (see protein-selector/.claude/CLAUDE.md "Bugs found via live
 -- verification" -- this list is a judgment call, not derived from any schema
 -- field, so revisit it by hand if the course's definition of "real ligand"
 -- changes). **Kept in sync by hand with
--- src/protein_selector/docking/native_ligand.py::_EXCLUDED_CCD_CODES** (one is
+-- src/protein_selector/domain/docking/native_ligand.py::_EXCLUDED_CCD_CODES** (one is
 -- SQL, one is Python, no shared source -- re-verify both stay identical if
 -- either changes):
 --   * crystallization additives / cryoprotectants (SO4, GOL, EDO, PEG, ...)
@@ -74,5 +76,5 @@ LEFT JOIN validation cmd    ON cmd.pdb_id = c.pdb_id AND cmd.exercise = 'complex
 WHERE s.passed = 1
   AND md.status = 'success'          -- comment out to include not-yet-simulated candidates
   AND dock.status = 'success'        -- full-pipeline-confirmed candidates (comment out for a looser tier)
-  AND cmd.status = 'success'         -- ALSO require complex-MD success (used to build scripts/candidates_table_2026-07-20.md's 2026-07-22 revision, 38 rows)
+  AND cmd.status = 'success'         -- ALSO require complex-MD success (the 38-row full-pipeline tier)
 ORDER BY c.n_residues ASC;

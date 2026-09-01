@@ -18,6 +18,8 @@ I go?"
 | Manual live-API performance diagnostics | `scripts/benchmark_pipeline.py` | Not a pytest test — see its own docstring. |
 | Running the pipeline as a resumable/parallel DAG, adding a stage to the run graph, the cheap-lane/slow-lane split | `src/protein_selector/runners/` + `scripts/run_ray_pipeline.py` | PLAN.md §31–§33. A plain Python DAG on Ray Core: `ray_runner.py` (the graph), `status_board.py` (live per-step view, §32). Resume comes from the store, not from marker files (§31a). `workflow/config.yaml` still holds run config; `make ray-plan` / `make ray-run` / `make ray-status`. **Snakemake was removed 2026-08-29** (§33) after the two runners were shown to produce identical stores; §15–§22 remain valid as *design rationale*, not as a runbook. |
 | The overall design, layer rationale, open decisions, verification status | `PLAN.md` | The authoritative design doc. Read before any architectural change. |
+| Anything a stranger reads first: what the tool is, the zero-setup demo, how to run it | `README.md` | **The public entry point.** This repo is public, so the README is the face of the project, not an internal note. Every command and number in it must be verified against the working tree before it lands: it is the one file where a stale claim is seen by everyone. |
+| The committed demo slice, or `make demo` / `make calibration` output | `demo/` + `scripts/build_demo_slice.py` | A real 300-candidate sample of the store, committed as an explicit `.gitignore` exception so a fresh clone has something real to run with no network and no conda. CI regenerates both artifacts and fails on any diff, so they cannot silently go stale. |
 
 ## Why there's no per-domain `CONTEXT.md` yet (Layer 2, no longer blocked, not yet done)
 
@@ -31,6 +33,20 @@ report work): each domain folder's `CONTEXT.md` should specify Inputs (which ups
 table it reads, now concretely enumerable from `core/report.py`'s own imports), Process
 (what it checks/fetches), Outputs (which table it writes). Until that follow-up happens,
 this file and `PLAN.md`'s per-stage sections carry that information in prose.
+
+## Public repository: what must never be committed here
+
+This repo is **public**. The course repo that consumes its output is private, and that
+asymmetry is deliberate: the *tool* is generic and shareable, while the *specific candidate
+assignments for a given cohort* are teaching material.
+
+Already enforced by `.gitignore`, and worth stating so it is not undone by accident:
+
+- `cache/` (the real accumulated store) and `results/` (per-run shortlists, candidate id
+  samples, dated assignment tables) are **not tracked**. The only committed data is the demo
+  slice under `demo/`.
+- Nothing here should carry student names, cohort assignments, or grading material. It has
+  never held any; keep it that way.
 
 ## Repository boundary reminder
 

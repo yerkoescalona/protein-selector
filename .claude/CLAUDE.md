@@ -33,6 +33,16 @@ This repo was extracted from the course repo's `exercises/scripts/` (a git submo
 the lecture repo). It is independent: no import of, or dependency on, the course repo or
 `exercises/`.
 
+**This repository is public.** The course repo that consumes its output is private; this one
+is not. Two consequences that govern every change here:
+
+1. `README.md` is the project's public face, not an internal note. Every command and number
+   in it is verified against the working tree before it lands, and CI regenerates the demo
+   and calibration artifacts on every push so the committed evidence cannot go stale.
+2. Never commit cohort-specific teaching material: `cache/` and `results/` stay gitignored,
+   and the only committed data is the `demo/` slice. See `CONTEXT.md`'s "Public repository"
+   section.
+
 **Repository boundary — do not mix content.** This is a fully standalone git repository
 (own `.git`), not a submodule of the parent lecture repo — the parent repo's `git status`
 shows this directory as untracked, by design. Never read `../PLAN.md` or
@@ -327,7 +337,7 @@ the external tool to be installed.
 ## Testing
 
 Tests live in `tests/`, mirroring `src/protein_selector/`'s structure file-for-file:
-`src/protein_selector/structural_biology/rcsb_search.py` →
+`src/protein_selector/domain/structural_biology/rcsb_search.py` →
 `tests/protein_selector/structural_biology/test_rcsb_search.py`, etc. Add tests alongside
 new modules as they're written, not as a separate later pass.
 
