@@ -7,9 +7,9 @@
 -- receptor+ligand GAFF2/AMBER complex MD (exercise="complex_md_simulation",
 -- PLAN.md §23a -- off by default, uncomment the cmd.status filter below).
 --
--- Runs against the committed demo slice with no setup at all (88 rows there):
---   sqlite3 -header -column demo/protein_selector_demo.db < scripts/course_candidates.sql
--- or against a real run's own store:
+-- Run against whichever store you have (a single `make demo` run will rarely have
+-- anything passing every filter -- this query is built for an accumulated store):
+--   sqlite3 -header -column demo/demo_run.db < scripts/course_candidates.sql
 --   sqlite3 -header -column cache/protein_selector.db < scripts/course_candidates.sql
 --
 -- Excludes (see protein-selector/.claude/CLAUDE.md "Bugs found via live

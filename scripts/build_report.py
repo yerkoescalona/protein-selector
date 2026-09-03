@@ -11,8 +11,9 @@ for the regression test that locks it in).
 
 Usage:
     uv run python scripts/build_report.py                 # cache/protein_selector.db -> report.csv
-    uv run python scripts/build_report.py --db-path demo/protein_selector_demo.db \\
-        --out demo/report_demo.csv
+    uv run python scripts/build_report.py --db-path demo/demo_run.db --out /tmp/report.csv
+    uv run python scripts/build_report.py --db-path cache/protein_selector.db \\
+        --out results/report.csv
 """
 
 from __future__ import annotations

@@ -24,9 +24,10 @@ needed at this tool's scale.
   reproduces PLAN.md §27a's numbers exactly, by construction, and is why S1.1's own
   "Done when" check is "reproduces the §27a baselines within 20%" -- it is the same query.
 
-Every run appends one row per lane to ``docs/benchmark_history.csv`` (tracked in git, not
-gitignored like ``results/``) so throughput is visible over time, not just at the moment
-someone happens to look.
+Every run appends one row per lane to ``results/benchmark_history.csv`` so throughput is
+visible over time, not just at the moment someone happens to look. That file used to be a
+tracked ``.gitignore`` exception; it is per-run output now, like everything else in
+``results/``, so keep your own copy if you care about the history.
 
 This is NOT a pytest test (deliberately not under tests/): it's a manual diagnostic to
 re-run whenever you want to re-check real-world performance, e.g. after an RCSB API change,

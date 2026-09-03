@@ -44,18 +44,12 @@ jobs:
       - name: Test (pytest)
         run: uv run pytest -q
 
-      # PLAN.md §28 D.3. The zero-setup demo and the calibration study are the two
-      # artifacts §26.4 says never to cut, and until now nothing checked them: a schema
-      # change could leave the committed evidence stale and CI stayed green. Both
-      # regenerate from the committed demo slice with base deps only (no conda, no
-      # network), and both are deterministic (calibration's bootstrap takes a fixed
-      # seed), so a diff here is real drift, not flake.
-      - name: Demo artifact is reproducible and in sync
-        run: |
-          make demo
-          git diff --exit-code demo/report_demo.csv
-
-      - name: Calibration study is reproducible and in sync
-        run: |
-          make calibration
-          git diff --exit-code docs/calibration_study.md
+      # The demo is a live, random pipeline run now (scripts/demo_run.py), so there is no
+      # committed artifact to diff and nothing here is byte-reproducible by design. The two
+      # checks that used to live here guarded a committed slice of the real store; that
+      # slice was removed because it shipped answers for candidates the course assigns.
+      # The invariant that replaced it is enforced by tests/protein_selector/
+      # test_no_committed_answers.py, which runs as part of the pytest step above.
+      #
+      # `make demo` is deliberately NOT run in CI: it depends on RCSB being up and on a
+      # random draw, so it would fail for reasons unrelated to the change under test.

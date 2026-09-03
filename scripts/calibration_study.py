@@ -15,7 +15,7 @@ reading the committed output, not just asserted in prose.
 Usage:
     uv run python scripts/calibration_study.py                                    # demo slice
     uv run python scripts/calibration_study.py --db-path cache/protein_selector.db \\
-        --out docs/calibration_study.md
+        --out results/calibration_study.md
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from pathlib import Path
 from protein_selector.core.calibration import ExerciseCalibration, calibrate_exercise
 from protein_selector.core.report import _EXERCISE_FIELDS, build_report_table
 
-_DEFAULT_DB_PATH = Path("demo/protein_selector_demo.db")
-_DEFAULT_OUT_PATH = Path("docs/calibration_study.md")
+_DEFAULT_DB_PATH = Path("cache/protein_selector.db")
+_DEFAULT_OUT_PATH = Path("results/calibration_study.md")
 
 # Known, structural (not measured-this-run) caveats per exercise -- PLAN.md §27b A8 /
 # §27d W3.1-W3.2. Kept as an explicit map so a reader sees exactly why a given AUC is or
