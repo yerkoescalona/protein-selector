@@ -13,7 +13,32 @@ The single-PDB workflow audit that motivated this rebuild is **§22** (new).
 
 ---
 
-## Status index (2026-08-23)
+## Open work (generated 2026-09-02)
+
+Every open item in this file, in one place. Regenerate with `make plan-index`;
+the source of truth is the `- [ ]` boxes in the sections themselves, each
+carrying its own `Done when:` check. **82 open, 77 done.**
+
+| Section | Open | Items |
+|---|---|---|
+| §17 | 1 | Docking NOT yet live-verified since §20's box change |
+| §22 | 6 | Wire `force_refresh` through the Snakemake scripts., Investigate checkpoint `--forcerun` staleness (§22.3)., MD false-positive stability (§18)., Decide the PLIP gate., Live re-verification debt (§20, §17g)., Per-domain `CONTEXT.md` (ICM Layer 2). |
+| §25 | 8 | `core/db.py`, `molecular_dynamics/complex_md_validation.py` has no test file at all, The remaining ~14 thin stage wrappers, Coverage tooling, `store.py` upsert boilerplate., One layering inversion., `scripts/colab_standalone_2pk4.py` (844 lines), Emoji-prefixed log messages |
+| §27 | 20 | W1.3, W2.4, W5.1, S2.1, S2.2, S2.3, S2.4, S2.5, S4.1, S4.2, S4.3, S4.4, S6.1, S6.2, S6.3, W4.1, W4.2, W4.3, W4.4, W4.5 |
+| §28 | 6 | B.5, B.6, C.2, C.3, C.5, D.2 |
+| §29 | 10 | O.1, O.2, O.3, O.4, O.5, S.1, S.2, S.3, S.4, S.5 |
+| §30 | 7 | R.1, R.2, R.3, R.4, R.5, R.6, R.4 (revised, deferred) |
+| §31 | 4 | Y.1, Y.2, Y.3, Y.4 |
+| §32 | 3 | Z.1, Z.2, Z.3 |
+| §33 | 2 | Y.4, Y.5 |
+| §34 | 1 | N.8 |
+| §35 | 2 | P.4, P.7 |
+| §36 | 2 | D.5, D.6 |
+| §37 | 2 | I.3, I.4 |
+| §38 | 2 | C.4, C.5 |
+| §39 | 4 | S.4, S.5, S.6, S.7 |
+
+## Section map
 
 **Open work in this file is checkable.** Every actionable item is a `- [ ]` box carrying its
 own `Done when:` check; completed work is collapsed to a one-line record with `- [x]`. Count
@@ -32,7 +57,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 | **§31** | **Ray runner built and live-verified (2026-08-29).** S4.2 gate passed — the store is a strict superset of the marker files. Cheap lane runs on Ray Core in 7.3 s with zero markers. Snakefile untouched; retirement gated on Y.2. |
 | **§30** | **Execution engine for the design-scale workload (2026-08-29).** **§30e: hardware resolved as SLURM, which demotes Ray** in favour of Snakemake's SLURM executor + sharding (both already planned). `ray.workflow` is deprecated (verified). Polars/Arrow/Spark/Nextflow rejected with measured numbers. Sequencing in §30d/§30e. |
 | **§29** | **Workflow audit + the stage contract (2026-08-29).** Is Snakemake used well, can a run be observed, and what is a stage's declared input/output? **§29e's P1 (observability) runs ahead of §28 Gate C** -- instrument before the B.5 recompute, not after. |
-| **§28** | **(2026-08-28)** Measurement-validity audit → refined plan (Gates A–E). It **withdraws §27d S2.4** and puts a new "validate the docking label" gate ahead of §27d Phase 3. Full detail: `docs/audit-2026-08-28.md`. |
+| **§28** | **(2026-08-28)** Measurement-validity audit → refined plan (Gates A–E). It **withdraws §27d S2.4** and puts a new "validate the docking label" gate ahead of §27d Phase 3. Full detail in the 2026-08-28 audit (git history). |
 | §27d | The previous task list — Phases 0–2 are the completed record; Phases 3–5 are superseded in priority by §28's Gates B–E (Phase 4/5 content itself stands). |
 | §27b | Assumptions register (A1–A13): basis, test, consequence. Test one before building on it. |
 | §27a | Measured baselines and the command behind each. Re-measure after any task that could move them. |
@@ -40,7 +65,6 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 | §25b, §25f, §25g | Presentation cleanup: loose files, test gaps, optional refactors. |
 | §26 | Why adoption is the framing, and findings F1–F10. |
 | §1–§21, §23, §24 | Design rationale and shipped decisions. Reference material, not work. |
-| `docs/plan-completed-log.md` | **Full records of every finished task.** Completed work is one line here and unabridged there (§25d's migration-not-deletion rule, applied to this file). |
 
 Section numbers are **never** reused or renumbered — 168 `§N` citations in `src/`,
 `.claude/CLAUDE.md`, `CONTEXT.md`, `docs/` and `scripts/` resolve against them (§25d).
@@ -328,8 +352,8 @@ real run. `dock_validate` fans out over it exactly like `md_validate` over `shor
 ### 17g. Verification status
 
 - [x] Full repo gate clean (329 passed, 2 skipped).
-- [ ] **Docking NOT yet live-verified since §20's box change** — this sandbox has no
-      fpocket/vina/obabel/plip binaries. Re-verify the self-dock RMSD distribution before
+- [ ] **Docking NOT yet live-verified since §20's box change** — the environment these notes
+      were written in has no fpocket/vina/obabel/plip binaries. Re-verify the self-dock RMSD distribution before
       trusting `docking_quality` failure counts. `dock_exhaustiveness` must NOT be lowered
       for speed (produces false failures, poisons the measured-difficulty gap).
 
@@ -577,7 +601,7 @@ OpenFF molecule," both fixed and only relevant if this code is touched again:**
 ## 25. Pre-presentation cleanup (2026-08-08 audit → work plan)
 
 The repo is about to be shown to other people as a work sample. A full code-quality and
-architecture audit (`docs/code-audit-2026-08-08.md`) found the engineering itself sound —
+architecture audit (2026-08-08) found the engineering itself sound —
 the layering claims hold in the code, `ruff`/`ty` are clean, `pytest` is 334 passed / 2
 skipped (both skips are expected conda-only guards), the append/upsert-only DB rule is
 actually enforced (zero `DROP`/`DELETE`/`TRUNCATE`/`unlink` in `src/`), and the
@@ -733,7 +757,7 @@ resolving to a real section on the right topic; `docking_common.py` and `validat
 tested. (Pre-existing uncommitted files in the working tree at the start of this pass —
 `README.md`, `environment-validation.yml`, `pyproject.toml`, `structure_alignment.py`,
 `uv.lock`, the `scripts/colab_*`/`requirements-colab*` files — are unrelated in-flight
-work the user asked to leave alone; "clean tree" is not a gate for this pass.)
+work, deliberately left alone; "clean tree" is not a gate for this pass.)
 
 ## 26. Adoption readiness (2026-08-22 audit → work plan)
 
@@ -1121,8 +1145,8 @@ architecture — it is catching up to a validated one.
       now links and describes it (two-part structure, Part B's conda-restart caveat).
       **Left unchecked, on principle:** the done-when bar explicitly
       requires it to "run top-to-bottom on a fresh Colab runtime" -- an external,
-      interactive verification (opening Colab, uploading/running cells) this sandbox has
-      no way to perform (no Colab/GPU access, no browser). Documented and linked
+      interactive verification (opening Colab, uploading/running cells) that cannot be
+      performed from a headless environment (no Colab/GPU access, no browser). Documented and linked
       (verifiable); **actually executing it on Colab is a real open step for a human**,
       not something to claim done without doing it -- matches this repo's own
       anti-hallucination discipline (§11: never assert a live-verified fact without
@@ -1142,7 +1166,7 @@ architecture — it is catching up to a validated one.
       numpy/scipy, so make calibration keeps W1's zero-setup guarantee) +
       scripts/calibration_study.py (--db-path/--out, reads the report via
       core.report.build_report_table, same pattern as build_report.py) + make calibration,
-      writing the committed docs/calibration_study.md.
+      writing the calibration study.
 - [x] **W3.2** (2026-08-23) acted on the calibration per exercise: modeling and docking
       predictors **retired** (AUC 0.532/1.000, neither discriminating), md_simulation kept (AUC
       0.589). No re-fit was possible — every alternative also crossed 0.5.
@@ -1153,10 +1177,10 @@ architecture — it is catching up to a validated one.
       `github.com/yerkoescalona/protein-selector`) both added and YAML-validated
       (`yaml.safe_load` round-trips cleanly). **Left open, on principle, same discipline
       as W1.3's Colab step:** a tagged release, a GitHub release, and a Zenodo deposition
-      are each a real action against the user's own GitHub/Zenodo accounts (`git tag` +
-      `git push --tag`, then linking the repo in Zenodo's UI) -- this sandbox has no such
-      access and no destructive/external-facing git operation (a push, a tag push) should
-      happen without the user's explicit go-ahead per this session's own operating rules.
+      are each a real action against the maintainer's own GitHub/Zenodo accounts (`git tag` +
+      `git push --tag`, then linking the repo in Zenodo's UI). No destructive or
+      external-facing git operation (a push, a tag push) happens without an explicit
+      go-ahead, per this repo's own operating rules.
       *Done when (full):* a DOI resolves to the tagged tree -- not yet true; `LICENSE`/
       `CITATION.cff` existing is a real, checkable subset of W5.1, not the whole task.
 - [x] **W5.2** (2026-08-23) New .github/workflows/ci.yml: uv sync --extra validate (no --group
@@ -1264,7 +1288,7 @@ per-stage tractability verdict with a stamped provenance row behind every number
 **This is the working list.** It supersedes §27d Phases 3–5 in priority (their content
 stands; their ordering does not). Same rules as §27: a task is not done until its
 `Done when:` check passes, and completed work collapses to `- [x]` with the evidence.
-Evidence appendix with the full measurements: `docs/audit-2026-08-28.md`.
+Evidence appendix with the full measurements: the 2026-08-28 audit (see git history).
 
 **A different question from §25 and §26.** §25 asked "does this read well as a work
 sample"; §26 asked "would an outsider adopt it". §28 asks **"do the numbers mean what the
@@ -1329,7 +1353,7 @@ always `None`.
 `pdb_id`; `demo/report_demo.csv` comes out `101M, 103L, 105M, …`. `suitable_for` is a
 filter and `tier` is a label; neither orders the table.
 
-**F-E (high) — the credibility artifacts contain no evidence.** `docs/calibration_study.md`
+**F-E (high) — the credibility artifacts contain no evidence.** The calibration study
 reports `n/a` for all three exercises: modeling and docking because W3.2 made their
 predictors `None`, and `md_simulation` because **the demo slice has zero MD failures**.
 `scripts/build_demo_slice.py`'s docstring claims it covers "every distinct
@@ -1390,7 +1414,7 @@ re-run the calibration study for publication, against the uncorrected label.
       superseded by recomputation rather than a footnote, and §27a's docking rows are
       re-measured.
 - [ ] **B.6** Re-open the W3.2 retirements against the corrected label. Re-run
-      `make calibration` on the B.5 store. *Done when:* `docs/calibration_study.md` states a
+      `make calibration` on the B.5 store. *Done when:* `make calibration` output states a
       per-exercise AUC against a label whose confounds are measured, and each retirement is
       re-affirmed or reversed on that basis, with the previous decision kept on the record.
 
@@ -1426,7 +1450,7 @@ Supersedes §27d Phase 3. **S2.4 is withdrawn** (F-B), not deferred.
       of 13 (exercise, failure_mode) combinations now present, was 8 of 13**; calibration
       reports a real AUC instead of `n/a`.
 - [ ] **D.2** Commit the real-store calibration numbers, not only demo-slice `n/a`s.
-      *Done when:* `docs/calibration_study.md` contains at least one real AUC with its CI in
+      *Done when:* `make calibration` output contains at least one real AUC with its CI in
       a table, not only in a prose caveat. (Gated on **B.6** — do not publish a calibration
       of the uncorrected label.)
 - [x] **D.3** (2026-08-28) CI now runs `make demo`/`make calibration` and diffs the regenerated
@@ -2004,8 +2028,7 @@ The one real unknown was the conda environment: Snakemake needs a per-rule `cond
 directive because each rule is its own process. **Ray workers inherit the driver's
 interpreter**, so launching the driver from the validation env should make every slow-lane
 stage work with no per-task plumbing at all. Live-verified: 3 candidates with no existing
-`md_simulation` row, driven from
-`/home/yerko/miniconda3/envs/protein-selector-validation/bin/python`, produced real
+`md_simulation` row, driven from the validation env's own interpreter, produced real
 PDBFixer repair → ForceField → minimization → 50 MD steps in **parallel worker processes**,
 **3/3 succeeded**, rows persisted, board reporting per-step timings. The env question is
 settled and the answer is *simpler* than the Snakefile's.

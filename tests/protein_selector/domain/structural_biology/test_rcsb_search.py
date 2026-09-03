@@ -1,8 +1,8 @@
 """Tests for protein_selector.domain.structural_biology.rcsb_search.
 
 Network-touching calls (Session.exec / DataQuery.exec+get_response) are mocked --
-this sandbox has no outbound access to search.rcsb.org/data.rcsb.org, and the real
-course environment shouldn't need network access just to run the test suite. See
+the test suite must not depend on outbound access to search.rcsb.org/data.rcsb.org, and
+the real course environment shouldn't need network access just to run the tests. See
 .claude/CLAUDE.md "Testing" for the rationale, and conftest.py for the shared
 mock_data_query/mock_hard_filters_query/fake_graphql_entry/sample_candidate_entry fixtures.
 """

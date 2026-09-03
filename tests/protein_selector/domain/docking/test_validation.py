@@ -1,6 +1,6 @@
 """Tests for protein_selector.domain.docking.validation.
 
-Both Vina and PLIP are conda-only externals this sandbox can't install, so
+Both Vina and PLIP are conda-only externals not present in the base test env, so
 this composition function is tested by monkeypatching its two building
 blocks (``dock_top_pose``, ``run_plip_analysis``) rather than the real
 packages -- that's the actual seam this module owns: combining two already
