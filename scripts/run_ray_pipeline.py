@@ -77,7 +77,7 @@ def main() -> None:
                         help="--watch refresh interval in seconds")
     parser.add_argument("--graph", action="store_true",
                         help="print the node graph and every missing link (PLAN.md §35)")
-    parser.add_argument("--status", metavar="RUN_ID",
+    parser.add_argument("--status", metavar="RUN_ID", nargs="?", const="",
                         help="print the live status board for a run (PLAN.md §32)")
     parser.add_argument("--run-id", help="name this run, so --status can find its board")
     parser.add_argument("--cpus", type=int, default=None)
@@ -133,15 +133,45 @@ def main() -> None:
         print(validate_graph())
         return
 
-    if args.status:
+    if args.status is not None:
         # Attaches to an existing cluster to read a detached board -- deliberately does
         # not start one, so asking for status can never launch a cluster by accident.
         import ray
 
-        from protein_selector.runners.status_board import format_board, get_board
+        from protein_selector.runners.status_board import (
+            board_actor_name,
+            format_board,
+            get_board,
+        )
 
-        ray.init(address="auto", namespace=BOARD_NAMESPACE,
+        try:
+            ray.init(address="auto", namespace=BOARD_NAMESPACE,
                      logging_level=logging.WARNING)
+        except ConnectionError:
+            # The overwhelmingly common case, and not an error: a board lives in the
+            # cluster, so with no cluster up there is simply nothing to report. Ray's own
+            # exception is a 15-line traceback ending in "Could not find any running Ray
+            # instance", which reads like a broken install rather than "no run going on".
+            print("no Ray cluster is running, so there is no live status board.\n"
+                  "  start one with `make ray-head` before launching a run, or use\n"
+                  "  `make ray-watch` for the store-backed view, which needs no cluster.")
+            return
+
+        if not args.status:
+            prefix = board_actor_name("")
+            runs = sorted(
+                name[len(prefix):]
+                for name in ray.util.list_named_actors()
+                if name.startswith(prefix)
+            )
+            if not runs:
+                print("cluster is up, but no run has registered a status board.")
+            else:
+                print("status boards on this cluster (pass one as RUN=<id>):")
+                for run in runs:
+                    print(f"  {run}")
+            return
+
         board = get_board(args.status)
         if board is None:
             print(f"no status board found for run {args.status!r} "

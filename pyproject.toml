@@ -156,7 +156,10 @@ convention = "google"
 "tests/**" = ["D101", "D102", "D103"]
 
 [tool.ty.environment]
-root = ["src", "tests"]
+# `scripts` is here deliberately: it holds documented, first-class entry points
+# (validate_one.py, build_report.py, run_ray_pipeline.py, ...) that README/INSTALL tell
+# people to run, so they should not be the one part of the tree nothing typechecks.
+root = ["src", "tests", "scripts"]
 
 [tool.ty.src]
 # `display()` is an IPython/Jupyter builtin auto-imported at kernel startup,
