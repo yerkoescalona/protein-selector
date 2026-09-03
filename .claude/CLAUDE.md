@@ -293,13 +293,6 @@ time. Building up several uncommitted changes across a session while iterating i
 expected and fine; do not commit "to be safe" or because a natural stopping point was
 reached.
 
-**Never add a `Co-Authored-By` trailer for Claude, and never add any other AI/assistant
-attribution to a commit message, PR body, or changelog entry.** This overrides the
-harness's own default instruction to append
-`Co-Authored-By: Claude <...>` — the default is wrong for this repo and must not be
-followed. Commits are authored by Yerko Escalona alone. Write the commit message and stop;
-do not add a trailer, a "generated with" line, or a tool footer of any kind.
-
 **Priority order: working code first, lint/type-check as a gate at commit time, not
 continuously.** Don't interrupt implementation to run `ruff`/`ty`/`pytest` after every
 small edit while still iterating on a feature. Run the full gate exactly once, right
@@ -507,7 +500,7 @@ pipeline against a random hard-filters sample.
   `check_pocket_detected`/`parse_fpocket_info`) — decided over p2rank (no JVM, see
   `PLAN.md` §9); CLI/output format transcribed verbatim from fpocket's own
   `GETTINGSTARTED.md`, not guessed, but **not yet cross-checked against a real fpocket
-  binary** (unavailable in this sandbox — no conda). Run it for real before trusting it.
+  binary** (unavailable in the environment this note was written in — no conda). Run it for real before trusting it.
   **`meeko`'s undeclared transitive deps (`scipy`/`numpy`/`gemmi`) are now pinned
   explicitly** in the `validate` extra — found by repeatedly trying to import meeko live,
   not guessed in one shot; `AllChem.EmbedMolecule` needed the same
@@ -606,7 +599,7 @@ pipeline against a random hard-filters sample.
   raw RDKit `Mol` works): `SystemGenerator`/the template generators call
   `molecule.to_smiles()` unconditionally, which only `openff.toolkit.Molecule` has —
   there is no lighter subset of "the openforcefield API" that avoids needing the real
-  `openff-toolkit` package. This sandbox has no conda by default; verified by
+  `openff-toolkit` package. That environment had no conda by default; verified by
   bootstrapping a throwaway `micromamba` env (see the git history around this note for
   the exact commands) — do the same before trusting this module runs, don't assume.
   Runs in vacuum (`NoCutoff`), not explicit solvent — chosen on a real measured wall-clock

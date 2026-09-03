@@ -19,7 +19,7 @@ I go?"
 | Running the pipeline as a resumable/parallel DAG, adding a stage to the run graph, the cheap-lane/slow-lane split | `src/protein_selector/runners/` + `scripts/run_ray_pipeline.py` | PLAN.md §31–§33. A plain Python DAG on Ray Core: `ray_runner.py` (the graph), `status_board.py` (live per-step view, §32). Resume comes from the store, not from marker files (§31a). `workflow/config.yaml` still holds run config; `make ray-plan` / `make ray-run` / `make ray-status`. **Snakemake was removed 2026-08-29** (§33) after the two runners were shown to produce identical stores; §15–§22 remain valid as *design rationale*, not as a runbook. |
 | The overall design, layer rationale, open decisions, verification status | `PLAN.md` | The authoritative design doc. Read before any architectural change. |
 | Anything a stranger reads first: what the tool is, the zero-setup demo, how to run it | `README.md` | **The public entry point.** This repo is public, so the README is the face of the project, not an internal note. Every command and number in it must be verified against the working tree before it lands: it is the one file where a stale claim is seen by everyone. |
-| The committed demo slice, or `make demo` / `make calibration` output | `demo/` + `scripts/build_demo_slice.py` | A real 300-candidate sample of the store, committed as an explicit `.gitignore` exception so a fresh clone has something real to run with no network and no conda. CI regenerates both artifacts and fails on any diff, so they cannot silently go stale. |
+| The demo, or `make calibration` output | `scripts/demo_run.py` | `make demo` is a REAL run from zero: random RCSB draw, screened, then validated as deeply as the toolchain allows. Nothing is committed, so nothing can leak. It replaced a committed slice of the real store that shipped verdicts for 87 of 117 assignable candidates. `tests/protein_selector/test_no_committed_answers.py` stops that returning. |
 
 ## Why there's no per-domain `CONTEXT.md` yet (Layer 2, no longer blocked, not yet done)
 
@@ -33,6 +33,9 @@ report work): each domain folder's `CONTEXT.md` should specify Inputs (which ups
 table it reads, now concretely enumerable from `core/report.py`'s own imports), Process
 (what it checks/fetches), Outputs (which table it writes). Until that follow-up happens,
 this file and `PLAN.md`'s per-stage sections carry that information in prose.
+
+| Documentation, or the API reference | `docs/` | A Sphinx tree: `make docs`. API pages are generated from the docstrings in `src/`, so they cannot drift; the guide pages are Markdown via MyST. Builds on base dependencies (`pymol` is mocked), so the docs never require the conda half of the install. |
+| A past audit, install log or completed-work record | git history | These were tracked files until 2026-09-03, first in `docs/` and then in `notes/`. They were working records rather than documentation, and they made `docs/` documentation in name only. Deleted, not lost: `git log --diff-filter=D --name-only` finds them. |
 
 ## Public repository: what must never be committed here
 

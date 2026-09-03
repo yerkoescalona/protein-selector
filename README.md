@@ -22,27 +22,91 @@ So this tool does not predict. It runs the real pipelines (real OpenMM, real Vin
 real AlphaFold DB lookups) against each shortlisted candidate and records what actually
 happened, per exercise.
 
-## Try it in 30 seconds
+## Try it
 
-No conda, no network, no API keys, no optional extras:
+The demo is a real run, from zero. There is no committed database and no pre-computed
+results: it asks RCSB what passes the hard filters, draws a random batch, screens it, and
+validates the survivors as deeply as your installed toolchain allows.
 
 ```bash
 git clone https://github.com/yerkoescalona/protein-selector.git
 cd protein-selector
 uv sync          # base dependencies only
-make demo        # ~1 second
+make demo        # needs network; a couple of minutes
 ```
 
-That rebuilds `demo/report_demo.csv` from `demo/protein_selector_demo.db`, a committed
-300-candidate slice of this tool's own real store. Every row in it is a real,
-previously-computed result: real MD outcomes, real Vina and PLIP numbers, real AlphaFold DB
-entries. Nothing is synthetic. See [`scripts/build_demo_slice.py`](scripts/build_demo_slice.py)
-for how the slice was sampled (coverage of every observed failure mode first, then depth).
+With base dependencies you get the cheap lanes (hard filters, simulability, ligands,
+literature, AlphaFold DB) and the script tells you which heavy stages it is skipping and
+why. Install the conda half (`make env-validation`) and the same command runs real OpenMM
+MD, real Vina docking with PLIP, and real GAFF2/AMBER protein+ligand complex MD.
 
-Run the test suite the same way, with no extra setup beyond one flag:
+Because the draw is random, **no two runs are alike**, and whether a run reaches a working
+complex MD depends on what it drew. That is the honest demonstration: most PDB entries have
+no dockable ligand. A real run:
+
+```
+   80 entries pass the hard filters (resolution, size, method)
+🎲 screening a random batch of 60 ...
+🧬 11 of 60 survived the simulability gate
+▶️  validating 5 of them
+
+PDB      res  organism                 modeling  MD        docking   complex MD
+1A5W     158  Rous sarcoma virus       fail      success   failure   success
+1AKS     223  Sus scrofa               success   success   failure   failure
+1AE5     225  Homo sapiens             success   success   failure   failure
+
+🎉 1 of 5 reached a working protein+ligand complex MD: 1A5W
+```
+
+The run ends by writing the ranked report (`demo/demo_run_report.csv`): per-exercise
+difficulty tiers, `suitable_for`, and the notes behind each verdict. That table is the tool's
+actual product; the console summary above it is just raw status.
+
+**Progress while it runs.** Each candidate takes anywhere from a few seconds to a minute,
+so the run reports what it is doing as it does it:
+
+```
+  ████████████░░░░░░░░░░ 3/4  1BZ6   ⠹ 🧬 1BZ6: complex has 3565 atoms (receptor + BCT)
+  ✔ [1/4] 1C6M  25s
+  ✔ [2/4] 1C61  19s
+  ✔ [3/4] 1BZ6  48s
+```
+
+The spinner line is live and rewrites in place; each finished candidate leaves a permanent
+line. Piped or redirected output falls back to plain lines, so CI logs stay readable.
+`--verbose` shows the pipeline's full log instead.
+
+**A second view**, from another terminal, showing the whole graph rather than the current
+candidate:
 
 ```bash
-make check       # ruff + ty + 467 tests, ~30 seconds
+make demo-watch
+```
+
+```
+screening      check_simulability         ██████████ 60/60
+annotation     resolve_ligands            █████░░░░░ 5/11
+validation     simulate_md                █████░░░░░ 5/11
+               dock_ligand                ██████████ 5/5
+```
+
+Be aware this one is **coarse**: it reads the database, and a row only lands there once a
+stage has finished for a candidate, so it can sit unchanged for a minute during a long MD.
+That is the same view `make ray-watch` gives a real pipeline run, and it works after a run
+as well as during one.
+
+**Options.** `--seed` repeats a specific draw, `--candidates` and `--screen` widen it;
+`scripts/demo_run.py --help` lists them all. Through `make`, quote them (`make demo --seed 7`
+is a make error, not a demo error):
+
+```bash
+make demo DEMO_ARGS="--seed 7 --candidates 8"
+```
+
+Run the test suite with no network at all:
+
+```bash
+make check       # ruff + ty + 469 tests, ~30 seconds
 ```
 
 ## What you get
@@ -52,14 +116,13 @@ rationale. Never a single opaque score: a protein that is an easy MD case can be
 docking case, and collapsing that into one number throws away the only thing an instructor
 needs.
 
-Real rows from the committed demo slice:
+Real rows, from the live demo run above (nothing here is pre-computed or committed):
 
-| PDB | residues | ligand | modeling | md_simulation | docking | what the run actually found |
-|---|---|---|---|---|---|---|
-| 2PK4 | 80 | ACA | intro | intro | intro | passes all three, smallest in the set |
-| 2FKE | 107 | FK5 | intro | intro | core | self-docks cleanly |
-| 101M | 154 | HEM | intro | intro | challenge | MD fine, but self-dock lands 4.87 Å out |
-| 1A34 | 179 | SO4 | challenge | challenge | not run | MD fails: no force-field template for residue 159 |
+| PDB | residues | modeling | md_simulation | docking | complex MD |
+|---|---|---|---|---|---|
+| 1A5W | 158 | fail (no AlphaFold entry) | pass | fail, self-dock 6.42 Å | **pass** |
+| 1AKS | 223 | pass | pass | fail | fail |
+| 1AE5 | 225 | pass | pass | fail | fail |
 
 Each `*_tier` (`intro` / `core` / `challenge`) is measured independently, and every row
 carries `*_status`, `*_failure_mode`, and `*_notes` columns quoting the real tool output.
@@ -106,9 +169,28 @@ marker files: a candidate already validated is never re-run.
 
 ## Running the real pipeline
 
-The real pipeline needs network access and, for the MD and docking lanes, a separate
-conda environment. See **[`INSTALL.md`](INSTALL.md)** for the full setup, including the three
-distinct dependency sources and a verified install log from a fresh machine.
+The real pipeline needs network access and, for the MD and docking lanes, a separate conda
+environment. Two targets build the two halves, and a third tells you what you actually got:
+
+```bash
+make env              # the uv half: validate extra + webapp and ray groups
+make env-validation   # the conda half: openmm, vina, plip, fpocket, ambertools, ...
+make doctor           # what is installed, and which env each import resolved from
+```
+
+`make env-validation` builds incrementally rather than solving everything at once, because
+a single-shot solve across these packages has twice OOM-killed a 15 GB machine. It pins every
+version to match [`environment-validation.yml`](environment-validation.yml), is safe to
+re-run, and never runs as a side effect of another target. It also takes a while.
+
+`make doctor` runs against this repo's venv by default; point it at the other half with
+`make doctor DOCTOR_PYTHON=$HOME/miniconda3/envs/protein-selector-validation/bin/python`.
+It reports the path each package was imported from, which is the only reliable way to tell
+these three dependency sources apart when something is missing.
+
+**[`INSTALL.md`](INSTALL.md)** remains the explanation: what the three dependency sources
+are, why they cannot be merged, the OS-level packages neither environment installs, and a
+verified install log from a fresh machine.
 
 ```bash
 make ray-plan    # dry run: what would be done, base deps only, no network
@@ -128,10 +210,15 @@ honours.
 Watch a run in progress, or start a persistent Ray cluster with its dashboard:
 
 ```bash
-make ray-head    # dashboard on :8265
-make ray-watch   # per-stage domain view: which node is waiting on which input
-make ray-status
+make ray-head              # persistent cluster + dashboard on :8265
+make ray-watch             # per-stage domain view: which node waits on which input
+make ray-status            # list the run boards on the cluster
+make ray-status RUN=<id>   # one run's per-step table: state, seconds, detail
 ```
+
+`ray-watch` reads the store, so it works with no cluster running and shows what every node
+is still waiting on. `ray-status` reads a live board held inside the cluster, so it reports
+only while a run is up; with no cluster it says so rather than failing.
 
 For a single PDB ID, bypassing the DAG entirely:
 
@@ -151,13 +238,15 @@ against one fixed, already-verified candidate (PDB 2PK4 with its bound ligand AC
 
 `scripts/course_candidates.sql` is the query that turns the store into a teaching shortlist,
 applying the ligand-exclusion rules (buffers, cryoprotectants, and crystallization additives
-are not teaching ligands). It runs against the committed demo database with no setup:
+are not teaching ligands). Point it at whichever store you have:
 
 ```bash
-sqlite3 -header -column demo/protein_selector_demo.db < scripts/course_candidates.sql
+sqlite3 -header -column demo/demo_run.db < scripts/course_candidates.sql   # after make demo
+sqlite3 -header -column cache/protein_selector.db < scripts/course_candidates.sql
 ```
 
-Point it at `cache/protein_selector.db` instead once you have done a real run. See the
+A single demo run will rarely have anything that passes every filter; the query is built
+for an accumulated store. See the
 query's own header for the exclusion rules, and
 [`scripts/student_ligand_table_prompt.md`](scripts/student_ligand_table_prompt.md) for how
 the student-facing protein/chain/ligand table is built from the output.
@@ -170,13 +259,18 @@ make serve
 
 ## Project documentation
 
+Build the full documentation (API reference generated from the docstrings, plus the guide):
+
+```bash
+make docs        # -> docs/_build/html
+make docs-serve  # -> http://localhost:8000
+```
+
 | Read this | For |
 |---|---|
 | [`INSTALL.md`](INSTALL.md) | Full setup, the conda environment, and the one `PATH` gotcha that costs an hour |
 | [`PLAN.md`](PLAN.md) | The design doc: every architectural decision and the reasoning behind it |
 | [`CONTEXT.md`](CONTEXT.md) | Task routing: which module handles what |
-| [`docs/calibration_study.md`](docs/calibration_study.md) | Do the cheap predictors actually discriminate pass from fail? (Mostly no, and two were retired because of it) |
-| [`docs/audit-2026-08-28.md`](docs/audit-2026-08-28.md) | An independent audit of whether the numbers mean what the tool says they mean |
 | [`slurm/SETUP.md`](slurm/SETUP.md) | Running the pipeline under SLURM on a single node |
 
 ## Development
@@ -199,13 +293,16 @@ plainly:
 - The difficulty tiers are calibrated against this course's exercises and its thresholds.
 - Two of the three cheap difficulty predictors were **retired** after the calibration study
   showed they did not beat chance. They now return `None` rather than a number that looks
-  informative and is not. See [`docs/calibration_study.md`](docs/calibration_study.md).
+  informative and is not. Re-run the study yourself with `make calibration`.
 - The MD validators are smoke tests (50 steps apo, 200 for the protein+ligand complex), sized
   to catch setup and stability failures. They are not production simulations and are not meant
   to be.
-- `cache/protein_selector.db` is append/upsert-only by design: it is the accumulated product
-  of hours of real compute and is never wiped or rebuilt. Read the "Database safety" section
-  of [`.claude/CLAUDE.md`](.claude/CLAUDE.md) before writing any new entry point that touches it.
+- `cache/protein_selector.db` is **append/upsert-only by design**, because it is the
+  accumulated product of hours of real MD and docking compute. There is deliberately no
+  `DROP`, `DELETE`, `TRUNCATE`, no `.db` unlink, and no reset-from-scratch mode anywhere in
+  the codebase, and none should be added. Recomputing means overwriting specific rows in
+  place via a `force_refresh` upsert, never deleting them. If you add an entry point that
+  writes to the store, keep it scoped, additive, and reversible.
 
 Issues and questions are welcome. This is not a general-purpose library and has no stability
 guarantees between versions.

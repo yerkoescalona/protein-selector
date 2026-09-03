@@ -101,6 +101,14 @@ ray = [
     # no error that says so. Needed for `make ray-head`.
     "ray[default]>=2.40",
 ]
+# `make docs`. Its own group so a plain `uv sync` does not pull Sphinx for someone who only
+# wants to run the tool. MyST because every document in this repo is already Markdown and
+# rewriting them as reStructuredText would help nobody.
+docs = [
+    "sphinx>=8.0",
+    "myst-parser>=4.0",
+    "furo>=2024.8.6",
+]
 
 [build-system]
 requires = ["hatchling"]
