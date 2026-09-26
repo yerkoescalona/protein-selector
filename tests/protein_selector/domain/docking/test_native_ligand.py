@@ -247,3 +247,16 @@ class TestAdditiveDenylistExtension:
         for code in ("GNP", "GDP", "NDP", "ACO"):
             meeko = {code: MeekoParameterizationResult(ligand_id=code, passed=True, reasons=[])}
             assert is_dockable_ligand_code(code, meeko), code
+
+
+def test_course_candidates_sql_matches():
+    """scripts/course_candidates.sql repeats the exclusion list; the two must stay equal."""
+    import re
+    from pathlib import Path
+
+    from protein_selector.domain.docking.native_ligand import _EXCLUDED_CCD_CODES
+
+    sql = (Path(__file__).resolve().parents[4] / "scripts" / "course_candidates.sql").read_text()
+    start = sql.index("WITH excluded_ccd_codes(ccd_code) AS (")
+    block = sql[start:sql.index("\n),", start)]
+    assert set(re.findall(r"\('([A-Z0-9]+)'\)", block)) == set(_EXCLUDED_CCD_CODES)

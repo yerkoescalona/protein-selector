@@ -41,7 +41,14 @@ WITH excluded_ccd_codes(ccd_code) AS (
     ('SR'),('CS'),('SCN'),('UNL'),('NI'),('LI'),('CO'),
     ('SF4'),('F3S'),('FES'),('HEM'),('HEC'),('RBF'),('FMN'),('FAD'),('BTN'),
     ('COA'),('NAD'),('GTP'),('GSP'),('PLP'),
-    ('NO3'),('NO2')
+    ('NO3'),('NO2'),
+    -- Kept equal to native_ligand._EXCLUDED_CCD_CODES (test_course_candidates_sql_matches).
+    ('1PG'),('2PE'),('7PE'),('ACE'),('AZI'),('BGC'),('BMA'),('BOG'),('C8E'),
+    ('CMO'),('CYN'),('DIO'),('DTU'),('EOH'),('EPE'),('ETF'),('FLC'),('FUC'),
+    ('GAL'),('HED'),('HEZ'),('HP6'),('IMD'),('LCP'),('LDA'),('MAN'),('NAG'),
+    ('NDG'),('NHE'),('NO'),('OXY'),('P33'),('P6G'),('PE4'),('PE8'),('PG0'),
+    ('PG4'),('PG5'),('PG6'),('PGO'),('PIN'),('POL'),('PQE'),('SBT'),('SO3'),
+    ('TBU'),('TFA'),('XPE'),('XYL')
 ),
 real_ligands AS (
   SELECT pdb_id, GROUP_CONCAT(DISTINCT ccd_code) AS ligand_codes

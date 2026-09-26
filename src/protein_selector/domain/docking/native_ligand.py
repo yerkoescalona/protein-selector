@@ -23,8 +23,8 @@ from protein_selector.domain.docking.vina import _parse_heavy_atom_coords
 logger = logging.getLogger(__name__)
 
 # "Passed Meeko" is not sufficient for "meaningful biological ligand" -- see PLAN.md §19.
-# Same list as scripts/course_candidates.sql's excluded_ccd_codes CTE (kept in sync by hand
-# -- one is SQL, one is Python, no shared source).
+# Same list as scripts/course_candidates.sql's excluded_ccd_codes CTE: one is SQL, one is
+# Python, no shared source, so test_course_candidates_sql_matches keeps them equal.
 _EXCLUDED_CCD_CODES = frozenset(
     {
         "SO4", "CL", "NA", "GOL", "EDO", "PO4", "FMT", "PEG", "TRS",
@@ -57,6 +57,18 @@ _EXCLUDED_CCD_CODES = frozenset(
         #   or RMSD (the B.1 coverage guard rejects them downstream anyway; excluding
         #   them here means not spending a Vina run to find that out).
         "NO", "CMO", "OXY", "CYN",
+        # Added 2026-09-24: each reached Vina as a candidate's docking target while
+        # searching for course candidates, names checked against RCSB's chemical
+        # component dictionary. CHES buffer (1V30), perchlorate (1JFV, 1RXI), heptane
+        # (2B5S), citrate anion (1M27, 1S69; CIT is the same molecule), two PEG
+        # fragments (2ZR4, 2NR9), sulfite (1JZW), trifluoroethanol (1P2S), azide (2MHR).
+        "NHE", "LCP", "HP6", "FLC", "1PG", "PQE", "SO3", "ETF", "AZI",
+        # Same search, same check: tert-butanol, S-1,2-propanediol, hexane-1,6-diol,
+        # the DTT isomer DTU, a PEG (PE8) and the acetyl cap ACE, which is part of a
+        # peptide, not a ligand.
+        "TBU", "PGO", "HEZ", "DTU", "PE8", "ACE",
+        # Trifluoroacetic acid, left from peptide synthesis and HPLC (3ODV's docking target).
+        "TFA",
     }
 )
 
