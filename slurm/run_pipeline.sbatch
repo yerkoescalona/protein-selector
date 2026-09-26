@@ -52,9 +52,10 @@ echo "config      : $PS_CONFIG"
 echo "interpreter : $PS_PYTHON ($("$PS_PYTHON" -c 'import sys;print(sys.version.split()[0])'))"
 
 # Dry run first: free, needs no cluster, and a graph error here costs seconds instead of
-# the whole allocation (§35c).
+# the whole allocation (§35c). The plan reads the run's own config: which stored
+# relatives rows still count as done depends on its settings.
 "$PS_PYTHON" scripts/run_ray_pipeline.py --graph
-"$PS_PYTHON" scripts/run_ray_pipeline.py --plan --db-path "$PS_DB"
+"$PS_PYTHON" scripts/run_ray_pipeline.py --plan --config "$PS_CONFIG" --db-path "$PS_DB"
 
 # No `ray start`: the driver brings up its own cluster inside this allocation and tears it
 # down on exit, so a cancelled job leaves nothing behind. --cpus comes from SLURM's own
@@ -68,4 +69,5 @@ echo "interpreter : $PS_PYTHON ($("$PS_PYTHON" -c 'import sys;print(sys.version.
     --cpus "${SLURM_CPUS_PER_TASK:-4}" \
     --run-id "slurm-${SLURM_JOB_ID:-local}"
 
-"$PS_PYTHON" scripts/run_ray_pipeline.py --plan --db-path "$PS_DB" | tail -3
+"$PS_PYTHON" scripts/run_ray_pipeline.py --plan --config "$PS_CONFIG" --db-path "$PS_DB" \
+    | tail -3

@@ -1,4 +1,6 @@
-"""Persistence for the docking domain (parameterizability, Meeko, pockets, ligand CCD codes).
+"""Persistence for the docking domain: parameterizability, Meeko, pockets, ligands.
+
+The ligand rows are the CCD codes, their SMILES and the ligand context.
 
 See ``core.db`` for the shared connection/schema; this module only holds the
 upsert/load functions for tables this domain owns.
@@ -8,11 +10,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
 from protein_selector.core.db import DEFAULT_DB_PATH, connect
 from protein_selector.domain.docking.fpocket import PocketDetectionResult, PocketInfo
+from protein_selector.domain.docking.ligand_context import LigandContextResult
 from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
@@ -231,3 +235,45 @@ def load_ligand_smiles(db_path: Path = DEFAULT_DB_PATH) -> dict[str, str | None]
     with connect(db_path) as conn:
         rows = conn.execute("SELECT ccd_code, smiles FROM ligand_smiles").fetchall()
     return {row[0]: row[1] for row in rows}
+
+
+_LIGAND_CONTEXT_COLUMNS = tuple(f.name for f in fields(LigandContextResult))
+
+
+def upsert_ligand_context(
+    results: list[LigandContextResult], db_path: Path = DEFAULT_DB_PATH
+) -> None:
+    """Insert or update ligand-context verdicts, keyed by ``pdb_id``."""
+    if not results:
+        return
+    columns = ", ".join(_LIGAND_CONTEXT_COLUMNS)
+    placeholders = ", ".join("?" for _ in _LIGAND_CONTEXT_COLUMNS)
+    updates = ", ".join(f"{name}=excluded.{name}" for name in _LIGAND_CONTEXT_COLUMNS[1:])
+    with connect(db_path) as conn:
+        conn.executemany(
+            f"INSERT INTO ligand_context ({columns}) VALUES ({placeholders}) "
+            f"ON CONFLICT(pdb_id) DO UPDATE SET {updates}",
+            [
+                tuple(
+                    int(r.self_contained) if name == "self_contained" else getattr(r, name)
+                    for name in _LIGAND_CONTEXT_COLUMNS
+                )
+                for r in results
+            ],
+        )
+
+
+def load_ligand_context(db_path: Path = DEFAULT_DB_PATH) -> dict[str, LigandContextResult]:
+    """Load every ligand-context verdict, keyed by ``pdb_id``."""
+    if not db_path.exists():
+        return {}
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT {', '.join(_LIGAND_CONTEXT_COLUMNS)} FROM ligand_context"
+        ).fetchall()
+    loaded = {}
+    for row in rows:
+        values = dict(zip(_LIGAND_CONTEXT_COLUMNS, row, strict=True))
+        values["self_contained"] = bool(values["self_contained"])
+        loaded[values["pdb_id"]] = LigandContextResult(**values)
+    return loaded

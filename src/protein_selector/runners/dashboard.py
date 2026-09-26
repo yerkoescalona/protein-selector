@@ -30,6 +30,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from protein_selector.core.config import SequenceRelativesConfig
 from protein_selector.core.registry import (
     STAGE_ORDER,
     NodeSpec,
@@ -107,6 +108,9 @@ _PLAN_ENTRY_OF_NODE = {
     "resolve_ligands": "ligands",
     "count_literature": "literature",
     "lookup_alphafold": "modeling",
+    "align_relatives": "relatives",
+    "check_numbering": "numbering",
+    "check_ligand_context": "ligand_context",
     "sanitize_ligand": "parameterizability",
     "parameterize_ligand": "meeko",
     "simulate_md": "md_simulation",
@@ -141,8 +145,16 @@ def blocked_on(spec: NodeSpec, satisfied: set[str]) -> str:
     return f"waiting on {', '.join(missing)}" if missing else ""
 
 
-def build_view(db_path: Path, board_snapshot: dict | None = None) -> list[NodeView]:
-    """Render the whole graph's current state from the board and the store."""
+def build_view(
+    db_path: Path,
+    board_snapshot: dict | None = None,
+    sequence_relatives: SequenceRelativesConfig | None = None,
+) -> list[NodeView]:
+    """Render the whole graph's current state from the board and the store.
+
+    ``sequence_relatives`` is handed to ``plan_pipeline``, so the relatives count here
+    follows the run's configuration, as ``make ray-plan``'s does.
+    """
     states: dict[str, str] = {}
     details: dict[str, str] = {}
     if board_snapshot:
@@ -170,7 +182,7 @@ def build_view(db_path: Path, board_snapshot: dict | None = None) -> list[NodeVi
     try:
         from protein_selector.runners.ray_runner import plan_pipeline
 
-        plan = {p.stage: p for p in plan_pipeline(db_path)}
+        plan = {p.stage: p for p in plan_pipeline(db_path, sequence_relatives)}
     except Exception:  # pragma: no cover - the view must never break a run
         plan = {}
 

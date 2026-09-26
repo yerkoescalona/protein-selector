@@ -38,9 +38,12 @@ from protein_selector.core.config import (
     CandidateSearchConfig,
     ComplexMdSimulationConfig,
     DockingConfig,
+    LigandContextConfig,
     MdSimulationConfig,
     ModelingLookupConfig,
     PocketDetectionConfig,
+    ResidueNumberingConfig,
+    SequenceRelativesConfig,
 )
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.runners.status_board import NAMESPACE as BOARD_NAMESPACE
@@ -55,6 +58,13 @@ class RayPipelineConfig:
     candidate_search: CandidateSearchConfig = field(default_factory=CandidateSearchConfig)
     candidate_filter: CandidateFilterConfig = field(default_factory=CandidateFilterConfig)
     modeling_lookup: ModelingLookupConfig = field(default_factory=ModelingLookupConfig)
+    sequence_relatives: SequenceRelativesConfig = field(
+        default_factory=SequenceRelativesConfig
+    )
+    residue_numbering: ResidueNumberingConfig = field(
+        default_factory=ResidueNumberingConfig
+    )
+    ligand_context: LigandContextConfig = field(default_factory=LigandContextConfig)
     max_candidates: int = 2000
     force_refresh: bool = False
     # The frozen sample (PLAN.md §16c), carried over from the Snakefile's
@@ -95,7 +105,10 @@ class StagePlan:
         return self.pending > 0
 
 
-def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
+def plan_pipeline(
+    db_path: Path = DEFAULT_DB_PATH,
+    sequence_relatives: SequenceRelativesConfig | None = None,
+) -> list[StagePlan]:
     """Report what each stage would do against the current store, without running anything.
 
     This is the capability a workflow engine's ``--dry-run`` provides. It is short here
@@ -116,11 +129,22 @@ def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
     indistinguishable here from "never fetched". The count is off by at most the number
     of ligand-free candidates, and fixing it needs a per-candidate "ligands were resolved"
     marker the store does not currently keep.
+
+    ``sequence_relatives`` is the run's relatives configuration (defaults when ``None``):
+    whether a stored row still counts depends on the accession it searched (it must be the
+    candidate's current first one) and on the database and grouping identity it was
+    computed with, the same ``is_reusable`` predicate ``align_relatives`` applies.
     """
     from protein_selector.core.validation_store import load_validation_results
-    from protein_selector.domain.bioinformatics.store import load_literature_counts
+    from protein_selector.domain.bioinformatics.sequence_relatives import is_reusable
+    from protein_selector.domain.bioinformatics.store import (
+        load_literature_counts,
+        load_residue_numbering,
+        load_sequence_relatives,
+    )
     from protein_selector.domain.docking.store import (
         load_ligand_ccd_codes,
+        load_ligand_context,
         load_meeko_parameterization,
         load_parameterizability,
     )
@@ -144,6 +168,22 @@ def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
     modelable = {
         p for p, c in candidates.items() if c.uniprot_ids
     }
+    relatable = survivors & modelable
+    relatives_config = sequence_relatives or SequenceRelativesConfig()
+    stored_relatives = load_sequence_relatives(db_path)
+    relatives_done = sum(
+        1
+        for p in relatable
+        if is_reusable(
+            stored_relatives.get(p),
+            candidates[p].uniprot_ids[0],
+            relatives_config.database,
+            relatives_config.max_identity,
+        )
+    )
+    # A stored numbering verdict never goes stale with the run's settings: done is simply
+    # a row for a survivor with an accession, counted inside that pool.
+    numbering_done = len(relatable & set(load_residue_numbering(db_path)))
     # `is_dockable_ligand_code` is the SAME predicate the real docking path uses
     # (stages.docking_common.resolve_docking_target), so the plan can never disagree with
     # what would actually run -- the reason that predicate was centralised in the first
@@ -165,8 +205,21 @@ def plan_pipeline(db_path: Path = DEFAULT_DB_PATH) -> list[StagePlan]:
         plan("ligands", len(load_ligand_ccd_codes(db_path)), total),
         plan("literature", len(load_literature_counts(db_path)), total),
         plan("modeling", len(load_validation_results("modeling", db_path)), len(modelable)),
+        # A survivor is eligible only with a UniProt accession: the query is its UniProt
+        # chain, so a candidate without one can never get a row (the modeling lesson
+        # above). Done is counted inside the pool, so a row left over for a candidate
+        # that no longer passes simulability cannot hide pending work, and only rows the
+        # node would reuse count as done: a row for another accession does not. A row the
+        # node only re-flags under a new min_relatives needs no search and counts as done.
+        plan("relatives", relatives_done, len(relatable)),
+        # Eligible exactly like relatives: a survivor with a UniProt accession.
+        plan("numbering", numbering_done, len(relatable)),
         plan("parameterizability", len(load_parameterizability(db_path)), len(ligand_ids)),
         plan("meeko", len(load_meeko_parameterization(db_path)), len(ligand_ids)),
+        # One row per survivor with a dockable ligand. A row judging a ligand the docking
+        # step would no longer pick is rechecked on the next run but counts as done here.
+        plan("ligand_context", len(dockable & set(load_ligand_context(db_path))),
+             len(dockable)),
         plan("md_simulation", len(load_validation_results("md_simulation", db_path)),
              len(survivors)),
         plan("docking", len(load_validation_results("docking", db_path)), len(dockable)),
@@ -184,6 +237,49 @@ def format_plan(plans: list[StagePlan]) -> str:
     if pending == 0:
         lines.append("Nothing to be done -- every stage's results are already persisted.")
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class AnnotationCpus:
+    """The CPUs each long-running annotation task reserves on the Ray cluster."""
+
+    relatives: int
+    numbering: int
+    ligand_context: int
+
+
+def annotation_cpus(config: RayPipelineConfig, cluster_cpus: float) -> AnnotationCpus:
+    """What the relatives, numbering and ligand-context tasks reserve on ``cluster_cpus``.
+
+    The three can run for hours on a first backfill, beside chemistry and the slow lanes,
+    so together they get only what is left once the largest of those tasks has room:
+    chemistry and pocket detection take one CPU, MD and complex MD ``md_threads``, docking
+    ``dock_threads``. Whatever the annotations hold, such a task can always be scheduled
+    beside them, so they never hold chemistry, MD or docking up. Relatives is served
+    first: its FAMSA alignments are real CPU work, up to ``max_workers * famsa_threads``
+    cores, while numbering and ligand context mostly wait on SIFTS and RCSB. A task the
+    budget cannot cover, or a lane switched off, reserves no CPU: Ray still runs it,
+    sharing cores instead of waiting for them.
+    """
+    largest = 1
+    if config.md_simulation.enabled or config.complex_md_simulation.enabled:
+        largest = max(largest, config.md_threads)
+    if config.docking.enabled:
+        largest = max(largest, config.dock_threads)
+    budget = max(0, int(cluster_cpus) - largest)
+
+    relatives_config = config.sequence_relatives
+    wanted = (
+        max(1, relatives_config.max_workers * relatives_config.famsa_threads)
+        if relatives_config.enabled
+        else 0
+    )
+    relatives = min(wanted, budget)
+    numbering = min(int(config.residue_numbering.enabled), budget - relatives)
+    ligand_context = min(
+        int(config.ligand_context.enabled), budget - relatives - numbering
+    )
+    return AnnotationCpus(relatives, numbering, ligand_context)
 
 
 def resolve_entries(pdb_ids: list[str], db_path: Path):
@@ -231,9 +327,14 @@ def run_pipeline_on_ray(
     """Run the cheap lane as a Ray DAG. Returns the simulability survivors.
 
     The DAG is expressed as ordinary Python -- dependencies are ``ObjectRef``s passed
-    between tasks, so ``ligands``/``literature``/``modeling`` fan out concurrently after
-    ``simulability`` exactly as the Snakefile's three parallel rules do, with no rule
-    declarations and no checkpoint machinery.
+    between tasks, so ``ligands``/``literature``/``modeling``/``relatives``/``numbering``
+    fan out concurrently after ``simulability`` (the Snakefile had the first three as
+    parallel rules), with no rule declarations and no checkpoint machinery. The
+    annotations ``relatives``, ``numbering`` and ``ligand_context`` (the last after
+    chemistry) are the exception to waiting: the run collects them only after the slow
+    lanes, they never raise, and their CPU reservations (``annotation_cpus``) always
+    leave room for chemistry, MD and docking, so they can neither hold up nor abort MD or
+    docking (PLAN.md §40).
 
     Requires the ``ray`` dependency group (``uv sync --group ray``); Ray is imported
     lazily so this module stays importable without it, same discipline as every other
@@ -251,6 +352,8 @@ def run_pipeline_on_ray(
 
     # Imported inside the function so the module imports without the heavy stage chain.
     from protein_selector.domain.structural_biology.store import load_candidates
+    from protein_selector.nodes.align_relatives_node import align_relatives
+    from protein_selector.nodes.check_numbering_node import check_numbering
     from protein_selector.nodes.check_simulability_node import check_simulability
     from protein_selector.nodes.count_literature_node import count_literature
     from protein_selector.nodes.lookup_alphafold_node import lookup_alphafold
@@ -285,7 +388,8 @@ def run_pipeline_on_ray(
     # the graph by name, so anything else silently shows no state at all.
     steps = [
         "search_candidates", "check_simulability", "resolve_ligands",
-        "count_literature", "lookup_alphafold", "parameterize_ligand",
+        "count_literature", "lookup_alphafold", "align_relatives", "check_numbering",
+        "parameterize_ligand", "check_ligand_context",
     ]
     if config.md_simulation.enabled:
         steps.append("simulate_md")
@@ -366,13 +470,93 @@ def run_pipeline_on_ray(
         _report(board, "mark_completed", "lookup_alphafold", f"{len(entries)} candidates")
         return len(entries)
 
+    cluster_cpus = ray.cluster_resources().get("CPU", 1)
+    cpus = annotation_cpus(config, cluster_cpus)
+    logger.info(
+        "🧮 annotation CPUs of %d: relatives %d, numbering %d, ligand context %d",
+        int(cluster_cpus), cpus.relatives, cpus.numbering, cpus.ligand_context,
+    )
+
+    relatives_config = config.sequence_relatives
+
+    @ray.remote(num_cpus=cpus.relatives)
+    def _relatives(survivors: list[str]) -> int:
+        """The relatives annotation. Never raises: nothing downstream reads its rows."""
+        if not relatives_config.enabled:
+            _report(board, "mark_completed", "align_relatives", "off (run_relatives: false)")
+            return 0
+        _report(board, "mark_running", "align_relatives")
+        try:
+            wanted = set(survivors)
+            entries = [e for p, e in load_candidates(db_path).items() if p in wanted]
+            run = align_relatives(entries, relatives_config, db_path,
+                                  force_refresh=config.force_refresh)
+        except Exception as exc:
+            # A bug in the annotation, not a failed search (those are counted below).
+            # Rows already stored stay stored; the rest are searched on the next run.
+            logger.exception("align_relatives stopped; the rest of the run goes on")
+            _report(board, "mark_failed", "align_relatives", f"{type(exc).__name__}: {exc}")
+            return 0
+        detail = (f"{len(run.stored)} new rows, {len(run.reflagged)} re-flagged, "
+                  f"{len(run.failed)} searches failed, "
+                  f"{run.no_accession} without a UniProt accession, "
+                  f"{len(entries)} candidates")
+        # A failed search stores no row, so only the board can show an EBI outage.
+        if run.failed and not run.stored:
+            _report(board, "mark_failed", "align_relatives", detail)
+        else:
+            _report(board, "mark_completed", "align_relatives", detail)
+        return len(entries)
+
+    numbering_config = config.residue_numbering
+
+    @ray.remote(num_cpus=cpus.numbering)
+    def _numbering(survivors: list[str]) -> int:
+        """The numbering check. Never raises: nothing downstream reads its rows."""
+        if not numbering_config.enabled:
+            _report(board, "mark_completed", "check_numbering", "off (run_numbering: false)")
+            return 0
+        _report(board, "mark_running", "check_numbering")
+        try:
+            wanted = set(survivors)
+            entries = [e for p, e in load_candidates(db_path).items() if p in wanted]
+            run = check_numbering(entries, numbering_config, db_path,
+                                  force_refresh=config.force_refresh)
+        except Exception as exc:
+            # A bug in the check, not a failed fetch (those are counted below). Rows
+            # already stored stay stored; the rest are checked on the next run.
+            logger.exception("check_numbering stopped; the rest of the run goes on")
+            _report(board, "mark_failed", "check_numbering", f"{type(exc).__name__}: {exc}")
+            return 0
+        failing = sum(1 for r in run.stored if not r.uniprot_numbered)
+        detail = (f"{len(run.stored)} new rows ({failing} not numbered as UniProt), "
+                  f"{len(run.failed)} checks failed, "
+                  f"{run.no_accession} without a UniProt accession, "
+                  f"{len(entries)} candidates")
+        # A failed check stores no row, so only the board can show an EBI outage.
+        if run.failed and not run.stored:
+            _report(board, "mark_failed", "check_numbering", detail)
+        else:
+            _report(board, "mark_completed", "check_numbering", detail)
+        return len(entries)
+
     # ---- cheap lane ---------------------------------------------------------
-    # Three tasks fan out concurrently from one dependency. The Snakefile needs a rule
-    # block plus an input declaration each to say this; here it is three `.remote()`
-    # calls on one ObjectRef.
+    # The annotations fan out concurrently from one dependency. The Snakefile needed a
+    # rule block plus an input declaration each to say this; here it is one `.remote()`
+    # call each on one ObjectRef.
     survivors_ref = _simulability.remote(_search.remote())
     ligands_ref = _ligands.remote(survivors_ref)
-    ray.get([ligands_ref, _literature.remote(survivors_ref), _modeling.remote(survivors_ref)])
+    # Started with the others but awaited only at the very end: nothing downstream reads
+    # its rows, and a first backfill is thousands of EBI jobs, so chemistry, MD and
+    # docking must not wait for it.
+    relatives_ref = _relatives.remote(survivors_ref)
+    # Awaited at the end for the same reason: nothing downstream reads its rows.
+    numbering_ref = _numbering.remote(survivors_ref)
+    ray.get([
+        ligands_ref,
+        _literature.remote(survivors_ref),
+        _modeling.remote(survivors_ref),
+    ])
 
     # ---- ligand chemistry ---------------------------------------------------
     @ray.remote
@@ -404,6 +588,42 @@ def run_pipeline_on_ray(
         return len(codes)
 
     chemistry_ref = _chemistry.remote(ligands_ref)
+
+    ligand_context_config = config.ligand_context
+
+    @ray.remote(num_cpus=cpus.ligand_context)
+    def _ligand_context(survivors: list[str], _chemistry_done: int) -> int:
+        """The ligand-context check. Never raises: nothing downstream reads its rows."""
+        from protein_selector.nodes.check_ligand_context_node import (
+            check_ligand_context,
+        )
+
+        if not ligand_context_config.enabled:
+            _report(board, "mark_completed", "check_ligand_context",
+                    "off (run_ligand_context: false)")
+            return 0
+        _report(board, "mark_running", "check_ligand_context")
+        try:
+            wanted = set(survivors)
+            entries = [e for p, e in load_candidates(db_path).items() if p in wanted]
+            run = check_ligand_context(entries, ligand_context_config, db_path,
+                                       force_refresh=config.force_refresh)
+        except Exception as exc:
+            logger.exception("check_ligand_context stopped; the rest of the run goes on")
+            _report(board, "mark_failed", "check_ligand_context", f"{type(exc).__name__}: {exc}")
+            return 0
+        held = sum(1 for r in run.stored if not r.self_contained)
+        detail = (f"{len(run.stored)} new rows ({held} held by a metal or a bond), "
+                  f"{len(run.failed)} checks failed, {run.no_ligand} without a dockable "
+                  f"ligand, {len(entries)} candidates")
+        if run.failed and not run.stored:
+            _report(board, "mark_failed", "check_ligand_context", detail)
+        else:
+            _report(board, "mark_completed", "check_ligand_context", detail)
+        return len(entries)
+
+    # Awaited at the end, like numbering: nothing downstream reads its rows.
+    ligand_context_ref = _ligand_context.remote(survivors_ref, chemistry_ref)
 
     # ---- per-candidate slow lanes ------------------------------------------
     # The dependency chain the Snakefile encodes across three rules plus two checkpoints
@@ -490,6 +710,25 @@ def run_pipeline_on_ray(
                 n = sum(ray.get([_complex_md.remote(p, r) for p, r in dock_refs.items()]))
                 _report(board, "mark_completed", "simulate_complex_md",
                         f"{n}/{len(dock_refs)} succeeded")
+
+    # The relatives task catches its own failures, so a get that still raises means Ray
+    # lost its worker (killed for memory, say). The slow lanes are finished by now; a
+    # lost annotation is reported, not turned into a failed run.
+    try:
+        ray.get(relatives_ref)
+    except Exception as exc:
+        logger.error("align_relatives did not finish: %s: %s", type(exc).__name__, exc)
+        _report(board, "mark_failed", "align_relatives", f"{type(exc).__name__}: {exc}")
+    try:
+        ray.get(numbering_ref)
+    except Exception as exc:
+        logger.error("check_numbering did not finish: %s: %s", type(exc).__name__, exc)
+        _report(board, "mark_failed", "check_numbering", f"{type(exc).__name__}: {exc}")
+    try:
+        ray.get(ligand_context_ref)
+    except Exception as exc:
+        logger.error("check_ligand_context did not finish: %s: %s", type(exc).__name__, exc)
+        _report(board, "mark_failed", "check_ligand_context", f"{type(exc).__name__}: {exc}")
 
     logger.info("✅ ray pipeline complete: %d simulability survivors", len(survivors))
     return survivors

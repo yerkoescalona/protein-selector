@@ -234,6 +234,65 @@ CREATE TABLE IF NOT EXISTS literature (
 )
 """
 
+# Keyed by pdb_id -- one phmmer search per candidate, with the UniProt chain the structure
+# lies in as the query (bioinformatics.sequence_relatives, PLAN.md §40). A failed search
+# persists no row at all, so the candidate is retried next run; n_hits = 0 is a real
+# answer ("searched, nothing significant"). structure_* are NULL when RCSB aligns no entity
+# to the accession, alignment_columns and median_identity when there was nothing to align.
+# n_relatives never counts the query. The two thresholds are stored with the row because
+# n_relatives and passed mean nothing without them (the same reason validation keeps
+# rmsd_threshold_angstrom). passed is a recorded flag: nothing filters or ranks on it.
+_SEQUENCE_RELATIVES_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sequence_relatives (
+    pdb_id TEXT PRIMARY KEY,
+    uniprot_accession TEXT NOT NULL,
+    chain_start INTEGER NOT NULL,
+    chain_end INTEGER NOT NULL,
+    query_length INTEGER NOT NULL,
+    structure_start INTEGER,
+    structure_end INTEGER,
+    structure_coverage REAL,
+    database TEXT NOT NULL,
+    n_hits INTEGER NOT NULL,
+    n_relatives INTEGER NOT NULL,
+    alignment_columns INTEGER,
+    median_identity REAL,
+    max_identity REAL NOT NULL,
+    min_relatives INTEGER NOT NULL,
+    passed INTEGER NOT NULL
+)
+"""
+
+# Keyed by pdb_id -- one SIFTS check per candidate: is every residue numbered as UniProt
+# numbers it (bioinformatics.residue_numbering)? A failed fetch persists no row, so the
+# candidate is checked again next run. problems is '' exactly when uniprot_numbered is 1;
+# n_chains counts the chains SIFTS maps onto UniProt. A recorded verdict for whoever builds
+# a course list; the pipeline itself filters nothing on it.
+_RESIDUE_NUMBERING_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS residue_numbering (
+    pdb_id TEXT PRIMARY KEY,
+    uniprot_numbered INTEGER NOT NULL,
+    n_chains INTEGER NOT NULL,
+    problems TEXT NOT NULL
+)
+"""
+
+# Keyed by pdb_id -- the ligand the selector would dock, and whether it is held by nothing
+# the validators strip (docking.ligand_context): no covalent or metal bond in the file's
+# _struct_conn table, and no metal-containing group within 4 A. ccd_code records which
+# ligand was judged, since the docking pick can change with the Meeko results. A recorded
+# verdict; the pipeline filters nothing on it.
+_LIGAND_CONTEXT_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ligand_context (
+    pdb_id TEXT PRIMARY KEY,
+    ccd_code TEXT NOT NULL,
+    self_contained INTEGER NOT NULL,
+    links TEXT NOT NULL,
+    metal_contacts TEXT NOT NULL,
+    neighbours TEXT NOT NULL
+)
+"""
+
 # Keyed by pdb_id -- one fpocket run per structure. ``pockets`` stores each
 # PocketInfo's fields as a JSON list (score/druggability_score/volume/
 # pocket_number/fields), mirroring the uniprot_ids/assembly_ids JSON-list
@@ -316,6 +375,9 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.execute(_OLIGOMERIC_STATE_TABLE_SCHEMA)
     conn.execute(_ENTITY_COMPOSITION_TABLE_SCHEMA)
     conn.execute(_LITERATURE_TABLE_SCHEMA)
+    conn.execute(_SEQUENCE_RELATIVES_TABLE_SCHEMA)
+    conn.execute(_RESIDUE_NUMBERING_TABLE_SCHEMA)
+    conn.execute(_LIGAND_CONTEXT_TABLE_SCHEMA)
     conn.execute(_POCKET_TABLE_SCHEMA)
     conn.execute(_MEEKO_TABLE_SCHEMA)
     conn.execute(_OPENFF_PARAMETERIZATION_TABLE_SCHEMA)

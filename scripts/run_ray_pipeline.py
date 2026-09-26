@@ -28,9 +28,12 @@ from protein_selector.core.config import (
     candidate_search_from,
     complex_md_from,
     docking_from,
+    ligand_context_from,
     load_run_config,
     md_simulation_from,
     pocket_detection_from,
+    residue_numbering_from,
+    sequence_relatives_from,
 )
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.pipelines.course_candidates_pipeline import CourseCandidatesConfig
@@ -54,6 +57,9 @@ def _pipeline_config(path: Path, ids: list[str] | None) -> CourseCandidatesConfi
     return CourseCandidatesConfig(
         candidate_search=candidate_search_from(config),
         candidate_filter=candidate_filter_from(config),
+        sequence_relatives=sequence_relatives_from(config),
+        residue_numbering=residue_numbering_from(config),
+        ligand_context=ligand_context_from(config),
         md_simulation=md_simulation_from(config),
         pocket_detection=pocket_detection_from(config),
         docking=docking_from(config),
@@ -112,7 +118,11 @@ def main() -> None:
                     except Exception:
                         snapshot = None
                 print("\033[2J\033[H", end="")  # clear, home
-                print(render(build_view(args.db_path, snapshot), run_id, state))
+                view = build_view(
+                    args.db_path, snapshot,
+                    sequence_relatives_from(load_run_config(args.config)),
+                )
+                print(render(view, run_id, state))
                 print(f"\n  refreshing every {args.interval:g}s -- Ctrl-C to stop")
                 time.sleep(args.interval)
         except KeyboardInterrupt:
@@ -181,7 +191,8 @@ def main() -> None:
         return
 
     if args.plan or not args.run:
-        print(format_plan(plan_pipeline(args.db_path)))
+        relatives = sequence_relatives_from(load_run_config(args.config))
+        print(format_plan(plan_pipeline(args.db_path, relatives)))
         if not args.run:
             return
 
@@ -202,12 +213,23 @@ def main() -> None:
         )
         if on
     ]
-    logging.info("⚙️  %s -> lanes: %s", args.config, ", ".join(lanes) or "cheap lane only")
+    logging.info(
+        "⚙️  %s -> lanes: %s; sequence relatives (EBI phmmer): %s; numbering (SIFTS): %s; "
+        "ligand context (RCSB mmCIF): %s",
+        args.config,
+        ", ".join(lanes) or "cheap lane only",
+        "on" if config.sequence_relatives.enabled else "off",
+        "on" if config.residue_numbering.enabled else "off",
+        "on" if config.ligand_context.enabled else "off",
+    )
 
     survivors = run_pipeline_on_ray(
         RayPipelineConfig(
             candidate_search=config.candidate_search,
             candidate_filter=config.candidate_filter,
+            sequence_relatives=config.sequence_relatives,
+            residue_numbering=config.residue_numbering,
+            ligand_context=config.ligand_context,
             md_simulation=config.md_simulation,
             pocket_detection=config.pocket_detection,
             docking=config.docking,

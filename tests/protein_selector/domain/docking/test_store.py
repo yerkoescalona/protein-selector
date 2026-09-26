@@ -146,3 +146,26 @@ class TestPocketDetectionRoundTrip:
 
         assert len(loaded) == 1
         assert loaded["1UYD"].passed is True
+
+
+class TestLigandContextRoundTrip:
+    """One verdict per candidate, keyed by ``pdb_id``; the flag comes back a bool."""
+
+    def test_round_trip_and_upsert_in_place(self, db_path):
+        from protein_selector.domain.docking.ligand_context import LigandContextResult
+        from protein_selector.domain.docking.store import (
+            load_ligand_context,
+            upsert_ligand_context,
+        )
+
+        held = LigandContextResult("1KAO", "GDP", False, "metalc MG 2.13 Å", "MG 2.1 Å",
+                                   "MG 2.1 Å")
+        alone = LigandContextResult("1HBP", "RTL", True, "", "", "")
+        upsert_ligand_context([held, alone], db_path=db_path)
+        loaded = load_ligand_context(db_path=db_path)
+        assert loaded == {"1KAO": held, "1HBP": alone}
+        assert loaded["1HBP"].self_contained is True
+
+        upsert_ligand_context([LigandContextResult("1KAO", "GNP", True, "", "", "")],
+                              db_path=db_path)
+        assert load_ligand_context(db_path=db_path)["1KAO"].ccd_code == "GNP"

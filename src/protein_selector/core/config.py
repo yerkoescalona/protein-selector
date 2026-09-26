@@ -57,6 +57,48 @@ class ModelingLookupConfig:
 
 
 @dataclass
+class SequenceRelativesConfig:
+    """phmmer relatives search -- an annotation persisted to `sequence_relatives` (PLAN.md §40).
+
+    Not an exercise and not a validator: it never writes a `validation` row, and nothing
+    filters or ranks candidates on what it records.
+    """
+
+    enabled: bool = True
+    database: str = "swissprot"  # HMMER API database id; rp15/rp35 are unusable (§40).
+    max_identity: float = 0.95  # hits this identical to a kept sequence are one group.
+    min_relatives: int = 10  # `passed` means at least this many relatives remain.
+    max_workers: int = 4  # concurrent EBI jobs -- kept small to stay polite to EBI.
+    famsa_threads: int = 1  # threads per FAMSA alignment. Up to max_workers alignments
+    # run at once, so the lane uses at most max_workers * famsa_threads cores, and the Ray
+    # runner reserves exactly that for it.
+
+
+@dataclass
+class ResidueNumberingConfig:
+    """SIFTS numbering check -- a recorded verdict persisted to `residue_numbering`.
+
+    Not an exercise and not a validator: it never writes a `validation` row, and the
+    pipeline filters nothing on it. Whoever builds a course list does.
+    """
+
+    enabled: bool = True
+    max_workers: int = 4  # concurrent SIFTS + UniProt fetches -- small, EBI is shared.
+
+
+@dataclass
+class LigandContextConfig:
+    """Is the docked ligand held by a metal or a bond? A recorded verdict.
+
+    Persisted to `ligand_context`, never a `validation` row; the pipeline filters nothing
+    on it.
+    """
+
+    enabled: bool = True
+    max_workers: int = 4  # concurrent mmCIF downloads from RCSB.
+
+
+@dataclass
 class MdSimulationConfig:
     """Real OpenMM test-MD validator -- persisted as exercise "ex03". Conda-only, off by default."""
 
@@ -130,6 +172,40 @@ def candidate_search_from(config: dict) -> CandidateSearchConfig:
     return CandidateSearchConfig(
         max_candidates=config.get("max_candidates", CandidateSearchConfig().max_candidates),
         max_resolution=config.get("max_resolution", CandidateSearchConfig().max_resolution),
+    )
+
+
+def sequence_relatives_from(config: dict) -> SequenceRelativesConfig:
+    """The phmmer relatives annotation (§40). On unless `run_relatives` says otherwise.
+
+    The database stays in code on purpose: the HMMER server's RP15 and RP35 sets were found
+    to miss whole families (§40), so choosing it is not a run setting.
+    """
+    default = SequenceRelativesConfig()
+    return SequenceRelativesConfig(
+        enabled=bool(config.get("run_relatives", default.enabled)),
+        max_identity=float(config.get("relatives_max_identity", default.max_identity)),
+        min_relatives=int(config.get("relatives_min_relatives", default.min_relatives)),
+        max_workers=int(config.get("relatives_max_workers", default.max_workers)),
+        famsa_threads=int(config.get("relatives_famsa_threads", default.famsa_threads)),
+    )
+
+
+def residue_numbering_from(config: dict) -> ResidueNumberingConfig:
+    """The SIFTS numbering check. On unless `run_numbering` says otherwise."""
+    default = ResidueNumberingConfig()
+    return ResidueNumberingConfig(
+        enabled=bool(config.get("run_numbering", default.enabled)),
+        max_workers=int(config.get("numbering_max_workers", default.max_workers)),
+    )
+
+
+def ligand_context_from(config: dict) -> LigandContextConfig:
+    """The ligand-context check. On unless `run_ligand_context` says otherwise."""
+    default = LigandContextConfig()
+    return LigandContextConfig(
+        enabled=bool(config.get("run_ligand_context", default.enabled)),
+        max_workers=int(config.get("ligand_context_max_workers", default.max_workers)),
     )
 
 

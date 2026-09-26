@@ -11,6 +11,7 @@ other rows, PLAN.md §4b). `scripts/validate_one.py` is the thin CLI wrapper aro
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from protein_selector.core.config import (
@@ -20,10 +21,16 @@ from protein_selector.core.config import (
     MdSimulationConfig,
     ModelingLookupConfig,
     PocketDetectionConfig,
+    ligand_context_from,
+    residue_numbering_from,
+    sequence_relatives_from,
 )
 from protein_selector.core.report import build_report_table
 from protein_selector.domain.docking.store import load_ligand_ccd_codes
 from protein_selector.domain.structural_biology.rcsb_search import fetch_entry_metadata
+from protein_selector.nodes.align_relatives_node import align_relatives
+from protein_selector.nodes.check_ligand_context_node import check_ligand_context
+from protein_selector.nodes.check_numbering_node import check_numbering
 from protein_selector.nodes.check_simulability_node import check_simulability
 from protein_selector.nodes.count_literature_node import count_literature
 from protein_selector.nodes.detect_pocket_node import detect_pocket
@@ -56,7 +63,14 @@ def validate_single_pdb(
     run_complex_md: bool,
     force_refresh: bool,
 ) -> None:
-    """Run every stage for one PDB id: metadata -> simulability -> ligands/literature/modeling -> parameterizability/meeko -> md -> pocket -> dock -> complex_md. No checkpoints."""
+    """Run every stage for one PDB id, with no checkpoints.
+
+    metadata -> simulability -> ligands/literature/modeling -> parameterizability/meeko
+    -> md -> pocket -> dock -> complex_md -> the annotations (relatives, numbering,
+    ligand context) -> the summary. The annotations come after the slow lanes and a
+    failure in one is logged, never raised, so they can neither hold up nor abort MD or
+    docking, the same promise the Ray runner keeps.
+    """
     pdb_id = pdb_id.upper()
     logger.info("🔎 fetching metadata for %s", pdb_id)
     entries = fetch_entry_metadata([pdb_id])
@@ -196,7 +210,27 @@ def validate_single_pdb(
     elif ccd_codes and run_complex_md:
         logger.info("⏭️ %s: complex MD skipped (docking is off, needs a docked pose)", pdb_id)
 
+    _annotate(pdb_id, "align_relatives", lambda: align_relatives(
+        survivors, sequence_relatives_from(config), db_path, force_refresh=force_refresh
+    ))
+    _annotate(pdb_id, "check_numbering", lambda: check_numbering(
+        survivors, residue_numbering_from(config), db_path, force_refresh=force_refresh
+    ))
+    if ccd_codes:
+        _annotate(pdb_id, "check_ligand_context", lambda: check_ligand_context(
+            survivors, ligand_context_from(config), db_path, force_refresh=force_refresh
+        ))
+
     print_validate_one_summary(pdb_id, db_path)
+
+
+def _annotate(pdb_id: str, name: str, annotation: Callable[[], object]) -> None:
+    """Run one annotation; a bug in it is logged, never raised, like the Ray runner's."""
+    try:
+        annotation()
+    except Exception:
+        # Rows already stored stay stored; the rest are retried on the next run.
+        logger.exception("⚠️ %s: %s stopped; the rest of the run goes on", pdb_id, name)
 
 
 def print_validate_one_summary(pdb_id: str, db_path: Path) -> None:

@@ -3,13 +3,16 @@
 Two ligand-grain checks that answer different questions and can disagree -- RDKit
 sanitization is cheap and permissive (it eliminated 1.2% of ligands, §27a), Meeko
 parameterization is what Vina actually depends on (24.5%). Both are keyed by ligand, not
-by candidate: a ligand's chemistry does not depend on which entry binds it.
+by candidate: a ligand's chemistry does not depend on which entry binds it. After them,
+per candidate, the dockable pick and whether a metal or a bond holds it in its crystal
+(``check_ligand_context``, §42).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from protein_selector.nodes.check_ligand_context_node import CheckLigandContextNode
 from protein_selector.nodes.parameterize_ligand_node import (
     ParameterizeLigandNode,
     parameterize_ligand,
@@ -51,7 +54,9 @@ class ChemistryStage(Stage):
     """
 
     name = "chemistry"
-    nodes = (SanitizeLigandNode, ParameterizeLigandNode, SelectDockableNode,)
+    nodes = (
+        SanitizeLigandNode, ParameterizeLigandNode, SelectDockableNode, CheckLigandContextNode,
+    )
 
     def run(self, ctx: StageContext) -> StageResult:
         """Run this phase via its module-level ``run`` (the implementation)."""

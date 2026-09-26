@@ -21,6 +21,43 @@ min_residues: 50
 max_residues: 200
 max_resolution: 3.0
 
+# Sequence relatives (PLAN.md §40) -- ON by default. A cheap-lane annotation, not a
+# validator and never a filter: for each simulability survivor with a UniProt accession,
+# its UniProt chain is searched with phmmer against Swiss-Prot on EBI's HMMER web API and
+# the full-length hits are aligned locally with FAMSA. Four at a time
+# (SequenceRelativesConfig.max_workers); a first backfill over a whole store is thousands
+# of EBI jobs. A candidate is not searched again while its stored row was computed for its
+# current first UniProt accession with the current database and relatives_max_identity.
+# Needs network, no conda env. Set false to leave EBI alone for a run.
+run_relatives: true
+relatives_max_identity: 0.95  # hits this identical to a kept sequence count once; a new value re-searches
+relatives_min_relatives: 10   # sets the recorded `passed` flag only; a new value re-flags, no search
+relatives_max_workers: 4      # EBI jobs at once; keep it small, the server is shared
+relatives_famsa_threads: 1    # threads per alignment; the lane uses max_workers x this many cores.
+# On Ray it reserves at most that, and less on a small cluster: the three annotation lanes
+# only get the CPUs left after the largest chemistry, MD or docking task (annotation_cpus).
+
+# Residue numbering -- ON by default. A cheap-lane check, not a validator: for each
+# simulability survivor with a UniProt accession, SIFTS' residue-level map (EBI) says
+# whether every residue is numbered as UniProt numbers it, and the report records the
+# verdict (uniprot_numbered) with its reasons. The pipeline filters nothing on it; a
+# course list should. One SIFTS file and one UniProt entry per candidate, about 0.3 s;
+# a stored verdict is not checked again, even after the rule changes, unless the run sets
+# force_refresh (validate_one's --force-refresh; this file has no key for it). Needs
+# network, no conda env.
+run_numbering: true
+numbering_max_workers: 4     # SIFTS + UniProt fetches at once; EBI's file server is shared
+
+# Ligand context (PLAN.md §42) -- ON by default. A check after ligand chemistry, not a
+# validator: for each simulability survivor with a dockable ligand, the entry's mmCIF file
+# from RCSB says whether the ligand the docking step would pick is bonded to anything
+# (_struct_conn) or within 4 A of a metal or a metal-containing group, which the MD and
+# docking preparation strip. The report records the verdict (ligand_self_contained); the
+# pipeline filters nothing on it. A stored row is reused while it judged today's pick.
+# Picking needs rdkit (the validate extra). Set false to leave RCSB's file server alone.
+run_ligand_context: true
+ligand_context_max_workers: 4  # RCSB mmCIF downloads at once
+
 # Slow lane (PLAN.md §16b) -- ON by default as of 2026-07-19: both the MD and docking
 # validators are fully built, live-verified, and their conda env complete (PLAN.md
 # §17e/§18/§19), so `make ray-run` exercises the WHOLE pipeline (cheap lane + MD +

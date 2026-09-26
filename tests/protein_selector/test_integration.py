@@ -166,6 +166,9 @@ class TestPlanAndDashboardSeeTheSameRun:
         assert views["lookup_alphafold"].total == (
             plans["modeling"].already_done + plans["modeling"].pending
         )
+        assert views["align_relatives"].total == (
+            plans["relatives"].already_done + plans["relatives"].pending
+        )
 
 
 class TestTheStoreContractHolds:

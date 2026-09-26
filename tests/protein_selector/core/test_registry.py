@@ -255,7 +255,7 @@ class TestCardsLiveOnTheNodes:
             assert cls.__name__ == expected, f"{cls.__name__} should be {expected}"
 
     def test_collecting_the_graph_pulls_in_no_heavy_dependency(self):
-        # This is the property that makes cards-on-nodes safe. Collecting imports all 14
+        # This is the property that makes cards-on-nodes safe. Collecting imports all 15
         # node modules, so if any of them imported rdkit/openmm/vina/ray at module level,
         # merely asking "what produces pocket_detection?" would drag the whole validation
         # stack in -- the network-at-import problem §27d W1.2 had to undo, in a new place.
@@ -266,7 +266,7 @@ class TestCardsLiveOnTheNodes:
             [sys.executable, "-c",
              "import sys;"
              "from protein_selector.core.registry import discover_nodes;"
-             "assert len(discover_nodes()) == 14;"
+             "assert len(discover_nodes()) == 17;"
              "heavy = {'rdkit','openmm','vina','plip','pymol','ray','openff','meeko'};"
              "loaded = {k.split('.')[0] for k in sys.modules};"
              "assert not (loaded & heavy), sorted(loaded & heavy);"

@@ -117,7 +117,7 @@ def discover_nodes(refresh: bool = False) -> tuple[NodeSpec, ...]:
     fixed for report columns. Opening ``nodes/dock_ligand.py`` now shows that node's
     sockets; this function only gathers them.
 
-    Importing all 14 node modules is deliberately cheap: every heavy dependency in this
+    Importing all 17 node modules is deliberately cheap: every heavy dependency in this
     repo is imported lazily inside the function that needs it, so collecting the graph
     pulls in no rdkit, openmm, vina, ray or pymol. ``test_registry`` asserts that, because
     it is the property that makes this safe -- and the one W1.2 had to restore once.

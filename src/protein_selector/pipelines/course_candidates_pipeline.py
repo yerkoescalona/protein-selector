@@ -21,9 +21,12 @@ from protein_selector.core.config import (
     CandidateSearchConfig,
     ComplexMdSimulationConfig,
     DockingConfig,
+    LigandContextConfig,
     MdSimulationConfig,
     ModelingLookupConfig,
     PocketDetectionConfig,
+    ResidueNumberingConfig,
+    SequenceRelativesConfig,
 )
 from protein_selector.core.db import DEFAULT_DB_PATH
 from protein_selector.core.registry import STAGE_ORDER
@@ -46,6 +49,13 @@ class CourseCandidatesConfig:
     candidate_search: CandidateSearchConfig = field(default_factory=CandidateSearchConfig)
     candidate_filter: CandidateFilterConfig = field(default_factory=CandidateFilterConfig)
     modeling_lookup: ModelingLookupConfig = field(default_factory=ModelingLookupConfig)
+    sequence_relatives: SequenceRelativesConfig = field(
+        default_factory=SequenceRelativesConfig
+    )
+    residue_numbering: ResidueNumberingConfig = field(
+        default_factory=ResidueNumberingConfig
+    )
+    ligand_context: LigandContextConfig = field(default_factory=LigandContextConfig)
     md_simulation: MdSimulationConfig = field(default_factory=MdSimulationConfig)
     pocket_detection: PocketDetectionConfig = field(default_factory=PocketDetectionConfig)
     docking: DockingConfig = field(default_factory=DockingConfig)
@@ -83,6 +93,9 @@ def run(
             candidate_search=config.candidate_search,
             candidate_filter=config.candidate_filter,
             modeling_lookup=config.modeling_lookup,
+            sequence_relatives=config.sequence_relatives,
+            residue_numbering=config.residue_numbering,
+            ligand_context=config.ligand_context,
             md_simulation=config.md_simulation,
             pocket_detection=config.pocket_detection,
             docking=config.docking,

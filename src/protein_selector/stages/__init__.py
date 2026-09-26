@@ -6,9 +6,9 @@ One stage per file, named for **where you are** in the run, not what happens the
 A stage owns the ordering and concurrency of its nodes and nothing else. It may import
 nodes; it may not reach past them into a validator, an adapter or a store (§34c). The
 groupings here are not invented -- they are the concurrency structure the runner already
-had: ``annotation``'s three nodes are exactly the three that fan out together after
-screening, and ``validation``'s four are exactly the per-candidate chain
-(§17c/§18: md -> pocket -> dock -> complex_md).
+had: ``annotation``'s nodes are exactly the ones that fan out together after screening,
+and ``validation``'s are the per-candidate chain (§17c/§18: md -> pocket -> dock ->
+complex_md) plus the docking shortlist that decides which candidates enter dock.
 
 Note this folder previously held what are now ``nodes/`` -- see §34 N.4.
 """

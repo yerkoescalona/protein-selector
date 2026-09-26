@@ -195,7 +195,7 @@ class Node(ABC):
         """Run the node and check that it produced only what it declared.
 
         The place shared behaviour belongs -- output checking today, and the natural home
-        for timing and status reporting rather than copying either into 14 nodes.
+        for timing and status reporting rather than copying either into every node.
         """
         result = self.run(ctx)
         declared = {s.name for s in self.outputs}
