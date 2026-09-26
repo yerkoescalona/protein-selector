@@ -36,9 +36,20 @@ make demo        # needs network; a couple of minutes
 ```
 
 With base dependencies you get the cheap lanes (hard filters, simulability, ligands,
-literature, AlphaFold DB) and the script tells you which heavy stages it is skipping and
-why. Install the conda half (`make env-validation`) and the same command runs real OpenMM
-MD, real Vina docking with PLIP, and real GAFF2/AMBER protein+ligand complex MD.
+literature, AlphaFold DB, sequence relatives and residue numbering) and the script tells
+you which heavy stages it is skipping and why. Install the conda half
+(`make env-validation`) and the same command runs real OpenMM MD, real Vina docking with
+PLIP, and real GAFF2/AMBER protein+ligand complex MD.
+
+The sequence-relatives lane counts how many distinct relatives a candidate's protein has.
+It takes the UniProt chain the structure lies in, searches it with phmmer against
+Swiss-Prot on EBI's HMMER web API, aligns the full-length significant hits with FAMSA and
+keeps one sequence per group at least 95% identical. The count, a `passed` flag (10 or
+more) and the fraction of the chain the structure covers go into the report as recorded
+facts: nothing filters or ranks candidates on them. Each candidate is one EBI job plus a
+local alignment: 3 to 4 s each for 1FSZ, 2QD8 and 1Y9T, whose structures cover their whole
+chain, and 40 s for 1O4B, the Src SH2 domain, whose full 535-residue chain draws over 4,000
+hits (measured 2026-09-23).
 
 Because the draw is random, **no two runs are alike**, and whether a run reaches a working
 complex MD depends on what it drew. That is the honest demonstration: most PDB entries have
@@ -204,8 +215,20 @@ in `workflow/config.yaml`. Expect network traffic and a new sample on a first ru
 
 Which lanes run is set in [`workflow/config.yaml`](workflow/config.yaml), not by the command:
 `run_md`, `run_dock`, and `run_complex_md` (GAFF2/AMBER receptor+ligand complex MD, off by
-default because it needs `ambertools`). That one file holds every threshold and switch a run
-honours.
+default because it needs `ambertools`), plus three annotation lanes, all on by default:
+`run_relatives` (the phmmer search on EBI's HMMER web API), `run_numbering` (SIFTS'
+residue-level map from EBI's file server, plus UniProt, to check that every residue is
+numbered as UniProt numbers it) and `run_ligand_context` (each candidate's mmCIF file from
+RCSB, to check whether the docked ligand is held by a metal or a covalent bond). Set one
+`false` to leave that server alone for a run. That one file holds every threshold and
+switch a run honours.
+
+A first run of the relatives lane over a whole store is thousands of EBI jobs, one per
+simulability survivor. It runs four at a time (`SequenceRelativesConfig.max_workers`); keep
+it that small. A stored row is searched again whenever it was computed for another UniProt
+accession or with another `relatives_max_identity`, so changing `relatives_max_identity` on
+a full store re-submits one EBI job per candidate. A new `relatives_min_relatives` only
+re-flags the stored rows, with no search.
 
 Watch a run in progress, or start a persistent Ray cluster with its dashboard:
 

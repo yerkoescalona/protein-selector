@@ -9,10 +9,31 @@ The smallest unit of pipeline work. Each declares its input and output sockets, 
    :members:
 ```
 
+## `protein_selector.nodes.align_relatives_node`
+
+```{eval-rst}
+.. automodule:: protein_selector.nodes.align_relatives_node
+   :members:
+```
+
 ## `protein_selector.nodes.build_report_node`
 
 ```{eval-rst}
 .. automodule:: protein_selector.nodes.build_report_node
+   :members:
+```
+
+## `protein_selector.nodes.check_ligand_context_node`
+
+```{eval-rst}
+.. automodule:: protein_selector.nodes.check_ligand_context_node
+   :members:
+```
+
+## `protein_selector.nodes.check_numbering_node`
+
+```{eval-rst}
+.. automodule:: protein_selector.nodes.check_numbering_node
    :members:
 ```
 

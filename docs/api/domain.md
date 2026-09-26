@@ -2,10 +2,59 @@
 
 One package per discipline: structural biology, bioinformatics, docking, molecular dynamics, modeling. Each owns its own `store.py`.
 
+## `protein_selector.domain.bioinformatics.ebi_hmmer`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.bioinformatics.ebi_hmmer
+   :members:
+```
+
 ## `protein_selector.domain.bioinformatics.europe_pmc`
 
 ```{eval-rst}
 .. automodule:: protein_selector.domain.bioinformatics.europe_pmc
+   :members:
+```
+
+## `protein_selector.domain.bioinformatics.famsa`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.bioinformatics.famsa
+   :members:
+```
+
+## `protein_selector.domain.bioinformatics.models`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.bioinformatics.models
+   :members:
+```
+
+## `protein_selector.domain.bioinformatics.rcsb_uniprot_regions`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.bioinformatics.rcsb_uniprot_regions
+   :members:
+```
+
+## `protein_selector.domain.bioinformatics.residue_numbering`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.bioinformatics.residue_numbering
+   :members:
+```
+
+## `protein_selector.domain.bioinformatics.sequence_relatives`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.bioinformatics.sequence_relatives
+   :members:
+```
+
+## `protein_selector.domain.bioinformatics.sifts`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.bioinformatics.sifts
    :members:
 ```
 
@@ -16,10 +65,24 @@ One package per discipline: structural biology, bioinformatics, docking, molecul
    :members:
 ```
 
+## `protein_selector.domain.bioinformatics.uniprot_entry`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.bioinformatics.uniprot_entry
+   :members:
+```
+
 ## `protein_selector.domain.docking.fpocket`
 
 ```{eval-rst}
 .. automodule:: protein_selector.domain.docking.fpocket
+   :members:
+```
+
+## `protein_selector.domain.docking.ligand_context`
+
+```{eval-rst}
+.. automodule:: protein_selector.domain.docking.ligand_context
    :members:
 ```
 
