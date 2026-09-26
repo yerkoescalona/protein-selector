@@ -13,11 +13,11 @@ The single-PDB workflow audit that motivated this rebuild is **§22** (new).
 
 ---
 
-## Open work (generated 2026-09-02)
+## Open work (generated 2026-09-25)
 
 Every open item in this file, in one place. Regenerate with `make plan-index`;
 the source of truth is the `- [ ]` boxes in the sections themselves, each
-carrying its own `Done when:` check. **82 open, 77 done.**
+carrying its own `Done when:` check. **97 open, 79 done.**
 
 | Section | Open | Items |
 |---|---|---|
@@ -37,6 +37,9 @@ carrying its own `Done when:` check. **82 open, 77 done.**
 | §37 | 2 | I.3, I.4 |
 | §38 | 2 | C.4, C.5 |
 | §39 | 4 | S.4, S.5, S.6, S.7 |
+| §40 | 5 | A.1, A.2, A.4, A.6, A.7 |
+| §41 | 3 | B.1, B.2, B.3 |
+| §42 | 7 | C.1, C.2, C.3, C.4, C.5, C.6, C.7 |
 
 ## Section map
 
@@ -46,6 +49,9 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§42** | **Ligand context (2026-09-24).** `check_ligand_context`: is the ligand the docking step would pick (the copy `pymol_align` extracts) bonded to anything in `_struct_conn`, or within 4 Å of a metal or a metal-containing group? One row per candidate with a dockable ligand in `ligand_context`. A recorded verdict, never a filter or a ranking input. |
+| **§41** | **Residue numbering (2026-09-24).** `check_numbering`: does the structure number every residue as UniProt does, the residues PDBFixer would rebuild included? SIFTS' residue-level map, three rules per chain, one row per candidate in `residue_numbering`. A recorded verdict, never a filter or a ranking input. |
+| **§40** | **Sequence relatives (2026-09-23).** `align_relatives`: the candidate's UniProt chain searched with phmmer against Swiss-Prot, full-length hits aligned with FAMSA, grouped at 95%, one row per candidate in `sequence_relatives`. A recorded annotation like the literature count: no validator, no filter, no ranking input. |
 | **§39** | **SLURM (2026-08-29): live.** Config generated for this hardware; cluster running and `sbatch` jobs completing. Found two real bugs — an 86-byte truncated config, and a sbatch script that put the interpreter on PATH but not its binaries. |
 | **§38** | **One config file + SLURM (2026-08-29).** `make ray-run` honours all of `workflow/config.yaml` (it was reading 3 of 27 keys); `slurm/run_pipeline.sbatch` runs the pipeline as one allocation. |
 | **§37** | **Integration (2026-08-29).** 17 hermetic tests over the seams between tiers, plus a live full-chain run. Found a real Ray constraint: cluster and driver must share an exact Python version, so the venv head cannot serve conda slow lanes. |
@@ -2138,16 +2144,20 @@ src/protein_selector/
 ├── pipelines/   course_candidates · single_pdb · demo_slice · recompute_docking
 ├── stages/      screening · annotation · chemistry · validation · reporting
 ├── nodes/       search_candidates · check_simulability · resolve_ligands · count_literature
-│               lookup_alphafold · sanitize_ligand · parameterize_ligand · select_dockable
+│               lookup_alphafold · align_relatives · check_numbering · sanitize_ligand
+│               parameterize_ligand · select_dockable · check_ligand_context
 │               detect_pocket · simulate_md · resolve_docking_targets · dock_ligand
 │               simulate_complex_md · build_report
 ├── domain/
 │     structural_biology/  rcsb_search · rcsb_composition · models · validation · store
-│     bioinformatics/      europe_pmc · store
+│     bioinformatics/      europe_pmc · uniprot_entry · rcsb_uniprot_regions · ebi_hmmer
+│                          famsa · sifts · models · sequence_relatives · residue_numbering
+│                          store
 │     modeling/            alphafold_db · validation · store
 │     molecular_dynamics/  openmm_md · amber_complex · openff · pymol_align · validation · store
 │     docking/             vina · plip · fpocket · meeko_ligand · rdkit_ligand · obabel_prep
-│                          rcsb_pdb_file · ligands · native_ligand · target · validation · store
+│                          rcsb_pdb_file · ligands · native_ligand · target · ligand_context
+│                          validation · store
 ├── core/        db · paths · runs · validation_result · validation_store · difficulty
 │               calibration · report · report_schema · config · registry
 ├── runners/     ray_runner · status_board
@@ -2670,3 +2680,577 @@ board and two views, each green on its own -- which is precisely the situation w
       visible to SLURM. Not declared in `slurm.conf` and not useful for the CUDA-based
       design tooling §30 anticipates, but worth knowing it exists before assuming the
       machine has no GPU at all.
+
+## 40. Sequence relatives per candidate: `align_relatives` (2026-09-23)
+
+**What it does.** A fourth annotation node, beside `resolve_ligands`, `count_literature` and
+`lookup_alphafold`, fanned out with them after screening. For every simulability survivor
+**with a UniProt accession** it follows the procedure as it is taught:
+
+1. **The query is the full protein.** The candidate's first UniProt accession (the one
+   `lookup_alphafold` uses) gives the UniProt sequence and its "Chain" features, the mature
+   chains; RCSB's `rcsb_polymer_entity_align` gives the UniProt range the PDB entity covers.
+   The query is the Chain feature overlapping that range most; on a tie the **shortest**,
+   because a polyprotein lists the whole precursor and every cleaved product (HIV-1
+   protease, 2QD8, resolves to "Protease" 501-599, not "Gag-Pol polyprotein" 2-1447). With
+   no Chain feature, the whole UniProt sequence.
+2. **Search:** phmmer against UniProtKB/Swiss-Prot on EBI's HMMER web API. The significant
+   hits are `stats.nincluded`.
+3. **Retrieve** the full-length sequence of every significant hit (`fullfasta`), not the
+   matched stretch.
+4. **Align** query and full-length hits into one real multiple sequence alignment with FAMSA
+   (`pyfamsa`, UPGMA guide tree).
+5. **Group at 95%:** greedy, query first, then the hits best first; a hit is kept only if
+   its identity to every kept sequence is below 0.95, identity counted over the query's
+   residue columns where both sequences have a residue.
+
+It writes **one row per candidate** to `sequence_relatives`: `uniprot_accession` (the
+accession the search was asked for, not UniProt's primary one), `chain_start`/`chain_end` (the chain used as the query), `query_length`,
+`structure_start`/`structure_end` (the UniProt range the PDB entity covers),
+`structure_coverage` (the fraction of the chain inside that range), `database`, `n_hits`,
+`n_relatives` (after grouping, the query never counted), `alignment_columns`,
+`median_identity` (kept relatives against the query, NULL when there are none), the two
+thresholds, and `passed` (`n_relatives >= min_relatives`, default 10). The report carries
+`sequence_relatives_count`, `sequence_relatives_passed` and `structure_coverage` next to
+`literature_count`. `run_relatives` in `workflow/config.yaml` switches the lane (on by
+default). Code: `domain/bioinformatics/sequence_relatives.py` (the pure logic, the
+`SequenceRelativesResult` row and the composing `find_sequence_relatives`), one adapter per
+external tool beside it in the §34c shape (`uniprot_entry.py`, `rcsb_uniprot_regions.py`,
+`ebi_hmmer.py`, `famsa.py`), `models.py` (the dependency-free types and
+`SequenceSearchError` the adapters hand to the logic), `nodes/align_relatives_node.py`,
+`SequenceRelativesConfig`.
+
+**No automatic rules (the lecturer's decision).** `passed` is a recorded flag and nothing
+else. Nothing anywhere excludes, down-ranks, re-ranks or gates a candidate on `passed` or
+on `structure_coverage`: students evaluate thin families, the lecturer evaluates domain
+cases. The ranking key (`rank_report_rows`) is unchanged, and the node writes no
+`validation` row, fills no exercise slot and feeds no difficulty score. `build_report`
+declares the table as an optional input, as it does `pocket_detection`: it is
+legitimately empty while the lane is off or before its first run.
+
+**Why `structure_coverage` is recorded.** On the store as measured before this design was
+settled (its 2,433 simulability survivors with a UniProt alignment), 70.0% of structures
+are the whole protein, 6.5% a whole chain cut from a precursor or polyprotein, and 23.5% a
+domain of a bigger protein. A domain construct still searches with its whole chain, since
+the relatives of the protein are what is wanted, so its count describes the full protein
+and can differ from what a search with the crystallised domain would give (1O4B, the Src
+SH2 domain, covers 20% of its chain). The column keeps those cases visible instead of
+filtering them.
+
+**Why Swiss-Prot.** It is the reviewed section of UniProtKB (503,053 sequences in the
+server's 2025_01 release, `stats.nseqs` on 2026-09-23), small enough that most searches
+finish in seconds. The reference-proteome subsets were tested live first and
+**rejected: rp15 and rp35 are broken** on this server (phmmer for E. coli DapB, 1DRW,
+found no bacterial DapB at all in rp15). Tubulins and other superfamily members among the
+hits are expected (FtsZ shares the tubulin GTPase fold), so there is deliberately no
+family, coverage or identity-floor filter on the hits.
+
+Decisions worth keeping:
+
+* **Not the PDB sequence, not phmmer's own alignment.** An earlier, never-committed version
+  searched with the PDB entity's sequence and counted phmmer's query-anchored hit rows
+  (the `afa` download). Those rows are the matched stretches, one per domain, with every
+  column outside the query dropped: a description of the hits against one construct, not
+  an alignment of the proteins. The PDB sequence also carries tags, mutations and
+  truncations. The classic procedure (search, fetch the full proteins, align them all,
+  reduce redundancy) replaced it.
+* **Chain choice edge cases.** No Chain feature overlapping the structure at all (a
+  structure of a propeptide, say) falls back to the whole UniProt sequence. When RCSB
+  aligns no entity to the accession, `structure_*` are NULL and the query is the lone
+  Chain feature if there is exactly one, otherwise the whole sequence.
+* **Coverage counts residues, not the span.** `structure_coverage` is the number of chain
+  positions inside the merged aligned regions over the chain length, so a structure whose
+  alignment has a gap is not credited with the gap. `structure_start`/`structure_end` are
+  the outer bounds of those regions.
+* **Rank order and row order.** The `fullfasta` file lists the hits in rank order, best
+  first: for 2QD8 its 95 records came in exactly the order of the result's included hits.
+  FAMSA returns rows in guide-tree order; they are put back in input order before grouping.
+* **Grouping runs on the query's columns.** Only the columns where the query has a residue
+  are kept, so the work scales with the query's length, not the alignment's width: 1O4B's
+  alignment of 4,242 sequences is 32,097 columns wide, but the grouping runs on its 535
+  query columns in 2.4 s.
+* **Both inclusion thresholds are pinned** in the request: full-sequence E <= 0.01 (`incE`)
+  and domain conditional E <= 0.03 (`incdomE`). These are the EBI server's own defaults
+  (its OpenAPI `SearchRequestSchema`, re-read 2026-09-23), so pinning them changed no count;
+  it stops a server-side default change from silently changing what "significant" means.
+* **FAMSA can kill the process; a guard stops it.** pyfamsa 0.7.0 with the UPGMA guide
+  tree segfaults when any two input sequences share no standard residue, one of the 20
+  amino acids (reproduced 2026-09-23, e.g. `ACDEFGHIKLMNPQ` with `WWWWWWWWW`; the `sl`
+  and `nj` trees do not). The ambiguity codes do not count as shared: `ACDEF` with
+  `XXXXX`, `ACDB` with `WWB`, `ACDZ` with `WWZ` and `ACDX` with `WWX` each crash it too,
+  while `ACDEF` with `WWWA` aligns. Real significant hits always share residues, but a
+  crash would take every other candidate in the process down with it, so
+  `align_sequences` refuses such a set with `SequenceSearchError` before calling FAMSA,
+  building each sequence's residue set from the 20 standard amino acids only (an all-X
+  sequence has none and is refused). Concurrent alignments in one process are fine
+  (checked with four threads).
+* **Residues outside FAMSA's alphabet** (U, O, J and anything unknown) are aligned as X.
+* **No accession, no row.** A candidate without a UniProt accession has no chain to search:
+  the node skips it (not a failure, which would be retried forever), and `plan_pipeline`
+  counts relatives against survivors *with* an accession, the same fix it already carries
+  for modeling.
+* **One failure type.** `find_sequence_relatives` raises `SequenceSearchError` for every
+  way a search can fail (transport, HTTP status, deadline, an unreadable answer such as a
+  truncated gzip body), with the original exception as its cause. The node catches that
+  and nothing else, and never imports `requests`: transport stays in the domain (§34c).
+* **Failure stores nothing; zero hits stores a row.** A failed search is logged and leaves
+  the candidate pending for the next run, the rule the rest of the store follows.
+  `n_hits = 0` is a real answer and is stored. **Any other exception is a bug:** the node
+  starts no further search (queued ones are cancelled, so EBI is not hit for results that
+  would be thrown away), lets the running ones finish, stores what they found, and
+  re-raises.
+* **A generous deadline.** Searches usually take 2-8 s, but one Swiss-Prot job took 257 s
+  end to end during the design work, so one search has 600 s, and polling backs off from
+  1 s to at most 10 s between asks.
+* **A row is reused only for the same protein under the settings that set its count.**
+  A candidate is searched again, and its row overwritten, when the stored row was
+  computed for another accession than the candidate's current first one, or with another
+  `database` or `max_identity`. A changed `min_relatives` searches nothing: it only sets
+  `passed`, so `with_min_relatives` recomputes the flag from the stored count and the row
+  is upserted (the run's `reflagged` list). Changing `relatives_max_identity` on a full
+  store therefore re-submits one EBI job per stored candidate; changing
+  `relatives_min_relatives` sends none. One predicate, `is_reusable`, decides this for
+  both `align_relatives` and `plan_pipeline`, so the plan and the run agree. Because the
+  row records the accession that was asked for, a candidate listed under a secondary
+  accession is searched once, not on every run.
+* **The status board shows what the store cannot.** A failed search persists no row, so
+  the `align_relatives` step's detail carries the failed count, and a run in which every
+  search failed (an EBI outage) marks the step failed **without raising**: the slow lanes
+  do not depend on this annotation and still run.
+* **It never holds up or aborts the slow lanes.** On Ray the relatives, numbering (§41)
+  and ligand-context (§42) tasks start with the rest of their stage but are awaited only
+  after the slow lanes, and a bug in one is logged and marked failed on the board, never
+  raised. Their CPU reservations come from `annotation_cpus`: the cluster's CPUs minus the
+  largest chemistry or slow-lane task (1 CPU, or `md_threads` with MD or complex MD on,
+  or `dock_threads` with docking on), so such a task always fits beside them. Relatives
+  is served first, up to `max_workers * famsa_threads`, since FAMSA is real CPU work;
+  numbering and ligand context get at most one CPU each. A lane switched off, or one the
+  budget cannot cover, reserves none and shares cores instead of waiting. On a 4-CPU
+  cluster with MD on at `md_threads: 2`, relatives gets 2 and the other two 0
+  (`test_a_four_cpu_cluster_keeps_room_for_md`). `validate_one` runs the three
+  after complex MD, just before its summary, and logs a bug in one instead of raising.
+* **Import stays offline.** UniProt and RCSB are queried with plain `requests`, not
+  `rcsbapi`, which fetches its schema at import time (§27d W1.2), and `pyfamsa` is imported
+  inside the function that aligns. The same reasoning moved `core/config.py`'s
+  `ExperimentalMethod` import to `models.py`, since every node that reads its config
+  imports that module.
+
+Measured live on 2026-09-23 through the node itself, against a temporary store, four
+workers:
+
+| PDB | UniProt | chain (query) | structure | coverage | hits | columns | relatives | median identity | passed |
+|---|---|---|---|---|---|---|---|---|---|
+| 1FSZ | Q57816 | 1-364 | 1-364 | 1.00 | 165 | 1,282 | 107 | 0.414 | yes |
+| 2QD8 | P03367 | 501-599 (Protease) | 501-599 | 1.00 | 95 | 2,579 | 55 | 0.588 | yes |
+| 1O4B | P12931 | 2-536 | 145-252 | 0.20 | 4,241 | 32,097 | 3,227 | 0.170 | yes |
+| 1Y9T | P0A1X2 | 24-142 | 28-142 | 0.97 | 2 | 142 | 0 | none | no |
+
+1Y9T's two significant hits are both within 95% of its chain, so it is stored with 0
+relatives and `passed` false. Timings: 3.3-4.3 s end to end for 1FSZ, 2QD8 and 1Y9T;
+39.5 s for 1O4B (phmmer and download 17.8 s, FAMSA 18.3 s over sequences up to 8,886
+residues, grouping 2.4 s), with a peak resident size of about 1 GB for the process. A
+second run over the same entries made no request at all: every row was already stored
+under the current settings.
+
+**The identity definition moves the count.** Counting identity over *all* alignment columns
+where both sequences have a residue, instead of only the query's columns, gives 112
+relatives for 1FSZ (38 of them tubulins or CetZ by entry name) instead of 107 (37). The
+112 of the design measurement reproduces exactly under that reading. The code uses the
+query's columns, the definition the course's own exercise notebook uses, so both report
+the same count for the same protein (A.5).
+
+**Before the first full run.** Every candidate costs one EBI phmmer job plus a local FAMSA
+alignment, so a first backfill over the roughly 2,480 simulability survivors is thousands of
+EBI jobs. Keep `max_workers` at 4. From the four candidates above, a rough estimate (not a
+measurement) is a couple of hours, dominated by domain constructs whose whole chain draws
+thousands of full-length hits; four such alignments at once can take several GB of memory.
+`run_relatives: false` skips the lane for a run.
+
+### 40a. Open
+
+- [ ] **A.1** Run `align_relatives` over the course's current candidates and re-read the
+      below-10 set. The query changed (UniProt chain instead of the PDB entity) and so did
+      the counting (a FAMSA alignment of full-length hits instead of phmmer's domain rows),
+      so the set can move in either direction. *Done when:* the store holds a row for each
+      current candidate and the set is confirmed or corrected.
+- [ ] **A.2** Rows do not record the Swiss-Prot release they were searched against, so a
+      count from 2025_01 and one from a later release look alike. *Done when:* the release
+      (from `/search/databases`) is stored with each row, or the decision not to is recorded.
+- [x] **A.3** A stored row used to be skipped even when `max_identity` or `min_relatives`
+      (or `database`) had since changed. *Done when:* a threshold change re-searches the
+      affected rows, or the runbook states that it needs `force_refresh`. **Done
+      2026-09-23:** a changed `database` or `max_identity` re-searches the row
+      (`test_a_row_counted_under_other_settings_is_searched_again`); a changed
+      `min_relatives` only re-flags it from the stored count, with no search
+      (`test_a_new_min_relatives_reflags_without_searching`). Since 2026-09-25 a row
+      stored for another accession is searched again too
+      (`test_a_row_for_another_accession_is_searched_again`).
+- [ ] **A.4** `CandidateEntry.uniprot_ids` follows RCSB's polymer-entity order, which is not
+      fixed (4HHB came back alpha first in one call and beta first in the next two,
+      2026-09-23), so for a heteromer the first accession can change between fetches. That
+      moves which protein this node searches and which AlphaFold DB entry
+      `lookup_alphafold` reads. The row records the accession it was asked for, and since
+      2026-09-25 a row stored for another accession is searched again, so the stored count
+      always belongs to the current first accession; which protein that is still follows
+      RCSB's order. The cause is in
+      `rcsb_search._parse_entry`, which `.claude/CLAUDE.md` says to re-verify live after
+      any change. *Done when:* the order is fixed (for example by entity id) and
+      re-verified live, or the decision to leave it is recorded.
+- [x] **A.5** Identity definition for the 95% grouping. Settled 2026-09-24 on the query's
+      residue columns (107 relatives for 1FSZ), because the course's exercise notebook
+      groups the same way and the two should report the same count. Chosen for that
+      consistency, not by an explicit ruling from the lecturer: reopen if the all-columns
+      reading (112 for 1FSZ) is wanted, and change the notebook with it.
+- [ ] **A.6** First backfill over every simulability survivor with an accession, at four
+      workers, watching EBI failures and memory. *Done when:* `make ray-plan` shows
+      `relatives` with nothing pending, or the candidates still failing are listed with
+      their reason.
+- [ ] **A.7** The 95% grouping has no minimum overlap. Identity is counted over the query
+      columns where both rows have a residue, however few: two rows sharing one such
+      column with the same residue there score 100% and count as one group, and two rows
+      sharing none never block each other. So a thin overlap can drop a distinct protein,
+      lowering `n_relatives`, and the same thin overlaps feed `median_identity`.
+      Reproduced with `filter_redundant` (2026-09-25): query `ACDEFGHIKLMNPQRSTVWY`; hit0
+      `ACDEFGWWWW` then 10 gaps is kept; hit1, 9 gaps then `WYYYYYSTVWY` (another
+      protein), shares only query column 10 with hit0, where both have W, and is dropped
+      (`[0]`); a hit of `A` then 19 gaps is dropped as a twin of the query (`[]`). In real
+      FAMSA output this can happen with Swiss-Prot fragments and with multidomain hits
+      whose residues land sparsely in a domain query's columns. A.5 settled which columns
+      count, not how many must be shared. The course's exercise notebook groups the same
+      way, so the two change together or not at all. *Done when:* a minimum number or
+      fraction of shared columns is chosen and applied in `filter_redundant`,
+      `identities_to_query` and the notebook, and 1FSZ's count is re-measured, or the
+      decision to leave it is recorded.
+
+## 41. Residue numbering per candidate: `check_numbering` (2026-09-24)
+
+**What it does.** A fifth annotation node beside `align_relatives`, fanned out with the
+others after screening. For every simulability survivor **with a UniProt accession** it
+asks whether the structure numbers its residues the way UniProt numbers the protein:
+
+1. **SIFTS' residue-level map.** One `GET` of
+   `https://ftp.ebi.ac.uk/pub/databases/msd/sifts/xml/{pdb_id}.xml.gz` gives every residue
+   of every chain, resolved or not, with the number the PDB file gives it (none when
+   unresolved) and its UniProt accession and position.
+2. **UniProt's length** for every accession SIFTS names, from the UniProt sequence.
+3. **The rule, per chain SIFTS maps onto UniProt**, judged against the accession most of
+   its residues map to:
+   1. every resolved residue that maps onto UniProt carries its UniProt position as its
+      number, with no insertion code;
+   2. no resolved residue UniProt does not have (an expression tag, an extra start, a
+      residue mapped to another accession) sits on a number from 1 to UniProt's length.
+      The number is read without its insertion code, since MDAnalysis reads `50A` as
+      residue 50 to a `resid 50` selection;
+   3. the residues the course's MD preparation would rebuild obey rules 1 and 2 as well,
+      and none is rebuilt below number 0 (0 itself passes): a rebuilt residue UniProt has
+      lands on its UniProt position, and one UniProt does not have lands outside 1 to
+      UniProt's length. A misplaced rebuilt residue is not reported when rule 1 already
+      found the chain's numbering off, since the run inherits that offset. The check
+      below 0 also runs on the chains SIFTS maps nowhere (see "Why rule 3").
+
+Which residues are rebuilt, and on which numbers, is PDBFixer's answer, reproduced by
+`rebuilt_numbers` on SIFTS' sequence, which stands in for the file's SEQRES. A chain
+PDBFixer cannot match to its sequence gets nothing rebuilt and so cannot break rule 3 or
+wrap (3ERO: 14 unresolved residues in SIFTS, none rebuilt).
+
+It writes **one row per candidate** to `residue_numbering`: `uniprot_numbered`,
+`n_chains` (the chains SIFTS maps onto UniProt, the ones rules 1-3 judged; an unmapped
+chain checked only for the wrap is not counted) and `problems`, one sentence per failure,
+where chains that fail the same way share one sentence (`chains A, B: every residue
+numbered 1 below its UniProt position`). The report carries `uniprot_numbered` and
+`numbering_problems`. `run_numbering` in `workflow/config.yaml` switches the lane (on by
+default) and `numbering_max_workers` sets its threads (4). Code:
+`domain/bioinformatics/residue_numbering.py` (the rule, `rebuilt_numbers`, the
+`ResidueNumberingResult` row and the composing `find_residue_numbering`), `sifts.py` (the
+adapter), `SiftsResidue` and `NumberingCheckError` in `models.py`,
+`nodes/check_numbering_node.py`, `ResidueNumberingConfig`. On Ray and in `validate_one`
+it runs like the relatives lane (§40): awaited after the slow lanes, a bug logged rather
+than raised, at most one reserved CPU.
+
+**Why it exists.** The course's exercises compare residues by number with sources that
+count in UniProt positions: UniProt's annotated sites, the AlphaFold DB model,
+AlphaMissense, conservation from an alignment of the UniProt sequence. A structure
+numbered otherwise pairs the wrong residues in every such comparison, and nothing warns.
+Of the 27 course candidates of 2026-09-24, 12 were numbered otherwise, mostly the
+literature's mature-protein numbering (a first methionine, a signal peptide or a
+propeptide left uncounted); superposed on their AlphaFold model by residue number they
+gave 3.3-27 Å instead of 0.3-1.6 Å. The rule is the lecturer's: where a chain starts does
+not matter, a residue carrying a number other than its UniProt position does (if UniProt
+is MACK and the structure holds -A-K, then A and K are residues 2 and 4).
+
+**No automatic rules.** The same contract as §40: `uniprot_numbered` is a recorded fact.
+Nothing excludes, ranks or gates a candidate on it, and the node writes no `validation`
+row, fills no exercise slot and feeds no difficulty score. Whoever builds a course list
+filters on it; the lecturer did on 2026-09-24. `build_report` declares the table as an
+optional input.
+
+**Why rule 3.** The course's MD preparation (ex03) runs PDBFixer's `findMissingResidues`,
+rebuilds what it finds and writes with `keepIds=True`, so a rebuilt residue is compared by
+number like any other. Read in PDBFixer 1.12's source (`pdbfixer.py`): a chain is rebuilt
+only if its resolved residues, laid out by number (an insertion code pushing its residue
+and every later one up by one), match the SEQRES sequence at some offset, the first that
+fits (lines 894-921). Each unresolved run at the chain start or in an internal gap is
+numbered back from the resolved residue after it (line 631), the run at the chain end
+forward from the last resolved residue (line 698), and every number is written modulo
+10000 (line 780). So an unresolved tag in front of a UniProt-numbered start lands on
+UniProt's numbers (11IF's His tag on 19-26), and a number below 0 wraps: -1 is written as
+9999, while 0 stays 0. MDAnalysis 2.10 (`PDBParser.py`, lines 248 and 303-307) adds 10000
+to a residue number more than 5000 below the one before it and keeps that shift for the
+rest of the file, across chains, so every later residue is renumbered. That crossing is
+why the wrap is checked on unmapped chains too. 1E98 (a three-residue tag, then Met1 and
+Ala2, all unresolved before Ala3) is the case that showed it: real PDBFixer writes 9998,
+9999, 0, 1, 2 there.
+
+Tested on 2026-09-25, not assumed: `rebuilt_numbers` gave the same numbers as real
+PDBFixer 1.12 on every chain of 50 entries (insertion codes, indels, several chains,
+thrombin light chains among them); the one difference is a residue name, PDBFixer
+rebuilding 2ATE's MSE as MET. Through MDAnalysis 2.10, 1E98 shifted so its rebuilt start
+lands on 0 renumbered no residue, and landing on -1 renumbered 214 of 215; a two-chain
+file with chain A going 9999, 0, 1 gave chain B resids 10001 and 10002.
+
+**Why SIFTS, and not RCSB.** RCSB's `rcsb_polymer_entity_align` (which §40 reads for the
+coverage), RCSB's 1D coordinate server and PDBe's segment endpoints all describe a chain
+as one ungapped block, so a construct with a deletion puts every residue after it on the
+wrong UniProt position: live-verified 2026-09-24 on 3ERO (six residues deleted) and 1UCD
+(one). PDBe's updated mmCIF mapped 3EIG to the isoform P00374-2, where the SIFTS XML maps
+it to P00374. Only the residue-level XML places every residue.
+
+Decisions worth keeping:
+
+* **Every chain is judged, not only the ligand's.** A heteromer with one partner numbered
+  otherwise fails as a whole; `problems` names the chain, so the reader can decide.
+* **A chain mapping onto two UniProt entries** (a fusion) is judged against the accession
+  most of its residues map to, and the other accession's residues count as not UniProt's
+  (rule 2).
+* **Nothing to line up is a failure.** A chain SIFTS maps nowhere (a peptide, say) is not
+  judged by rules 1-3 and not counted in `n_chains`, but it is still checked for a
+  rebuilt number below 0; a candidate with no chain mapped at all fails with `no chain
+  maps onto UniProt`.
+* **Without a length, rule 2 is not guessed.** The pure function leaves rule 2 unchecked
+  for an accession it has no length for, for resolved and rebuilt residues alike;
+  `find_residue_numbering` never gets there, since a UniProt fetch failure fails the whole
+  check.
+* **One failure type.** `find_residue_numbering` raises `NumberingCheckError` for every way
+  the check can fail (no SIFTS file, every attempt refused or every download corrupt, an
+  unreadable document or residue number, a UniProt fetch failure), with the original
+  exception as its cause. The node catches that and nothing else and never imports
+  `requests` (§34c).
+* **EBI's file server refused about half the HTTPS connections on 2026-09-24**, while EBI's
+  REST API and RCSB answered normally, so the fetch tries five times, 2, 4, 6 and 8 s
+  apart. A download that does not decompress (cut short or corrupt gzip) counts as a
+  failed attempt too. A 404 is an answer, not an outage: the entry has no SIFTS file, and
+  it is not retried.
+* **Failure stores nothing.** A failed check is logged and leaves the candidate pending for
+  the next run. Any other exception is a bug: queued checks are cancelled, running ones
+  finish and are stored, and the node re-raises. The runner's task catches that, marks the
+  step failed on the status board and lets MD and docking go on; a run in which every check
+  failed also marks the step failed, since a failure persists no row.
+* **A stored verdict does not depend on the run's settings**, so the plan counts a row for a
+  survivor with an accession as done. `force_refresh` checks again. It does depend on the
+  rule: the node never re-checks a stored row, so a verdict written before a rule change
+  keeps its old answer until a `force_refresh` run (B.1).
+* **Import stays offline.** `requests` and the adapters are imported inside
+  `find_residue_numbering`; the store and the report import only the row type.
+
+Measured on 2026-09-24, under the first version of rule 3 (it checked only that an
+unresolved start fits in front of the first resolved residue without going below 1):
+
+* **Against the hand analysis.** The rule, run offline on the saved SIFTS files of the 27
+  course candidates plus 1FSZ, gave the same verdict for all 28: 14 pass (the 11 course
+  candidates, 1FSZ, 1Y9T and 2JDC).
+* **Live through the node**, on a copy of the store: 1HBP passes; 2MYC fails (every residue
+  1 below its UniProt position); 1E98 fails rule 3; 4HHB fails on all four chains (every
+  residue 1 below).
+* **The other 65 candidates that pass all four validators:** 21 pass, 44 fail. Of the
+  failures, 31 carry a constant offset below UniProt, 8 an unresolved start that would be
+  rebuilt below 1, 5 a residue UniProt does not have on one of its numbers, 4 numbering
+  that departs from UniProt partway (an indel), 2 insertion codes and 1 a constant offset
+  above; a candidate can fail more than one way. Across all 92, 34 pass.
+* **The 21 that passed modeling, MD and docking but never reached complex MD:** 8 pass,
+  13 fail.
+
+**Re-checked on 2026-09-25 under the current rule 3**, offline, on the 56 SIFTS files
+saved while it was written (UniProt lengths were at hand for 29 of them; on the other 27
+rule 2 and its rebuilt half are left unchecked, as above). Three verdicts go from pass to
+fail and none the other way: 2WEW (an unresolved Gly UniProt does not have, rebuilt on
+17), 1RZY (an extra Met rebuilt on 1) and 11IF (eight tag residues rebuilt on 19-26). 1E98
+and 3B2K still fail, now as `2 unresolved residue(s) would be rebuilt below number 0,
+first GLY-2` and `first MET-2`. The C-terminal tags of 2IYS and 3B2K are rebuilt beyond
+UniProt's length and are allowed. The counts in the bullets above were not re-measured.
+
+### 41a. Open
+
+- [ ] **B.1** The stored verdicts predate the current rule 3. The real store held 5,161
+      `residue_numbering` rows on 2026-09-25 (read-only count, taken while a run was
+      still adding rows), written mostly or wholly under the first version of the rule,
+      and the node never re-checks a stored row: 2WEW, 1RZY and 11IF are stored as
+      passing and now fail. Neither `make ray-run` nor `workflow/config.yaml` can set
+      `force_refresh` today (§22a); `RayPipelineConfig.force_refresh` can. *Done when:*
+      `check_numbering` has run with `force_refresh` over the store and `make ray-plan`
+      shows `numbering` with nothing pending, or the candidates still failing are listed
+      with their reason.
+- [ ] **B.2** Rows do not record the SIFTS file's date (the XML carries one on its `entry`
+      element, `2026-09-20` for 1E98 and 3EIG) or the UniProt release, so an old verdict
+      looks like a fresh one. *Done when:* both are stored with each row, or the decision
+      not to is recorded.
+- [ ] **B.3** The selector's own relaxed structures are renumbered. `openmm_md.py` and
+      `amber_complex.py` call `PDBFile.writeFile` without `keepIds=True`, so OpenMM numbers
+      each chain's residues from 1, rebuilt ones included (1CTQ's relaxed file starts at
+      Met1 and agrees; a candidate with an unresolved tag would not). Rule 3 models the
+      course's `keepIds=True` preparation, not these files. Nothing in the
+      selector reads residue numbers from these files today: the docking box comes from the
+      aligned ligand and PLIP is stored as counts. *Done when:* both write with
+      `keepIds=True` and one candidate with a rebuilt start is re-run in the conda
+      environment, or the decision to leave it is recorded.
+
+## 42. Ligand context per candidate: `check_ligand_context` (2026-09-24)
+
+**What it does.** An annotation node in the chemistry stage, after Meeko. For every
+survivor with a dockable ligand it takes the ligand the docking step would pick
+(`pick_largest_organic_ligand`, the call `resolve_docking_target` makes, ranked on the
+stored SMILES; a dockable code with none stored is looked up at RCSB first, as the
+chemistry step does), reads the entry's mmCIF file from RCSB and asks whether anything the
+validators strip was holding it.
+
+**The copy judged is the one docking aligns.** `pymol_align` saves `byres first (crystal
+and hetatm and resn X)` from the PDB-format file (`hetatm`, because a free amino-acid
+ligand such as GLN or CYS shares its residue name with the chain). PyMOL orders atoms by
+chain ID in plain ASCII (`1` < `B` < `a`), then residue number as a number; insertion codes
+do not change the order and a tie keeps file order. `ligand_context` makes the same choice
+from the mmCIF author fields (chain, residue number, insertion code) among the non-polymer
+copies, and judges that residue alone, so a branched sugar chain is not merged into one
+"ligand". The mmCIF file's own order would be wrong: branched sugar chains come before the
+non-polymers, so 1ECY's first glucose there is not the one docked. Checked on 2026-09-25
+on 63 real entries, 13 of them with several copies: the same residue as PyMOL every time
+(1ECY GLC A327, 2XOV BNG A501, 3O22 OLA A191). One rare case can still split the two:
+PyMOL's `hetatm` also matches a modified residue in the protein chain that carries the
+ligand's code, since the PDB format writes those as HETATM, while `ligand_context` skips
+polymer residues.
+
+The ligand is **self-contained** when
+
+1. no row of the file's `_struct_conn` table whose type starts with `covale`, `metalc` or
+   `disulf` bonds that residue to anything else (`hydrog` and `mismat` rows are not
+   bonds), and
+2. no metal ion, and no atom of a group that contains a metal (a heme, an iron-sulfur
+   cluster), lies within 4 Å of its heavy atoms. The group counts as a whole: 1AED's
+   thiazolium touches the heme ring at 3.3 Å while the iron is farther than 4 Å.
+
+**A second copy in the same place is not a bond partner.** A ligand modelled twice (two
+orientations at partial occupancy, as in 1HPS) can have `_struct_conn` rows joining the
+two copies. A row to another copy of the same code is ignored when both partners carry the
+same symmetry operator and the two copies have heavy atoms closer than 1 Å
+(`SAME_PLACE_ANGSTROM`), since no two atoms that coexist are that close. In the real files
+the alternate copies overlap at 0.06-0.55 Å, while real bonds between two copies are
+1.39 Å or longer. 1HPS, 4PHV, 1HTG, 1GNO and 5HQY are self-contained under this rule;
+5FIV, bonded to its own symmetry image, is still held.
+
+Other groups within 4 Å that contain no metal are recorded as neighbours and do not break
+the rule: 1GRQ's chloramphenicol has a sulfate 2.4 Å away and is a course candidate. A
+group that contains a metal is listed under metal contacts only, never also as a
+neighbour. Waters and polymer residues are neither.
+
+It writes one row per candidate to `ligand_context`: `ccd_code` (the ligand judged),
+`self_contained`, `links`, `metal_contacts` and `neighbours`. A stored row is reused only
+while it judged today's pick; a different pick is checked again, as is every candidate
+with a pick under `force_refresh`. The store is upsert-only, so a row whose ligand is no longer the pick (the
+candidate lost its dockable ligand, or its recheck failed) stays behind, naming the ligand
+it judged; the run counts these as `stale` in its log line.
+
+The report carries `ligand_self_contained` and a `ligand_context` text column: the judged
+code, then `bonded`, `metal` and `near` parts (`GDP: bonded metalc MG 2.13 Å | metal MG
+2.1 Å`), or the code alone when nothing holds or touches it. When the judged ligand is no
+longer listed for the entry, is on the exclusion list or no longer passes Meeko, the
+verdict is withheld: `ligand_self_contained` is empty and the text reads `TBU: no longer a
+dockable ligand of this entry, verdict withheld`. A pick that moved to a larger dockable
+ligand (3QL0, FOL to NAP) cannot be told offline, since ranking by size needs rdkit, which
+the report does not load: that row keeps its old verdict, its text names the ligand
+judged, and the next successful run checks again. The report also carries
+`complex_md_simulation_status`, which no column showed before, in the words of the other
+`*_status` columns: `pass`, `fail` or `not_run`. `run_ligand_context` switches the check
+(on by default), `ligand_context_max_workers` sets its downloads (4). Code:
+`domain/docking/ligand_context.py`, `nodes/check_ligand_context_node.py`,
+`LigandContextConfig`; wired into the Ray runner (after chemistry, run like the relatives
+lane, §40), `validate_one` (after complex MD, for a candidate with a bound ligand) and the
+plan.
+
+**Why it exists.** PDBFixer removes metal ions and hemes before MD, the docking receptor is
+that MD structure, and complex MD parameterizes the ligand alone. A ligand bonded to a heme
+iron, bridged by Mg2+ or Ca2+, or covalently attached is docked and simulated without what
+held it, and a self-dock can still pass on shape. The course removed 2MYC, 1AED and 3ERO for
+this on 2026-09-24, by hand. Same contract as §40 and §41: a recorded fact, never a filter
+and never a ranking input.
+
+**Measured on 2026-09-24.** On known cases, live: 2MYC (heme iron 2.0 Å), 1AED (heme 3.3
+Å), 3ERO (Ca2+ 3.2 Å), 1KAO (Mg2+ bond 2.13 Å), 1GSX (thioester to Cys69) and 2E59 (its
+lipid split over two linked components) are not self-contained; all 11 current course
+candidates are. Over the 85 numbered, modeled, dockable candidates of a fresh 1,200-entry
+sample, 33 were held: Mg2+ nucleotides in small GTPases, Ni2+ and Co2+ in peptide
+deformylases, cysteine-linked chromophores and inhibitors, hemes. Those counts predate the
+copy choice and the same-place rule above and were not re-measured. Re-run offline on
+2026-09-25 under the current rule, the six known cases are still held: 2MYC NBN (HEM iron
+2.0 Å), 1AED DTI (HEM 3.3 Å), 3ERO THP (Ca2+ 3.2 Å), 1KAO GDP (`metalc` Mg2+ 2.13 Å),
+1GSX HC4 (`covale` to Cys 1.78 Å) and 2E59 (LP4 and LP5 joined by a `covale` row at
+1.33 Å).
+
+**Additives found on the way.** Sixteen CCD codes reached Vina as a candidate's docking
+target during the same search and were added to `_EXCLUDED_CCD_CODES`, each name checked
+against RCSB's chemical component dictionary: NHE, LCP, HP6, FLC, 1PG, PQE, SO3, ETF, AZI,
+TBU, PGO, HEZ, DTU, PE8, ACE, TFA. This changes the docking pick of the candidates that had
+one of them as their largest ligand; their stored `docking` rows are left as they are. The
+list's SQL copy in `scripts/course_candidates.sql` had not followed the 2026-08-28 additions
+either (49 codes behind); it now equals the Python set, and
+`test_course_candidates_sql_matches` keeps it so.
+
+### 42a. Open
+
+- [ ] **C.1** The report has no whole-protein column unless relatives ran:
+      `structure_coverage` comes from `align_relatives`. SIFTS, which the numbering check
+      already downloads, gives the same coverage for free. *Done when:* the numbering row
+      records coverage, or the decision to keep it in relatives is recorded.
+- [ ] **C.2** The candidate search samples from RCSB's first `max_candidates * 20` ids in
+      RCSB's own order, so most entries deposited in the last decade are never drawn. The
+      2026-09-24 search for course candidates queried RCSB directly instead (X-ray, at most
+      2.5 Å, one protein entity of 50-200 residues, at least one ligand) and fed the ids to
+      the runner with `--ids`. *Done when:* `search_candidates` can take those filters.
+- [ ] **C.3** The validation conda env built from the lockfile on 2026-09-03 holds neither
+      the package nor `ray`, `rcsb-api`, `pyfamsa` and `pymol-open-source`, so neither
+      `make ray-head-validation` nor the SLURM job can run the slow lanes. The 2026-09-24
+      runs used `validate_one.py` with the source tree and those packages on `PYTHONPATH`.
+      *Done when:* the env documents and installs its pip layer.
+- [ ] **C.4** A Meeko check whose child process dies is stored as a failed
+      parameterization ("subprocess exited (code 1) without a result"), so the ligand is
+      never retried and never docked. The store held 100 such rows before 2026-09-24, among
+      them retinol (RTL, 1HBP's ligand) and GppNHp (GNP). Recomputed that day with
+      `force_refresh`: 79 of 102 now pass; the rest are real RDKit valence errors raised
+      inside the child. Two causes seen: an uncaught exception in the child, and a driver
+      script without a `__main__` guard, whose spawned children re-run it. *Done when:* a
+      crash is kept apart from a chemistry failure (not stored, or stored and retried), and
+      the child reports its exception.
+- [ ] **C.5** SIFTS can align an expression-tag remnant onto UniProt positions and record
+      the residues as mutations, so rule 1 of §41 passes them. 2WEW numbers a GSHM remnant
+      17-21 where UniProt has LNSIY (seen in the prepared file on 2026-09-24): compared by
+      number, those five residues pair with the wrong UniProt residues. Since 2026-09-25
+      2WEW fails anyway, on its unresolved Gly rebuilt on 17 (rule 3), but its resolved
+      S18, H19 and M20 still pass rule 1, and a remnant resolved in full would pass
+      outright. *Done when:* the numbering row records how many mapped residues differ
+      from UniProt's, so a tag at a chain end is visible, or the decision to leave it is
+      recorded.
+- [ ] **C.6** Stored `ligand_context` rows predate the copy choice and the same-place rule.
+      The node reuses a row whose `ccd_code` is still today's pick, so these keep what the
+      old rule found: 1HPS, 4PHV, 1HTG, 1GNO and 5HQY are stored as held by `covale` rows
+      to their own alternate copy and are self-contained now; 1ECY is stored as held,
+      judged on a linked glucose, while the copy docked (A327) is self-contained; 2XOV
+      and 3O22 keep their verdict but were judged on another copy; and 463 rows
+      (read-only count, 2026-09-25) list a metal group among their neighbours as well as
+      under metal contacts. Rows whose pick moved to a larger ligand, such as 3QL0, are
+      rechecked by the next successful run on their own. As for B.1, only
+      `RayPipelineConfig.force_refresh` sets it on the Ray runner. *Done when:*
+      `check_ligand_context` has run with `force_refresh` over the store, or the decision
+      not to is recorded.
+- [ ] **C.7** `pymol_align` and `ligand_context` can pick different copies in one rare case:
+      PyMOL's `hetatm` also matches a modified residue in the protein chain that carries
+      the ligand's CCD code, since the PDB format writes those as HETATM, while
+      `ligand_context` only considers non-polymer copies. *Done when:* the PyMOL selection
+      also excludes polymer residues (`and not polymer`), checked on a real entry, or the
+      decision to leave it is recorded.
