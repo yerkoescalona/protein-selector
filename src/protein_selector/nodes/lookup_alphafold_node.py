@@ -26,7 +26,7 @@ from protein_selector.domain.modeling.validation import (
     EXERCISE_NAME as MODELING_EXERCISE,
 )
 from protein_selector.domain.modeling.validation import run_modeling_validation
-from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
+from protein_selector.domain.structural_biology.models import CandidateEntry
 from protein_selector.nodes.base import Node, NodeContext, NodeResult
 
 

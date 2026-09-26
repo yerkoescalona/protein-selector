@@ -11,7 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from protein_selector.domain.structural_biology.rcsb_search import CandidateEntry
+# models, not rcsb_search: rcsbapi fetches its schema over the network at import time, so
+# importing rcsb_search here would make every test in this tree need network to collect.
+from protein_selector.domain.structural_biology.models import CandidateEntry
 
 
 @pytest.fixture

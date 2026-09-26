@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from protein_selector.domain.structural_biology.rcsb_search import ExperimentalMethod
+# models, not rcsb_search: rcsbapi fetches its schema over the network at import time
+# (models.py's docstring), and every node that reads its config imports this module.
+from protein_selector.domain.structural_biology.models import ExperimentalMethod
 
 _RCSB_MAX_ATOMS_CEILING = 50_000  # RCSB has no residue-count query field; this is a loose
 # safety ceiling on the search itself, not a pedagogical knob (see CandidateSearchConfig).
