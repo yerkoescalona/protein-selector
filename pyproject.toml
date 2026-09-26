@@ -23,6 +23,17 @@ dependencies = [
     # deps, not the workflow group, because the documented invocation above doesn't
     # include that group.
     "pyyaml>=6.0",
+    # bioinformatics/sequence_relatives.py imports numpy directly (the 95% redundancy
+    # filter is vectorised). pandas already requires it, but a direct import deserves a
+    # declared dependency -- the pyyaml lesson above.
+    "numpy>=2.0",
+    # bioinformatics/famsa.py builds each candidate's multiple sequence alignment with
+    # FAMSA (PLAN.md §40). A base dependency because that annotation runs in the cheap
+    # lane, which needs no extra. Verified with `uv add pyfamsa` (2026-09-23): 0.7.0 ships
+    # abi3 wheels (cp311+) for manylinux_2_34 x86_64/aarch64, macOS arm64/x86_64 and
+    # win_amd64, plus an sdist. Imported lazily inside `align_sequences`, so importing
+    # sequence_relatives (the report does, through the store) never needs it.
+    "pyfamsa>=0.7.0",
 ]
 
 [project.optional-dependencies]
@@ -72,6 +83,7 @@ validate = [
 
 [dependency-groups]
 dev = [
+    "pandas-stubs>=3.0.5.260914",
     "pytest>=8.0",
     # PLAN.md §27d W5.3: a coverage baseline, not a target -- see `make coverage`.
     "pytest-cov>=5.0",

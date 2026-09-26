@@ -463,8 +463,10 @@ class TestRowsToDataframe:
             ),
         )
         df = rows_to_dataframe([row])
+        notes = df.loc[0, "md_simulation_notes"]
 
-        assert json.loads(df.loc[0, "md_simulation_notes"]) == ["no template found for HEM"]
+        assert isinstance(notes, str)
+        assert json.loads(notes) == ["no template found for HEM"]
 
 
 def test_build_report_table_never_imports_rcsbapi():
