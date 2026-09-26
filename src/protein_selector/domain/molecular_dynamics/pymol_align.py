@@ -110,8 +110,11 @@ cmd.load({md_path!r}, "md_relaxed")
 result_path = {result_path!r}
 ligand_out_path = {ligand_out_path!r}
 ccd_code = {ccd_code!r}
+# `hetatm`: a free amino-acid ligand (CCD GLN, CYS, ...) shares its resn with the chain's
+# own residues, and only its HETATM copy is the ligand.
+ligand_selection = f"crystal and hetatm and resn {{ccd_code}}"
 
-if cmd.count_atoms(f"crystal and resn {{ccd_code}}") == 0:
+if cmd.count_atoms(ligand_selection) == 0:
     json.dump({{"error": "no_ligand"}}, open(result_path, "w"))
 else:
     try:
@@ -122,7 +125,7 @@ else:
         # Only the FIRST ligand residue instance -- a structure can have multiple copies
         # of the same ligand (symmetry mates, several chains); "one coherent rigid-body
         # ligand, not several overlapping copies" is the same decision as PLAN.md §17a.
-        cmd.save(ligand_out_path, f"byres first (crystal and resn {{ccd_code}})")
+        cmd.save(ligand_out_path, f"byres first ({{ligand_selection}})")
         json.dump(
             {{"rmsd": aln["RMSD"], "aligned_atoms": aln["alignment_length"]}},
             open(result_path, "w"),
@@ -138,8 +141,8 @@ def align_ligand_into_md_frame(
     Structural (CE algorithm) fit over the whole protein, done by PyMOL's ``cealign``
     (``cealign(target="md_relaxed", mobile="crystal")`` -- mutates the loaded crystal
     object in place, ligand included). Returns ``(aligned_ligand_pdb_text,
-    rmsd_angstrom)`` on success, or ``None`` if alignment isn't possible -- no atoms of
-    ``ccd_code`` found in the crystal structure, ``cealign`` itself fails, or the
+    rmsd_angstrom)`` on success, or ``None`` if alignment isn't possible -- no HETATM atoms
+    of ``ccd_code`` found in the crystal structure, ``cealign`` itself fails, or the
     alignment matched fewer than ``_MIN_MATCHED_RESIDUES`` residues. Callers must treat
     ``None`` as a real "cannot align" outcome, not retry with a different method
     silently.
@@ -204,8 +207,8 @@ def align_ligand_into_md_frame(
         if "error" in result:
             if result["error"] == "no_ligand":
                 logger.warning(
-                    "align_ligand_into_md_frame: no %s residues found in the crystal "
-                    "structure",
+                    "align_ligand_into_md_frame: no %s HETATM residues found in the "
+                    "crystal structure",
                     ccd_code,
                 )
             else:

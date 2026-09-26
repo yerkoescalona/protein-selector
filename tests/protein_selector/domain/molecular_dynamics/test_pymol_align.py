@@ -1,26 +1,27 @@
 """Tests for protein_selector.domain.molecular_dynamics.pymol_align (PLAN.md §18).
 
-Requires numpy (to build the synthetic test structures) and the system `pymol` binary
-(`cealign`) -- both skipped, not failed, when unavailable. Builds two small synthetic
-structures related by a KNOWN rigid-body transform (a 90-degree rotation about z plus a
-translation) so the test can check `align_ligand_into_md_frame` actually recovers that
+Requires numpy (to build the synthetic test structures) and an interpreter that can
+`import pymol` (`cealign`) -- both skipped, not failed, when unavailable. Builds two
+small synthetic structures related by a KNOWN rigid-body transform (a 90-degree rotation
+about z plus a translation) so the test can check `align_ligand_into_md_frame` actually recovers that
 transform (near-zero RMSD, ligand coordinates land where independently computed), not
 just that it runs without raising.
 """
 
 from __future__ import annotations
 
-import shutil
-
 import pytest
 
-np = pytest.importorskip("numpy")
-if shutil.which("pymol") is None:
-    pytest.skip("pymol binary not found on PATH", allow_module_level=True)
-
-from protein_selector.domain.molecular_dynamics.pymol_align import (  # noqa: E402
+from protein_selector.domain.molecular_dynamics.pymol_align import (
+    _find_pymol_interpreter,
     align_ligand_into_md_frame,
 )
+
+np = pytest.importorskip("numpy")
+# The same probe the module runs, not `shutil.which("pymol")`: the pip wheel's `pymol`
+# script is only on PATH when the venv is activated.
+if _find_pymol_interpreter() is None:
+    pytest.skip("no interpreter with an importable pymol package", allow_module_level=True)
 
 _N_RESIDUES = 20  # PyMOL's cealign refuses selections that are "too short" below
 # roughly this length (live-verified: 12 on a near-linear synthetic chain errored with
@@ -89,6 +90,15 @@ def _build_structures():
     return crystal_text, md_text, expected_aligned_ligand
 
 
+def _rename_residues(pdb_text: str, resnums: set[int], resname: str) -> str:
+    lines = []
+    for line in pdb_text.splitlines():
+        if line.startswith(("ATOM", "HETATM")) and int(line[22:26]) in resnums:
+            line = line[:17] + f"{resname:>3}" + line[20:]
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
 class TestAlignLigandIntoMdFrame:
     def test_recovers_a_known_rigid_transform(self):
         crystal_text, md_text, expected_ligand_pos = _build_structures()
@@ -125,6 +135,30 @@ class TestAlignLigandIntoMdFrame:
         )
 
         assert align_ligand_into_md_frame(crystal_text, sparse_md_text, "LIG") is None
+
+    def test_free_amino_acid_ligand_is_taken_from_hetatm_not_the_chain(self):
+        # Real case 2CYY: the docked ligand is a free GLN (HETATM A1001) and the chain
+        # has its own GLN residues (ATOM A17 ...) that sort before it.
+        crystal_text, md_text, expected_ligand_pos = _build_structures()
+        crystal_text = _rename_residues(crystal_text, {3, 200}, "GLN")
+
+        result = align_ligand_into_md_frame(crystal_text, md_text, "GLN")
+
+        assert result is not None
+        aligned_block, _rmsd = result
+        atom_lines = [
+            ln for ln in aligned_block.splitlines() if ln.startswith(("ATOM", "HETATM"))
+        ]
+        assert [(ln[:6].strip(), int(ln[22:26])) for ln in atom_lines] == [("HETATM", 200)]
+        line = atom_lines[0]
+        x, y, z = float(line[30:38]), float(line[38:46]), float(line[46:54])
+        assert (x, y, z) == pytest.approx(tuple(expected_ligand_pos), abs=0.1)
+
+    def test_ccd_code_present_only_as_a_chain_residue_returns_none(self):
+        crystal_text, md_text, _ = _build_structures()
+        crystal_text = _rename_residues(crystal_text, {3}, "GLN")
+
+        assert align_ligand_into_md_frame(crystal_text, md_text, "GLN") is None
 
     def test_mismatched_residue_numbering_does_not_break_alignment(self):
         """Real, live-discovered bug class this switch to cealign was made to remove.
