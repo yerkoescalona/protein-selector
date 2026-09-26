@@ -85,7 +85,8 @@ around 2026-07-05 for the reasoning if this ever needs revisiting.
 
 ```
 PLAN.md                        The full design doc — read before making architectural changes
-pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/rcsb-api);
+pyproject.toml                 uv-managed; base deps (requests/pandas/biopython/rcsb-api/
+                                numpy/pyfamsa);
                                 optional `validate` extra for the docking stack (rdkit, meeko,
                                 scipy/numpy/gemmi — meeko's undeclared transitive deps,
                                 openmm, openmmforcefields)
@@ -132,9 +133,41 @@ src/protein_selector/
                                  from models.py, not candidates.py/composition.py, to stay
                                  network-free), store.py (persistence for this domain's
                                  tables; same models.py-not-candidates.py import choice)
-  domain/bioinformatics/                literature.py (Europe PMC evidence count, complete),
-                                 store.py
-  domain/docking/                       parameterizability.py + meeko_parameterization.py +
+  domain/bioinformatics/                europe_pmc.py (Europe PMC evidence count, complete),
+                                 sequence_relatives.py (PLAN.md §40: pure logic plus the
+                                 composing `find_sequence_relatives` entry point and the
+                                 `SequenceRelativesResult` row -- the candidate's UniProt
+                                 chain searched with phmmer vs. Swiss-Prot, full-length
+                                 hits aligned with FAMSA, grouped at 95% identity; a
+                                 recorded annotation like the literature count, never a
+                                 ValidationResult, never a filter or a ranking input;
+                                 imports its network adapters only when called, so the
+                                 store loads no `requests`),
+                                 residue_numbering.py (PLAN.md §41: does the structure
+                                 number its residues the way UniProt does, three rules
+                                 per chain on SIFTS' residue-level map, the residues
+                                 PDBFixer would rebuild included (`rebuilt_numbers`
+                                 reproduces PDBFixer's own numbering); same recorded,
+                                 never-filtering contract), one adapter
+                                 per external tool: uniprot_entry.py (UniProt REST
+                                 sequence + Chain features), rcsb_uniprot_regions.py
+                                 (RCSB GraphQL `rcsb_polymer_entity_align`, plain
+                                 `requests`, not `rcsbapi`), ebi_hmmer.py (phmmer on
+                                 EBI's HMMER API + the `fullfasta` download), famsa.py
+                                 (`pyfamsa`, imported lazily, with the UPGMA segfault
+                                 guard), sifts.py (PDBe's SIFTS XML, retried: EBI's file
+                                 server refuses connections in bursts, and a corrupt or
+                                 cut-short gzip counts as a failed attempt); models.py
+                                 (dependency-free types, `SequenceSearchError` and
+                                 `NumberingCheckError`, the errors the adapters hand to
+                                 the logic), store.py (three tables: `literature`,
+                                 `sequence_relatives`, `residue_numbering`)
+  domain/docking/                       ligand_context.py (PLAN.md §42: is the ligand the selector would
+                                 dock held by a metal, a heme or a covalent bond? Judged on
+                                 the copy `pymol_align` extracts, PyMOL's chain-then-number
+                                 order read from the mmCIF author fields. A recorded
+                                 annotation, never a filter), parameterizability.py +
+                                 meeko_parameterization.py +
                                  ligands.py + pocket.py (parameterizability ligand chemistry, nearly
                                  complete — needs the `validate` extra), store.py, plus
                                  the ex04 docking validator: vina_docking.py (real Vina
@@ -520,7 +553,8 @@ pipeline against a random hard-filters sample.
 - **Persistence (`core/db.py` + each domain's `store.py`):** SQLite, one table per stage (`candidates`,
   `simulability`, `oligomeric_state`, `entity_composition`,
   `parameterizability`, `meeko_parameterization`, `pocket_detection`, `openff_parameterization`,
-  `ligand_ccd_codes`, `alphafold_entries`, `literature`, `validation`), keyed by `pdb_id`
+  `ligand_ccd_codes`, `alphafold_entries`, `literature`, `sequence_relatives`,
+  `residue_numbering`, `ligand_context`, `validation`), keyed by `pdb_id`
   (most), `(pdb_id, entity_id)` (`entity_composition` — an entry can have multiple
   polymer entities), `ligand_id` (`parameterizability`/`meeko_parameterization`/
   `openff_parameterization` — a ligand's chemistry doesn't depend on which entry it
