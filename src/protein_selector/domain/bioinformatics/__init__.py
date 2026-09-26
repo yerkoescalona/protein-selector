@@ -1,1 +1,1 @@
-"""Sequence/database evidence mining (literature richness)."""
+"""Sequence/database evidence mining (literature richness, sequence relatives)."""
