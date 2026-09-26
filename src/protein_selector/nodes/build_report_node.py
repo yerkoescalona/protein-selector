@@ -30,7 +30,7 @@ class BuildReportNode(Node):
 
     name = "build_report"
     granularity = Granularity.BATCH
-    inputs = (table("candidates"), table("simulability"), table("entity_composition"), table("literature"), table("ligand_ccd_codes"), table("ligand_smiles"), table("parameterizability"), table("meeko_parameterization"), table("pocket_detection", required=False), table("alphafold_entries"), table("validation"),)
+    inputs = (table("candidates"), table("simulability"), table("entity_composition"), table("literature"), table("sequence_relatives", required=False), table("residue_numbering", required=False), table("ligand_context", required=False), table("ligand_ccd_codes"), table("ligand_smiles"), table("parameterizability"), table("meeko_parameterization"), table("pocket_detection", required=False), table("alphafold_entries"), table("validation"),)
     outputs = (collection("report_rows"),)
 
     def run(self, ctx: NodeContext) -> NodeResult[BuildReportOutputs]:

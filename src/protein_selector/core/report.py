@@ -35,14 +35,27 @@ from protein_selector.core.validation_result import (
     ValidationStatus,
 )
 from protein_selector.core.validation_store import load_validation_results
-from protein_selector.domain.bioinformatics.store import load_literature_counts
+from protein_selector.domain.bioinformatics.residue_numbering import (
+    ResidueNumberingResult,
+)
+from protein_selector.domain.bioinformatics.sequence_relatives import (
+    SequenceRelativesResult,
+)
+from protein_selector.domain.bioinformatics.store import (
+    load_literature_counts,
+    load_residue_numbering,
+    load_sequence_relatives,
+)
 from protein_selector.domain.docking.fpocket import PocketDetectionResult
+from protein_selector.domain.docking.ligand_context import LigandContextResult
 from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
 )
+from protein_selector.domain.docking.native_ligand import is_dockable_ligand_code
 from protein_selector.domain.docking.rdkit_ligand import ParameterizabilityResult
 from protein_selector.domain.docking.store import (
     load_ligand_ccd_codes,
+    load_ligand_context,
     load_ligand_smiles,
     load_meeko_parameterization,
     load_parameterizability,
@@ -69,6 +82,10 @@ from protein_selector.domain.structural_biology.store import (
     load_simulability,
 )
 from protein_selector.domain.structural_biology.validation import SimulabilityResult
+
+# molecular_dynamics.amber_complex owns this name, but importing it pulls in rcsbapi, which
+# fetches its schema over the network at import time; the report must stay offline.
+COMPLEX_MD_EXERCISE = "complex_md_simulation"
 
 
 @dataclass
@@ -99,6 +116,19 @@ class CandidateReportRow:
     completeness: float | None
     nonstd_residues: bool | None
     literature_count: int | None
+    # PLAN.md §40: an annotation beside literature_count, not an exercise verdict --
+    # deliberately outside suitable_for and the ranking key.
+    sequence_relatives_count: int | None
+    sequence_relatives_passed: bool | None
+    structure_coverage: float | None
+    # A recorded verdict for whoever builds a course list, outside suitable_for and the
+    # ranking key like the relatives columns above.
+    uniprot_numbered: bool | None
+    numbering_problems: str | None
+    # Recorded like the numbering verdict: outside suitable_for and the ranking key.
+    ligand_self_contained: bool | None
+    ligand_context: str | None
+    complex_md_simulation_status: str | None
     suitable_for: list[str]
     # Structured facts split out of modeling.notes/md_simulation.notes'
     # free-text sentences (PLAN.md §14b) -- the underlying data (a full
@@ -159,6 +189,38 @@ def _pdbfixer_repaired(md_simulation_result: ValidationResult | None) -> bool | 
     return md_simulation_result.failure_mode != FailureMode.COMPLETENESS
 
 
+def _run_status(result: ValidationResult | None) -> str:
+    """``pass``, ``fail`` or ``not_run``: the words of every ``*_status`` column."""
+    if result is None:
+        return "not_run"
+    return "pass" if result.status == ValidationStatus.SUCCESS else "fail"
+
+
+def _describe_ligand_context(
+    context: LigandContextResult | None, dockable: bool
+) -> str | None:
+    """The judged ligand and what holds or touches it, for the report's text column.
+
+    ``"GDP: bonded metalc MG 2.13 Å | metal MG 2.1 Å"``; the CCD code alone when nothing
+    holds or touches the ligand. ``dockable`` false (the judged ligand is no longer one the
+    selector could dock for this entry) says so in place of the reasons.
+    """
+    if context is None:
+        return None
+    if not dockable:
+        return f"{context.ccd_code}: no longer a dockable ligand of this entry, verdict withheld"
+    parts = [
+        f"{label} {text}"
+        for label, text in (
+            ("bonded", context.links),
+            ("metal", context.metal_contacts),
+            ("near", context.neighbours),
+        )
+        if text
+    ]
+    return f"{context.ccd_code}: {' | '.join(parts)}" if parts else context.ccd_code
+
+
 def build_candidate_report(
     candidate: CandidateEntry,
     *,
@@ -170,10 +232,14 @@ def build_candidate_report(
     meeko_parameterizability_by_ligand: dict[str, MeekoParameterizationResult] | None = None,
     pocket_result: PocketDetectionResult | None = None,
     literature_count: int | None = None,
+    sequence_relatives: SequenceRelativesResult | None = None,
+    residue_numbering: ResidueNumberingResult | None = None,
+    ligand_context: LigandContextResult | None = None,
     alphafold_entry: AlphaFoldEntry | None = None,
     modeling_result: ValidationResult | None = None,
     md_simulation_result: ValidationResult | None = None,
     docking_result: ValidationResult | None = None,
+    complex_md_result: ValidationResult | None = None,
     weights: ScoringWeights | None = None,
 ) -> CandidateReportRow:
     """Build one candidate's report row from its already-fetched/persisted per-stage results.
@@ -208,6 +274,14 @@ def build_candidate_report(
         primary_ligand_meeko_parameterizability.passed
         if primary_ligand_meeko_parameterizability is not None
         else None
+    )
+
+    # The store keeps a verdict after its ligand stops being docked; one whose ligand is
+    # no longer dockable for this entry at all is withheld. A pick that moved to a larger
+    # dockable ligand cannot be told here: ranking by size needs rdkit.
+    ligand_context_dockable = ligand_context is not None and (
+        ligand_context.ccd_code in ligand_ccd_codes
+        and is_dockable_ligand_code(ligand_context.ccd_code, meeko_parameterizability_by_ligand)
     )
 
     # predict_modeling_difficulty/predict_docking_difficulty are retired (PLAN.md §27d
@@ -265,6 +339,30 @@ def build_candidate_report(
         completeness=_completeness_fraction(candidate),
         nonstd_residues=_has_non_standard_residues(entity_infos),
         literature_count=literature_count,
+        sequence_relatives_count=(
+            sequence_relatives.n_relatives if sequence_relatives is not None else None
+        ),
+        sequence_relatives_passed=(
+            sequence_relatives.passed if sequence_relatives is not None else None
+        ),
+        structure_coverage=(
+            sequence_relatives.structure_coverage
+            if sequence_relatives is not None
+            else None
+        ),
+        uniprot_numbered=(
+            residue_numbering.uniprot_numbered if residue_numbering is not None else None
+        ),
+        numbering_problems=(
+            residue_numbering.problems if residue_numbering is not None else None
+        ),
+        ligand_self_contained=(
+            ligand_context.self_contained
+            if ligand_context is not None and ligand_context_dockable
+            else None
+        ),
+        ligand_context=_describe_ligand_context(ligand_context, ligand_context_dockable),
+        complex_md_simulation_status=_run_status(complex_md_result),
         suitable_for=suitable_for,
         modeling_alphafold_entry_id=(
             alphafold_entry.entry_id if alphafold_entry is not None else None
@@ -302,6 +400,10 @@ def build_report_table(
     meeko_parameterizability_by_ligand = load_meeko_parameterization(db_path)
     pocket_results = load_pocket_detection(db_path)
     literature_counts = load_literature_counts(db_path)
+    sequence_relatives = load_sequence_relatives(db_path)
+    residue_numbering = load_residue_numbering(db_path)
+    ligand_contexts = load_ligand_context(db_path)
+    complex_md_results = load_validation_results(COMPLEX_MD_EXERCISE, db_path)
     # PLAN.md §28 C.6 -- previously never loaded here, so `ligand_smiles` was empty in
     # every report this tool has ever produced.
     ligand_smiles_by_ccd = load_ligand_smiles(db_path)
@@ -324,12 +426,16 @@ def build_report_table(
                 meeko_parameterizability_by_ligand=meeko_parameterizability_by_ligand,
                 pocket_result=pocket_results.get(pdb_id),
                 literature_count=literature_counts.get(pdb_id),
+                sequence_relatives=sequence_relatives.get(pdb_id),
+                residue_numbering=residue_numbering.get(pdb_id),
+                ligand_context=ligand_contexts.get(pdb_id),
                 alphafold_entry=(
                     alphafold_entries.get(uniprot_id) if uniprot_id is not None else None
                 ),
                 modeling_result=modeling_results.get(pdb_id),
                 md_simulation_result=md_simulation_results.get(pdb_id),
                 docking_result=docking_results.get(pdb_id),
+                complex_md_result=complex_md_results.get(pdb_id),
                 weights=weights,
             )
         )

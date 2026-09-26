@@ -245,6 +245,12 @@ def print_validate_one_summary(pdb_id: str, db_path: Path) -> None:
     print(f"organism: {row.organism}")
     print(f"residues: {row.n_residues}  resolution: {row.resolution}")
     print(f"ligand: {row.ligand_ccd}")
+    print(
+        f"sequence relatives: {row.sequence_relatives_count} "
+        f"(passed: {row.sequence_relatives_passed}, "
+        f"structure covers {row.structure_coverage} of its UniProt chain)"
+    )
+    print(f"numbered as UniProt: {row.uniprot_numbered}  {row.numbering_problems or ''}")
     print(f"modeling:      {row.modeling.status:<8} {row.modeling.notes}")
     print(f"md_simulation: {row.md_simulation.status:<8} {row.md_simulation.notes}")
     print(f"docking:       {row.docking.status:<8} {row.docking.notes}")

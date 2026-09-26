@@ -30,7 +30,13 @@ from protein_selector.core.validation_result import (
     ValidationStatus,
 )
 from protein_selector.core.validation_store import upsert_validation_results
-from protein_selector.domain.bioinformatics.store import upsert_literature_counts
+from protein_selector.domain.bioinformatics.sequence_relatives import (
+    SequenceRelativesResult,
+)
+from protein_selector.domain.bioinformatics.store import (
+    upsert_literature_counts,
+    upsert_sequence_relatives,
+)
 from protein_selector.domain.docking.fpocket import PocketDetectionResult, PocketInfo
 from protein_selector.domain.docking.meeko_ligand import (
     MeekoParameterizationResult,
@@ -281,6 +287,52 @@ class TestBuildCandidateReport:
         assert row.modeling_alphafold_mean_plddt == 91.5
         assert row.modeling_alphafold_low_confidence_fraction == pytest.approx(0.03)
 
+    def test_sequence_relatives_columns_come_from_the_stored_row(self):
+        # PLAN.md §40: an annotation, so it fills its own columns and nothing else --
+        # no exercise status, no suitable_for entry.
+        relatives = SequenceRelativesResult(
+            pdb_id="4HHB", uniprot_accession="P69905", chain_start=2, chain_end=142,
+            query_length=141, structure_start=2, structure_end=142,
+            structure_coverage=1.0, database="swissprot", n_hits=40, n_relatives=7,
+            alignment_columns=300, median_identity=0.6, max_identity=0.95,
+            min_relatives=10, passed=False,
+        )
+        row = build_candidate_report(_CANDIDATE, sequence_relatives=relatives)
+
+        assert row.sequence_relatives_count == 7
+        assert row.sequence_relatives_passed is False
+        assert row.structure_coverage == 1.0
+        assert row.suitable_for == []
+
+    def test_sequence_relatives_columns_are_none_before_a_search(self):
+        row = build_candidate_report(_CANDIDATE)
+
+        assert row.sequence_relatives_count is None
+        assert row.sequence_relatives_passed is None
+        assert row.structure_coverage is None
+
+    def test_numbering_columns_come_from_the_stored_verdict(self):
+        # A recorded verdict: its own two columns, no exercise status, no suitable_for.
+        from protein_selector.domain.bioinformatics.residue_numbering import (
+            ResidueNumberingResult,
+        )
+
+        verdict = ResidueNumberingResult(
+            "4HHB", False, 4, "chains A, B, C, D: every residue numbered 1 below its "
+            "UniProt position",
+        )
+        row = build_candidate_report(_CANDIDATE, residue_numbering=verdict)
+
+        assert row.uniprot_numbered is False
+        assert row.numbering_problems == verdict.problems
+        assert row.suitable_for == []
+
+    def test_numbering_columns_are_none_before_a_check(self):
+        row = build_candidate_report(_CANDIDATE)
+
+        assert row.uniprot_numbered is None
+        assert row.numbering_problems is None
+
     def test_alphafold_columns_are_none_without_an_entry(self):
         row = build_candidate_report(_CANDIDATE)
 
@@ -371,6 +423,19 @@ class TestBuildReportTableAndCsv:
             db_path=db_path,
         )
         upsert_literature_counts({"4HHB": 39}, db_path=db_path)
+        upsert_sequence_relatives(
+            [
+                SequenceRelativesResult(
+                    pdb_id="4HHB", uniprot_accession="P69905", chain_start=2,
+                    chain_end=142, query_length=141, structure_start=2,
+                    structure_end=142, structure_coverage=1.0, database="swissprot",
+                    n_hits=90, n_relatives=42, alignment_columns=400,
+                    median_identity=0.55, max_identity=0.95, min_relatives=10,
+                    passed=True,
+                )
+            ],
+            db_path=db_path,
+        )
         upsert_alphafold_entry(
             AlphaFoldEntry(
                 uniprot_accession="P69905",
@@ -399,6 +464,9 @@ class TestBuildReportTableAndCsv:
         row = rows[0]
         assert row.pdb_id == "4HHB"
         assert row.literature_count == 39
+        assert row.sequence_relatives_count == 42
+        assert row.sequence_relatives_passed is True
+        assert row.structure_coverage == 1.0
         assert row.ligand_ccd == "HEM"
         assert row.ligand_rdkit_parameterizable is True
         assert row.ligand_meeko_parameterizable is False
@@ -433,6 +501,9 @@ class TestBuildReportTableAndCsv:
             "md_simulation_predicted_difficulty",
             "docking_failure_mode",
             "suitable_for",
+            "sequence_relatives_count",
+            "sequence_relatives_passed",
+            "structure_coverage",
             "rationale_json",
         ):
             assert expected_column in fieldnames
@@ -515,7 +586,12 @@ class TestRankReportRows:
             ligand_ccd=None, ligand_smiles=None, ligand_rdkit_parameterizable=None,
             ligand_meeko_parameterizable=None, pocket_druggable=None,
             pocket_druggability_score=None, completeness=None, nonstd_residues=None,
-            literature_count=literature, suitable_for=list(suitable),
+            literature_count=literature, sequence_relatives_count=None,
+            sequence_relatives_passed=None, structure_coverage=None,
+            uniprot_numbered=None, numbering_problems=None,
+            ligand_self_contained=None, ligand_context=None,
+            complex_md_simulation_status="not_run",
+            suitable_for=list(suitable),
             modeling_alphafold_entry_id=None, modeling_alphafold_mean_plddt=None,
             modeling_alphafold_low_confidence_fraction=None,
             md_simulation_pdbfixer_repaired=None,
@@ -550,3 +626,118 @@ class TestRankReportRows:
     def test_ordering_is_deterministic(self):
         rows = [self._row(p, [], ["pass", "fail", "fail"]) for p in ("CCCC", "AAAA", "BBBB")]
         assert [r.pdb_id for r in rank_report_rows(rows)] == ["AAAA", "BBBB", "CCCC"]
+
+    def test_sequence_relatives_never_move_a_candidate(self):
+        # PLAN.md §40, the lecturer's decision: relatives are recorded, never used to rank.
+        # Two rows equal in everything the ranking reads, and opposite in everything the
+        # relatives step records, keep the plain tie-break order both ways round.
+        from dataclasses import replace
+
+        thin = {"sequence_relatives_count": 1, "sequence_relatives_passed": False,
+                "structure_coverage": 0.2}
+        deep = {"sequence_relatives_count": 500, "sequence_relatives_passed": True,
+                "structure_coverage": 1.0}
+        base = [self._row(p, ["modeling"], ["pass", "fail", "fail"]) for p in ("AAAA", "BBBB")]
+        for first, second in ((thin, deep), (deep, thin)):
+            rows = [replace(base[0], **first), replace(base[1], **second)]
+            assert [r.pdb_id for r in rank_report_rows(rows)] == ["AAAA", "BBBB"]
+
+
+class TestComplexMdExerciseName:
+    def test_the_report_uses_the_name_amber_complex_writes(self):
+        # Read from the source: importing amber_complex pulls in rcsbapi, which goes online.
+        import re
+        from pathlib import Path
+
+        from protein_selector.core.report import COMPLEX_MD_EXERCISE
+
+        source = (Path(__file__).resolve().parents[3] / "src" / "protein_selector" / "domain"
+                  / "molecular_dynamics" / "amber_complex.py").read_text()
+        match = re.search(r'^EXERCISE_NAME = "(\w+)"', source, re.M)
+        assert match is not None and match.group(1) == COMPLEX_MD_EXERCISE
+
+
+class TestLigandContextColumns:
+    def test_the_verdict_and_its_reasons_reach_the_row(self, tmp_path):
+        from protein_selector.core.report import build_report_table
+        from protein_selector.core.validation_result import (
+            ValidationResult,
+            ValidationStatus,
+        )
+        from protein_selector.core.validation_store import upsert_validation_results
+        from protein_selector.domain.docking.ligand_context import LigandContextResult
+        from protein_selector.domain.docking.store import upsert_ligand_context
+        from protein_selector.domain.structural_biology.models import CandidateEntry
+        from protein_selector.domain.structural_biology.store import upsert_candidates
+
+        db = tmp_path / "ctx.db"
+        upsert_candidates([CandidateEntry(pdb_id="1KAO"), CandidateEntry(pdb_id="1HBP")],
+                          db_path=db)
+        upsert_ligand_ccd_codes({"1KAO": ["GDP", "MG"]}, db_path=db)
+        upsert_meeko_parameterization([MeekoParameterizationResult("GDP", True)], db_path=db)
+        upsert_ligand_context([LigandContextResult("1KAO", "GDP", False, "metalc MG 2.13 Å",
+                                                   "MG 2.1 Å", "")], db_path=db)
+        upsert_validation_results("complex_md_simulation", [
+            ValidationResult(pdb_id="1KAO", status=ValidationStatus.SUCCESS)], db_path=db)
+        rows = {r.pdb_id: r for r in build_report_table(db)}
+        assert rows["1KAO"].ligand_self_contained is False
+        assert rows["1KAO"].ligand_context == "GDP: bonded metalc MG 2.13 Å | metal MG 2.1 Å"
+        assert rows["1KAO"].complex_md_simulation_status == "pass"
+        assert rows["1HBP"].ligand_self_contained is None
+        assert rows["1HBP"].complex_md_simulation_status == "not_run"
+
+    @staticmethod
+    def _row(ccd_codes, meeko_passed, context):
+        return build_candidate_report(
+            _CANDIDATE,
+            ligand_ccd_codes=ccd_codes,
+            meeko_parameterizability_by_ligand={
+                code: MeekoParameterizationResult(code, passed)
+                for code, passed in meeko_passed.items()
+            },
+            ligand_context=context,
+        )
+
+    def test_a_verdict_on_a_ligand_now_excluded_is_withheld(self):
+        # 1WOL: TBU was judged, then joined the list of codes never docked.
+        from protein_selector.domain.docking.ligand_context import LigandContextResult
+
+        context = LigandContextResult("4HHB", "TBU", True, "", "", "")
+        row = self._row(["TBU"], {"TBU": True}, context)
+        assert row.ligand_self_contained is None
+        assert row.ligand_context == (
+            "TBU: no longer a dockable ligand of this entry, verdict withheld")
+
+    def test_a_verdict_on_a_ligand_that_now_fails_meeko_is_withheld(self):
+        from protein_selector.domain.docking.ligand_context import LigandContextResult
+
+        context = LigandContextResult("4HHB", "FOL", False, "", "CA 3.0 Å", "")
+        row = self._row(["FOL"], {"FOL": False}, context)
+        assert row.ligand_self_contained is None
+
+    def test_a_verdict_on_a_ligand_the_entry_no_longer_lists_is_withheld(self):
+        from protein_selector.domain.docking.ligand_context import LigandContextResult
+
+        context = LigandContextResult("4HHB", "FOL", True, "", "", "")
+        row = self._row(["NAP"], {"FOL": True, "NAP": True}, context)
+        assert row.ligand_self_contained is None
+
+    def test_a_verdict_on_a_dockable_ligand_is_shown(self):
+        from protein_selector.domain.docking.ligand_context import LigandContextResult
+
+        context = LigandContextResult("4HHB", "FOL", True, "", "", "SO4 2.4 Å")
+        row = self._row(["SO4", "FOL"], {"FOL": True}, context)
+        assert row.ligand_self_contained is True
+        assert row.ligand_context == "FOL: near SO4 2.4 Å"
+
+
+class TestComplexMdStatus:
+    @pytest.mark.parametrize("status", [ValidationStatus.SUCCESS, ValidationStatus.FAILURE])
+    def test_it_uses_the_words_of_the_other_status_columns(self, status):
+        result = ValidationResult(pdb_id="4HHB", status=status)
+        row = build_candidate_report(_CANDIDATE, docking_result=result, complex_md_result=result)
+        assert row.complex_md_simulation_status == row.docking.status
+        assert row.complex_md_simulation_status in {"pass", "fail"}
+
+    def test_a_candidate_never_simulated_is_not_run(self):
+        assert build_candidate_report(_CANDIDATE).complex_md_simulation_status == "not_run"

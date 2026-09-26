@@ -115,6 +115,60 @@ _CANDIDATE_COLUMNS: tuple[ColumnSpec, ...] = (
         "Europe PMC reference count",
     ),
     ColumnSpec(
+        "sequence_relatives_count",
+        "bioinformatics.sequence_relatives.SequenceRelativesResult.n_relatives",
+        "significant phmmer hits for the candidate's UniProt chain in the configured "
+        "HMMER database, left after grouping at the configured max_identity, query "
+        "excluded (the chain, database and thresholds are stored with each row in "
+        "sequence_relatives); a recorded fact, never a filter or a ranking input",
+    ),
+    ColumnSpec(
+        "sequence_relatives_passed",
+        "bioinformatics.sequence_relatives.SequenceRelativesResult.passed",
+        "at least the configured min_relatives remain; a recorded flag, never a gate",
+    ),
+    ColumnSpec(
+        "structure_coverage",
+        "bioinformatics.sequence_relatives.SequenceRelativesResult.structure_coverage",
+        "fraction of the UniProt chain the structure covers (below 1 for a domain "
+        "construct); empty when RCSB aligns no entity to the accession",
+    ),
+    ColumnSpec(
+        "uniprot_numbered",
+        "bioinformatics.residue_numbering.ResidueNumberingResult.uniprot_numbered",
+        "every residue of every chain SIFTS maps onto UniProt carries its UniProt "
+        "position as its number, nothing else sits on a UniProt number, and the "
+        "unresolved start rebuilds without going below 1; a recorded verdict, never a "
+        "filter or a ranking input",
+    ),
+    ColumnSpec(
+        "numbering_problems",
+        "bioinformatics.residue_numbering.ResidueNumberingResult.problems",
+        "why uniprot_numbered is false, one sentence per rule broken; empty when true"
+    ),
+    ColumnSpec(
+        "ligand_self_contained",
+        "docking.ligand_context.LigandContextResult.self_contained",
+        "the ligand named in ligand_context, the one the selector docked when the check "
+        "last succeeded, has no covalent or metal bond and no metal-containing group "
+        "within 4 Å, so stripping heterogens does not remove what held it; empty when "
+        "that ligand is no longer dockable for this entry; a recorded verdict, never a "
+        "filter or a ranking input",
+    ),
+    ColumnSpec(
+        "ligand_context",
+        "core.report._describe_ligand_context",
+        "the judged CCD code, then what bonds it, the metal-containing groups within 4 Å "
+        "and the other groups within 4 Å; says the verdict is withheld instead when that "
+        "ligand is no longer dockable for this entry",
+    ),
+    ColumnSpec(
+        "complex_md_simulation_status",
+        "molecular_dynamics.amber_complex (the complex_md_simulation validation row)",
+        "receptor+ligand complex MD: pass, fail or not_run, the words of the other "
+        "*_status columns; recorded, not scored",
+    ),
+    ColumnSpec(
         "suitable_for", "core.report.build_candidate_report", "exercises this candidate passed"
     ),
     # Structured facts split out of modeling_notes/md_simulation_notes'

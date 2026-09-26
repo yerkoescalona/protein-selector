@@ -165,11 +165,11 @@ for row in build_report_table(db_path):
 # ---
 # ## Part B: real protein+ligand complex MD (GAFF2/AMBER) -- needs conda, restarts Colab
 #
-# **Note: `complex_md_simulation` is not one of `build_report_table`'s columns**
-# (`core/report.py`'s `CandidateReportRow` only has `modeling`/`md_simulation`/`docking`
-# -- `complex_md_simulation` was added later, PLAN.md §23a, and never wired into the
-# report join). Part B's last cell below reads it directly from
-# `core.validation_store.load_validation_results`, not from the report table.
+# **Note: the report carries only complex MD's status.** `build_report_table`'s rows have a
+# `complex_md_simulation_status` column (`pass`, `fail` or `not_run`), but not the full
+# assessment `modeling`/`md_simulation`/`docking` get. Part B's last cell below also reads
+# the whole `complex_md_simulation` result (failure mode, notes) from
+# `core.validation_store.load_validation_results`.
 #
 # Run Part A completely first. `openff-toolkit` and `ambertools` are confirmed (checked
 # live via `pip index versions openff-toolkit`/`ambertools`, both still return "No
