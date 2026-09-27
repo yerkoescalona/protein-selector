@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-_DEFAULT_FORCEFIELD = "openff-2.1.0.offxml"
+# Sage 2.3.0, the force field ex03 and the complex-MD validator use. Its offxml assigns
+# NAGL charges itself, so this check exercises the same charge model (PLAN.md §43).
+_DEFAULT_FORCEFIELD = "openff-2.3.0.offxml"
 
 # Not imported at module level -- see module docstring; keeps this module
 # (and anything that transitively imports it, e.g. a future store.py)

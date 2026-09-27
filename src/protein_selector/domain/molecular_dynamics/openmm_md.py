@@ -68,13 +68,15 @@ def run_test_md(
     max_atoms: int | None = None,
     max_minimization_iterations: int = _DEFAULT_MAX_MINIMIZATION_ITERATIONS,
     structures_dir: Path = DEFAULT_MD_STRUCTURES_DIR,
+    cpu_threads: int | None = None,
 ) -> ValidationResult:
     """Fetch/read, repair, and run a short OpenMM MD test on one structure.
 
     If ``pdb_path`` is ``None``, PDBFixer fetches the structure directly from RCSB by
     ``pdb_id``. ``max_minimization_iterations`` is OpenMM's own real ``maxIterations``
     argument to ``minimizeEnergy()`` -- if cut off before converging, that's reflected
-    honestly in ``notes``, not treated as a fully-converged run. Requires the validation
+    honestly in ``notes``, not treated as a fully-converged run. ``cpu_threads`` caps
+    OpenMM's CPU platform; ``None`` keeps its default of one thread per core. Requires the validation
     conda environment; raises ``ImportError`` with an install hint if unavailable.
 
     On a real ``SUCCESS`` only, the relaxed structure is written to
@@ -163,7 +165,7 @@ def run_test_md(
 
     stages.set_postfix_str("⚛️ building ForceField system")
     try:
-        forcefield = app.ForceField("amber14-all.xml", "amber14/tip3pfb.xml")
+        forcefield = app.ForceField("amber14-all.xml", "amber14/tip3p.xml")
         system = forcefield.createSystem(
             fixer.topology, nonbondedMethod=app.NoCutoff, constraints=app.HBonds
         )
@@ -188,7 +190,9 @@ def run_test_md(
         timestep_fs * unit.femtoseconds,  # ty: ignore[unresolved-attribute]
     )
     platform = openmm.Platform.getPlatformByName("CPU")
-    simulation = app.Simulation(fixer.topology, system, integrator, platform)
+    # Without a count OpenMM runs one thread per core, whatever the scheduler reserved.
+    properties = {"Threads": str(cpu_threads)} if cpu_threads else {}
+    simulation = app.Simulation(fixer.topology, system, integrator, platform, properties)
     simulation.context.setPositions(fixer.positions)
 
     stages.set_postfix_str("🧊 minimizing energy")

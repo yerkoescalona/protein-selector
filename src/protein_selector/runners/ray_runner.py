@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from protein_selector.core.config import (
@@ -248,13 +248,24 @@ class AnnotationCpus:
     ligand_context: int
 
 
+def md_threads(config: RayPipelineConfig) -> int:
+    """CPUs one MD task reserves: the lane's own setting, else ``md_threads``."""
+    return config.md_simulation.cpu_threads or config.md_threads
+
+
+def complex_md_threads(config: RayPipelineConfig) -> int:
+    """CPUs one complex-MD task reserves: its own setting, else ``md_threads``."""
+    return config.complex_md_simulation.cpu_threads or config.md_threads
+
+
 def annotation_cpus(config: RayPipelineConfig, cluster_cpus: float) -> AnnotationCpus:
     """What the relatives, numbering and ligand-context tasks reserve on ``cluster_cpus``.
 
     The three can run for hours on a first backfill, beside chemistry and the slow lanes,
     so together they get only what is left once the largest of those tasks has room:
-    chemistry and pocket detection take one CPU, MD and complex MD ``md_threads``, docking
-    ``dock_threads``. Whatever the annotations hold, such a task can always be scheduled
+    chemistry and pocket detection take one CPU, MD ``md_threads``, complex MD
+    ``complex_md_threads`` (each the lane's own setting, else the ``md_threads`` field),
+    docking ``dock_threads``. Whatever the annotations hold, such a task can always be scheduled
     beside them, so they never hold chemistry, MD or docking up. Relatives is served
     first: its FAMSA alignments are real CPU work, up to ``max_workers * famsa_threads``
     cores, while numbering and ligand context mostly wait on SIFTS and RCSB. A task the
@@ -262,8 +273,10 @@ def annotation_cpus(config: RayPipelineConfig, cluster_cpus: float) -> Annotatio
     sharing cores instead of waiting for them.
     """
     largest = 1
-    if config.md_simulation.enabled or config.complex_md_simulation.enabled:
-        largest = max(largest, config.md_threads)
+    if config.md_simulation.enabled:
+        largest = max(largest, md_threads(config))
+    if config.complex_md_simulation.enabled:
+        largest = max(largest, complex_md_threads(config))
     if config.docking.enabled:
         largest = max(largest, config.dock_threads)
     budget = max(0, int(cluster_cpus) - largest)
@@ -629,13 +642,14 @@ def run_pipeline_on_ray(
     # The dependency chain the Snakefile encodes across three rules plus two checkpoints
     # (PLAN.md §17c/§18) is just function calls here: md -> pocket -> dock -> complex_md,
     # per candidate, with no marker files and no fan-out declarations.
-    @ray.remote(num_cpus=config.md_threads)
+    # OpenMM gets exactly the CPUs Ray reserves; unset, it would take every core.
+    md_config = replace(config.md_simulation, cpu_threads=md_threads(config))
+
+    @ray.remote(num_cpus=md_threads(config))
     def _md(pdb_id: str, _gate: int) -> bool:
         from protein_selector.nodes.simulate_md_node import simulate_md
 
-        result = simulate_md(
-            pdb_id, config.md_simulation, db_path, force_refresh=config.force_refresh
-        )
+        result = simulate_md(pdb_id, md_config, db_path, force_refresh=config.force_refresh)
         return result is not None and result.status.value == "success"
 
     @ray.remote
@@ -655,14 +669,18 @@ def run_pipeline_on_ray(
         )
         return result is not None and result.status.value == "success"
 
-    @ray.remote(num_cpus=config.md_threads)
+    complex_md_config = replace(
+        config.complex_md_simulation, cpu_threads=complex_md_threads(config)
+    )
+
+    @ray.remote(num_cpus=complex_md_threads(config))
     def _complex_md(pdb_id: str, _dock_done: bool) -> bool:
         from protein_selector.nodes.simulate_complex_md_node import (
             simulate_complex_md,
         )
 
         result = simulate_complex_md(
-            pdb_id, config.complex_md_simulation, db_path,
+            pdb_id, complex_md_config, db_path,
             force_refresh=config.force_refresh,
         )
         return result is not None and result.status.value == "success"

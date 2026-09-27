@@ -5,11 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from protein_selector.core.config import (
+    ComplexMdSimulationConfig,
     LigandContextConfig,
     ResidueNumberingConfig,
     SequenceRelativesConfig,
+    complex_md_from,
     ligand_context_from,
     load_run_config,
+    md_simulation_from,
     residue_numbering_from,
     sequence_relatives_from,
 )
@@ -62,3 +65,18 @@ class TestLigandContextFrom:
 
     def test_the_shipped_config_turns_it_on(self):
         assert ligand_context_from(load_run_config(_SHIPPED_CONFIG)).enabled
+
+
+class TestComplexMdFrom:
+    def test_an_empty_config_gives_the_defaults(self):
+        assert complex_md_from({}) == ComplexMdSimulationConfig()
+
+    def test_the_shipped_config_runs_the_function_defaults_on_two_threads(self):
+        config = complex_md_from(load_run_config(_SHIPPED_CONFIG))
+        assert (config.n_steps, config.max_minimization_iterations) == (2500, 0)
+        assert config.cpu_threads == 2
+
+
+class TestMdSimulationFrom:
+    def test_the_shipped_config_gives_openmm_the_threads_ray_reserves(self):
+        assert md_simulation_from(load_run_config(_SHIPPED_CONFIG)).cpu_threads == 2

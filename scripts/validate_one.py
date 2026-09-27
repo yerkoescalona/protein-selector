@@ -7,7 +7,7 @@ Usage:
     uv run --extra validate python scripts/validate_one.py 1FSZ --complex-md
 
 MD/pocket/docking/complex-md need the conda env from `workflow/config.yaml`'s
-`validation_conda_prefix` active on PATH (complex-md additionally needs `ambertools` in
+`validation_conda_prefix` active on PATH (complex-md additionally needs `openff-nagl` in
 it); missing env is reported per-stage, not fatal. If running under `conda activate`
 directly (not Snakemake's `--sdm conda`), the PATH-ordering gotcha that broke
 `complex_md_validate` under Snakemake (Makefile's `workflow-complex-md` target's comment)
@@ -62,8 +62,8 @@ def main() -> None:
         "--complex-md",
         action="store_true",
         dest="run_complex_md",
-        help="also run GAFF2/AMBER receptor+ligand complex MD (PLAN.md §23a, needs "
-        "ambertools in the conda env; off by default, unlike --no-md/--no-dock)",
+        help="also run solvated receptor+ligand complex MD with ex03's force fields "
+        "(PLAN.md §43; off by default, unlike --no-md/--no-dock)",
     )
     parser.add_argument(
         "--force-refresh", action="store_true", help="recompute even if already persisted (upsert, not delete)"

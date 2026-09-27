@@ -118,6 +118,7 @@ def validate_single_pdb(
                     "md_max_minimization_iterations",
                     MdSimulationConfig.max_minimization_iterations,
                 ),
+                cpu_threads=config.get("md_threads"),
             ),
             db_path,
             force_refresh=force_refresh,
@@ -190,6 +191,7 @@ def validate_single_pdb(
                     "complex_md_max_minimization_iterations",
                     ComplexMdSimulationConfig.max_minimization_iterations,
                 ),
+                cpu_threads=config.get("complex_md_threads"),
             ),
             db_path,
             force_refresh=force_refresh,
@@ -197,7 +199,7 @@ def validate_single_pdb(
         if complex_md_result is None:
             logger.warning(
                 "⚠️ %s: complex MD stage skipped (validation conda env not active/installed, "
-                "needs ambertools)",
+                "needs openff-toolkit and openff-nagl)",
                 pdb_id,
             )
         else:

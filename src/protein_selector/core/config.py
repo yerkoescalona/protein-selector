@@ -105,11 +105,12 @@ class MdSimulationConfig:
     enabled: bool = False
     n_steps: int | None = None  # None = md_validation.py's own default.
     max_minimization_iterations: int = 0  # 0 = unbounded (OpenMM default).
+    cpu_threads: int | None = None  # OpenMM CPU threads; None lets OpenMM take every core
 
 
 @dataclass
 class ComplexMdSimulationConfig:
-    """Real GAFF2/AMBER receptor+ligand complex MD -- persisted as "complex_md_simulation" (PLAN.md §24).
+    """Real receptor+ligand complex MD, ex03's recipe -- persisted as "complex_md_simulation" (PLAN.md §43).
 
     Needs ``md_simulation`` and ``docking`` to have already succeeded for a candidate.
     """
@@ -117,6 +118,7 @@ class ComplexMdSimulationConfig:
     enabled: bool = False
     n_steps: int | None = None
     max_minimization_iterations: int = 0
+    cpu_threads: int | None = None  # OpenMM CPU threads; None lets OpenMM take every core
 
 
 @dataclass
@@ -215,6 +217,7 @@ def md_simulation_from(config: dict) -> MdSimulationConfig:
         enabled=bool(config.get("run_md", False)),
         n_steps=config.get("md_n_steps"),
         max_minimization_iterations=config.get("md_max_minimization_iterations", 0),
+        cpu_threads=config.get("md_threads"),
     )
 
 
@@ -240,11 +243,12 @@ def docking_from(config: dict) -> DockingConfig:
 
 
 def complex_md_from(config: dict) -> ComplexMdSimulationConfig:
-    """The receptor+ligand complex MD lane (§24). Off by default -- needs ambertools."""
+    """The receptor+ligand complex MD lane (§43). Off by default -- the slowest lane."""
     return ComplexMdSimulationConfig(
         enabled=bool(config.get("run_complex_md", False)),
         n_steps=config.get("complex_md_n_steps"),
         max_minimization_iterations=config.get(
             "complex_md_max_minimization_iterations", 0
         ),
+        cpu_threads=config.get("complex_md_threads"),
     )

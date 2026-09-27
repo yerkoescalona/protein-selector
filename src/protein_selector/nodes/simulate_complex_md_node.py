@@ -87,7 +87,7 @@ def simulate_complex_md(
     db_path,
     force_refresh: bool = False,
 ) -> ValidationResult | None:
-    """Run GAFF2/AMBER receptor+ligand complex MD for one candidate, persist, return the result.
+    """Run receptor+ligand complex MD (ex03's recipe) for one candidate, persist, return the result.
 
     Skips actually running MD (returns the existing row instead) if already validated and
     its relaxed structure file still exists, unless ``force_refresh`` -- same pattern and
@@ -121,6 +121,7 @@ def simulate_complex_md(
                 pdb_id,
                 db_path,
                 max_minimization_iterations=complex_md_simulation.max_minimization_iterations,
+                cpu_threads=complex_md_simulation.cpu_threads,
             )
         else:
             result = run_complex_md_validation(
@@ -128,11 +129,12 @@ def simulate_complex_md(
                 db_path,
                 n_steps=complex_md_simulation.n_steps,
                 max_minimization_iterations=complex_md_simulation.max_minimization_iterations,
+                cpu_threads=complex_md_simulation.cpu_threads,
             )
     except ImportError:
         logger.warning(
             "⚠️ Complex MD simulation stopped for %s: validation conda env not installed "
-            "(openmm/openmmforcefields/openff-toolkit/ambertools, see environment-validation.yml)",
+            "(openmm/openmmforcefields/openff-toolkit/openff-nagl, see environment-validation.yml)",
             pdb_id,
         )
         return None

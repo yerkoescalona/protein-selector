@@ -24,7 +24,9 @@ from protein_selector.runners.ray_runner import (
     RayPipelineConfig,
     StagePlan,
     annotation_cpus,
+    complex_md_threads,
     format_plan,
+    md_threads,
     plan_pipeline,
 )
 
@@ -230,8 +232,10 @@ class TestPlanPipeline:
 
 
 def _config(*, md=False, dock=False, md_threads=2, dock_threads=2, workers=4,
-            famsa_threads=1, relatives=True, numbering=True, ligand_context=True):
+            famsa_threads=1, relatives=True, numbering=True, ligand_context=True,
+            complex_md=False, complex_md_threads=None):
     from protein_selector.core.config import (
+        ComplexMdSimulationConfig,
         DockingConfig,
         LigandContextConfig,
         MdSimulationConfig,
@@ -242,6 +246,9 @@ def _config(*, md=False, dock=False, md_threads=2, dock_threads=2, workers=4,
     return RayPipelineConfig(
         md_simulation=MdSimulationConfig(enabled=md),
         docking=DockingConfig(enabled=dock),
+        complex_md_simulation=ComplexMdSimulationConfig(
+            enabled=complex_md, cpu_threads=complex_md_threads
+        ),
         md_threads=md_threads,
         dock_threads=dock_threads,
         sequence_relatives=SequenceRelativesConfig(
@@ -265,8 +272,10 @@ class TestAnnotationCpus:
             (_config(md=True, md_threads=8), 8),
             (_config(md=True, workers=8, famsa_threads=2), 2),
             (_config(workers=1), 1),
+            (_config(complex_md=True, complex_md_threads=6), 6),
         ],
-        ids=["cheap-lane", "md", "md+dock4", "md8", "relatives-8x2", "one-worker"],
+        ids=["cheap-lane", "md", "md+dock4", "md8", "relatives-8x2", "one-worker",
+             "complex6"],
     )
     def test_the_largest_slow_lane_task_always_fits_beside_the_annotations(
         self, cluster, config, largest
@@ -298,6 +307,20 @@ class TestAnnotationCpus:
             _config(relatives=False, numbering=False, ligand_context=False), 16
         )
         assert (cpus.relatives, cpus.numbering, cpus.ligand_context) == (0, 0, 0)
+
+    def test_md_uses_the_lanes_own_thread_count_when_set(self):
+        from protein_selector.core.config import MdSimulationConfig
+
+        config = _config(md=True, md_threads=3)
+        assert md_threads(config) == 3
+        config.md_simulation = MdSimulationConfig(enabled=True, cpu_threads=5)
+        assert md_threads(config) == 5
+
+    def test_complex_md_reserves_md_threads_unless_given_its_own(self):
+        assert complex_md_threads(_config(complex_md=True, md_threads=3)) == 3
+        assert complex_md_threads(
+            _config(complex_md=True, md_threads=3, complex_md_threads=5)
+        ) == 5
 
     def test_fractional_cluster_cpus_are_rounded_down(self):
         # ray.cluster_resources() reports CPUs as a float.

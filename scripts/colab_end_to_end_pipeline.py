@@ -24,7 +24,8 @@
 #   working wheels; `fpocket` doesn't, but PLAN.md §20 already made fpocket's pockets
 #   informational-only, never a gate on docking, so that's not a blocker here).
 # - **Part B** (separate section near the bottom, clearly marked): the real
-#   protein+ligand GAFF2/AMBER complex MD. `openff-toolkit`/`ambertools` are confirmed
+#   protein+ligand complex MD (GAFF2/AMBER when this script was verified; OpenFF Sage 2.3.0
+#   + NAGL since PLAN.md §43, not yet re-verified here, see §43 K.5). `openff-toolkit`/`ambertools` are confirmed
 #   (re-checked live via `pip index versions`, still true) to have NO pip release at
 #   all -- this genuinely cannot run without a conda bootstrap (`condacolab`), which
 #   force-restarts the Colab runtime. Run Part A fully first, THEN run Part B's
@@ -163,7 +164,9 @@ for row in build_report_table(db_path):
 
 # %% [markdown]
 # ---
-# ## Part B: real protein+ligand complex MD (GAFF2/AMBER) -- needs conda, restarts Colab
+# ## Part B: real protein+ligand complex MD -- needs conda, restarts Colab
+# (Written for the GAFF2/AMBER path; since PLAN.md §43 complex MD needs openff-nagl instead
+# of ambertools. Not re-verified on Colab yet: PLAN.md §43 K.5.)
 #
 # **Note: the report carries only complex MD's status.** `build_report_table`'s rows have a
 # `complex_md_simulation_status` column (`pass`, `fail` or `not_run`), but not the full

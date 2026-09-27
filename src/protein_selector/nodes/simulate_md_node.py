@@ -103,12 +103,14 @@ def simulate_md(
             result = run_test_md(
                 pdb_id,
                 max_minimization_iterations=md_simulation.max_minimization_iterations,
+                cpu_threads=md_simulation.cpu_threads,
             )
         else:
             result = run_test_md(
                 pdb_id,
                 n_steps=md_simulation.n_steps,
                 max_minimization_iterations=md_simulation.max_minimization_iterations,
+                cpu_threads=md_simulation.cpu_threads,
             )
     except ImportError:
         logger.warning(
