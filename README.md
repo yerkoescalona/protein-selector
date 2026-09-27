@@ -39,7 +39,8 @@ With base dependencies you get the cheap lanes (hard filters, simulability, liga
 literature, AlphaFold DB, sequence relatives and residue numbering) and the script tells
 you which heavy stages it is skipping and why. Install the conda half
 (`make env-validation`) and the same command runs real OpenMM MD, real Vina docking with
-PLIP, and real GAFF2/AMBER protein+ligand complex MD.
+PLIP, and real protein+ligand complex MD with exercise 3's force fields (AMBER ff14SB,
+OpenFF Sage 2.3.0 with its NAGL charges, TIP3P water).
 
 The sequence-relatives lane counts how many distinct relatives a candidate's protein has.
 It takes the UniProt chain the structure lies in, searches it with phmmer against
@@ -195,7 +196,7 @@ version to match [`environment-validation.yml`](environment-validation.yml), is 
 re-run, and never runs as a side effect of another target. It also takes a while.
 
 `make doctor` runs against this repo's venv by default; point it at the other half with
-`make doctor DOCTOR_PYTHON=$HOME/miniconda3/envs/protein-selector-validation/bin/python`.
+`make doctor DOCTOR_PYTHON=$HOME/miniconda3/envs/protein-selector-validation-py313/bin/python`.
 It reports the path each package was imported from, which is the only reliable way to tell
 these three dependency sources apart when something is missing.
 
@@ -214,8 +215,8 @@ which is handled rather than fatal: the run falls back to a fresh RCSB search un
 in `workflow/config.yaml`. Expect network traffic and a new sample on a first run.
 
 Which lanes run is set in [`workflow/config.yaml`](workflow/config.yaml), not by the command:
-`run_md`, `run_dock`, and `run_complex_md` (GAFF2/AMBER receptor+ligand complex MD, off by
-default because it needs `ambertools`), plus three annotation lanes, all on by default:
+`run_md`, `run_dock`, and `run_complex_md` (solvated receptor+ligand complex MD with
+exercise 3's force fields, off by default because it is the slowest lane), plus three annotation lanes, all on by default:
 `run_relatives` (the phmmer search on EBI's HMMER web API), `run_numbering` (SIFTS'
 residue-level map from EBI's file server, plus UniProt, to check that every residue is
 numbered as UniProt numbers it) and `run_ligand_context` (each candidate's mmCIF file from

@@ -4,7 +4,7 @@ Requires the validation conda environment (openmm + pdbfixer, see
 environment-validation.yml) -- these tests are skipped, not failed, when it's
 unavailable (e.g. this project's normal pip/uv venv), since pdbfixer has no
 real pip release. Run with:
-    micromamba run -n protein-selector-validation pytest tests/protein_selector/test_md_validation.py
+    micromamba run -n protein-selector-validation-py313 pytest tests/protein_selector/test_md_validation.py
 """
 
 from __future__ import annotations

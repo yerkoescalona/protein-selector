@@ -64,7 +64,7 @@ def _heavy_tools_available() -> dict[str, bool]:
         "md": mod("openmm") and mod("pdbfixer"),
         "pocket": shutil.which("fpocket") is not None,
         "dock": mod("vina") and mod("meeko") and shutil.which("obabel") is not None,
-        "complex_md": mod("openff.toolkit") and shutil.which("antechamber") is not None,
+        "complex_md": mod("openff.toolkit") and mod("openff.nagl") and mod("openff.nagl_models"),
     }
 
 

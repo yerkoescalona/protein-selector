@@ -1,9 +1,9 @@
 # Installing protein-selector
 
 Two environments, because they cannot be merged: a `uv` venv for everything cheap, and a
-conda env for the validators. `openff-toolkit` and `ambertools` have no usable PyPI release
-at all, and the cheap half must stay installable without conda so the search, scoring and
-report work anywhere.
+conda env for the validators. `openff-toolkit` has no usable PyPI release at all, and the
+cheap half must stay installable without conda so the search, scoring and report work
+anywhere. Both run **Python 3.13.15**, Google Colab's interpreter (PLAN.md §43).
 
 ## Quick version
 
@@ -56,8 +56,20 @@ make env-validation                                    # ~20s, from the lockfile
 make env-validation VALIDATION_ENV=/path/to/env        # elsewhere
 ```
 
-`environment-validation.lock.txt` holds exact URLs and build hashes for all 252 packages.
-It is **linux-64 only** — on another platform use the resolving path below.
+`environment-validation.lock.txt` holds exact URLs and build hashes for all 225 conda
+packages. It is **linux-64 only**: on another platform use the resolving path below. The
+rest comes from pip afterwards, in `make env-validation-pip`, which both make targets run:
+
+- `plip`, `meeko`, `gemmi` and `wheel` (vina declares it), then `openbabel-wheel` in a second
+  call, as the ex04 notebook installs them on Colab. On Python 3.13 conda-forge cannot
+  co-install them (plip's openbabel and lxml disagree on libxml2; meeko 0.7.1 needs prody,
+  which has no 3.13 build). plip pulls the `openbabel` wheel into the same package
+  directory, so the order decides which one imports: last wins, as in ex04.
+- this package itself, editable, with its `validate` extra (PyMOL for `cealign`) and the
+  `ray` group, because the slow lanes run their nodes inside this env.
+
+Both targets refuse to run over an existing env, since `conda create` would delete it first.
+To bring an existing env up to date, run `make env-validation-pip` on its own.
 
 ### Moving versions, or building elsewhere
 
@@ -71,10 +83,9 @@ the lockfile is the exact resolution of it (what those versions actually became)
 and regenerate the lock whenever you change a pin.
 
 The resolving path is deliberately **incremental**, one small group at a time. A single
-`conda env create` across openmm + openff-toolkit + openmmforcefields + pdbfixer + rdkit +
-vina + plip + openbabel + fpocket + meeko has OOM-killed a 15 GB machine twice. `ambertools`
-goes last with `--freeze-installed` so its solve cannot walk back the versions the earlier
-groups just pinned.
+`conda env create` across the whole validation stack has OOM-killed a 15 GB machine twice.
+The pip half goes last. `ambertools` is no longer requested; the full `openff-toolkit`
+package still pulls it in.
 
 Both paths pass `-c conda-forge --override-channels` on every command. That sidesteps
 Anaconda's Terms of Service gate on the `defaults`/`main`/`r` channels rather than accepting
@@ -107,10 +118,10 @@ export PATH="$VALIDATION_ENV/bin:$PATH"
 makes Ray's worker bootstrap re-sync a venv built from the default dependencies, without the
 `ray` group, so every worker dies with `ModuleNotFoundError: No module named 'ray'`.
 
-**c. Ray needs the cluster and every driver on the exact same Python, patch included.** The
-venv is on 3.12.14 and the conda env on 3.12.13, so a slow-lane driver cannot attach to a
-head started from the venv. Use `make ray-head` for cheap-lane runs, `make ray-head-validation`
-for anything involving MD, docking or complex MD.
+**c. Ray needs the cluster and every driver on the exact same Python, patch included.** Since
+2026-09-26 the venv (`.python-version`) and the conda env are both on 3.13.15, so either head
+can serve either driver. Keep them equal whenever one moves: when they differed (3.12.14 and
+3.12.13) a slow-lane driver could not attach to a head started from the venv.
 
 ## 5. Check what you got
 

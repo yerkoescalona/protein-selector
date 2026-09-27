@@ -190,3 +190,9 @@ exclude = ["notebooks", "app", "scripts/colab_*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # dash-bootstrap-components 2.0.4's wheel drops a pyproject.toml into site-packages,
+    # which Biopython mistakes for its own source tree (PLAN.md §43 K.6). No category:
+    # naming Bio.BiopythonWarning would import Bio, and warn, before the filter exists.
+    "ignore:You may be importing Biopython from inside the source tree",
+]

@@ -14,14 +14,14 @@
 # (2026-07-05): `pip download vina` has no wheel for this platform/Python,
 # only an sdist, and building it fails with `ValueError: Boost library
 # location was not found!` (a real Boost build dependency, not a stub gap).
-# `pip wheel plip` fails similarly -- its build step shells out to
-# `pip install openbabel`, which itself needs system Boost/openbabel C++
-# libs and fails the same way. openbabel is listed explicitly here too
-# since plip's conda-forge package does not always pull it in reliably as
-# a transitive dependency for the Python bindings it needs.
+# `pip wheel plip` failed similarly on its own -- its build step shells out to
+# `pip install openbabel`, which needs system Boost/openbabel C++ libs. Since
+# 2026-09-26 (Python 3.13) plip comes from pip AFTER `openbabel-wheel`, which ships
+# prebuilt Open Babel, exactly as the ex04 notebook does on Colab; see the pip block.
 #
-# Create with: micromamba env create -f environment-validation.yml
-# Run validation modules with: micromamba run -n protein-selector-validation <command>
+# Create with: make env-validation (from the lockfile, then the pip half in ex04's order).
+# `micromamba env create -f environment-validation.yml` also works but resolves afresh.
+# Run validation modules with: micromamba run -n protein-selector-validation-py313 <command>
 #
 # meeko (docking/meeko_parameterization.py, real Meeko/AutoDock
 # parameterization stage-2 check) is a REAL, live-discovered omission, fixed
@@ -32,7 +32,8 @@
 # conda env's own Python (as filter_meeko_parameterizable's subprocess
 # workers are, when this env is what's running the pipeline) hit a real
 # `ModuleNotFoundError: No module named 'meeko'`, not a hang or a silent
-# skip. conda-forge has it (`meeko` package) -- and resolved to 0.7.1 here,
+# skip. Since 2026-09-26 it comes from pip (conda's meeko 0.7.1 needs prody, which has
+# no Python 3.13 build). Historically conda-forge had it (`meeko` package), resolved to 0.7.1 here,
 # the exact same version this project's pip `validate` extra installs,
 # verified live (`micromamba install` + `import meeko; meeko.__version__`),
 # so no API drift concern between the two installation paths.
@@ -41,17 +42,16 @@
 # is instructor-tool-only. Never let it leak into the student course repo's
 # own environment.yml -- students don't need openff-toolkit/pdbfixer/vina/plip
 # to run the pre-selected exercises this tool produces.
-name: protein-selector-validation
+name: protein-selector-validation-py313
 channels:
   - conda-forge
 #
 # ===========================================================================
 # VERSIONS ARE PINNED (2026-08-02) -- do not "clean up" these `=x.y.z` suffixes.
 # ===========================================================================
-# Every version below is the one a real `micromamba create` from THIS file actually
-# resolved on Google Colab (Ubuntu 22.04 / glibc 2.35 / linux-64, python 3.12.13), read
-# straight out of that env's own `micromamba list`. Nothing here is a guess or a
-# "latest known good" -- it is a transcript of a working environment.
+# Re-pinned 2026-09-26 for Python 3.13.15 (PLAN.md §43): every version below is what a
+# real `micromamba create` from these specs resolved and then ran the complex-MD validator
+# with. The first pinning (2026-08-02, below) transcribed a Colab env on Python 3.12.13.
 #
 # WHY pinning became necessary: this file previously named packages without versions, so
 # conda re-solved against conda-forge on every build and produced a DIFFERENT environment
@@ -64,9 +64,8 @@ channels:
 #     vina              1.2.7              1.2.7                1.2.5
 #     openff-toolkit    0.18.1             0.18.1               0.18.0
 #
-# That is not cosmetic drift: ambertools supplies `sqm`, which computes the AM1-BCC
-# partial charges the complex-MD stage depends on, so a major-version difference can
-# change real numbers in the output.
+# That was not cosmetic drift: ambertools then supplied `sqm`, which computed the AM1-BCC
+# partial charges the complex-MD stage depended on (NAGL does since §43).
 #
 # NOTE these are VERSION pins, not BUILD pins. Build strings (e.g.
 # `py312h3ecb6ed_0`) are architecture-specific and would make this file unusable off
@@ -79,26 +78,40 @@ channels:
 # To move to newer versions deliberately: drop the pins, rebuild, then re-pin from the
 # new env's `conda list` -- rather than letting it drift silently.
 dependencies:
-  # 3.12.13 exactly = Google Colab's own interpreter, so the validators run on the same
-  # Python students/Colab use. Also satisfies this repo's `requires-python = ">=3.12"`.
-  - python=3.12.13
-  - openmm=8.5.2
-  - openff-toolkit=0.18.1
+  # 3.13.15 exactly = Google Colab's current interpreter (a live session reported it on
+  # 2026-08-29), so the validators run on the Python students use. Re-pinned 2026-09-26 from
+  # 3.12.13, which Colab has left (PLAN.md §43).
+  - python=3.13.15
+  # The OpenFF/OpenMM stack at the versions the ex03 notebook pins for its ligand
+  # environment: Sage 2.3.0 with its own NAGL charges (PLAN.md §43).
+  - openmm=8.6.1
+  - openff-toolkit=0.19.0
   - openmmforcefields=0.16.0
+  - openff-forcefields=2026.09.0
+  - openff-nagl=0.6.1
+  - openff-nagl-models=2026.09.0
   - pdbfixer=1.12
+  # rdkit stays at 2025.09.5 because vina 1.2.7 needs boost 1.86, which rules out
+  # rdkit 2026.03.x on Python 3.13.
   - rdkit=2025.09.5
   - vina=1.2.7
-  - plip=3.0.1
-  - openbabel=3.1.1
   - fpocket=4.2.2
-  - meeko=0.7.1
-  # GAFF2/AMBER complex-MD stage (PLAN.md §23a, molecular_dynamics/complex_md_validation.py
-  # -- AM1-BCC charges via ambertools' `sqm`, called internally by openff-toolkit). Was
-  # previously only in README's manual incremental-install walkthrough, never in this
-  # tracked file -- `conda env create -f environment-validation.yml` alone did not give a
-  # working complex-MD env. See README's "don't `conda install` on top of a populated env"
-  # gotcha if adding this to an already-built env instead of a fresh one.
-  # Pinned to 24.8 (what Colab resolved) rather than 26.0 (what a separate /opt/conda build
-  # picked the same day) -- the two coexist on conda-forge and the solver's choice between
-  # them was not deterministic, which is precisely the problem this pin removes.
-  - ambertools=24.8
+  - requests
+  - pip
+  # From pip, as the ex04 notebook installs them on Colab. On Python 3.13 conda-forge cannot
+  # co-install them: plip's openbabel and lxml disagree on libxml2, and meeko 0.7.1 needs
+  # prody, which has no 3.13 build. openbabel-wheel also supplies the `obabel` CLI that
+  # docking/obabel_prep.py calls. A conda lockfile does not record these: `make
+  # env-validation` installs them after creating the env from the lock, openbabel-wheel in
+  # a second call so it, not plip's `openbabel` dependency, is the one that imports. A
+  # single pip block cannot order that; `make env-validation-pip` can. The same target
+  # adds this package with its validate extra (PyMOL) and the Ray group.
+  - pip:
+      - plip==3.0.1
+      - meeko==0.7.1
+      - gemmi==0.7.5
+      - wheel==0.48.0  # vina 1.2.7 declares it; pip check fails without it
+      - openbabel-wheel==3.1.1.23
+  # ambertools is no longer listed (PLAN.md §43): its only consumer in this repo was the
+  # complex-MD stage's AM1-BCC charges through `sqm`, which NAGL replaced. It still arrives
+  # as a dependency of the full openff-toolkit package (24.8 in the lockfile).

@@ -32,7 +32,7 @@ PS_ROOT="${PS_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
 PS_CONFIG="${PS_CONFIG:-workflow/config.yaml}"
 PS_DB="${PS_DB:-cache/protein_selector.db}"
 PS_IDS="${PS_IDS:-results/candidate_ids.txt}"
-PS_ENV="${PS_ENV:-$HOME/miniconda3/envs/protein-selector-validation}"
+PS_ENV="${PS_ENV:-$HOME/miniconda3/envs/protein-selector-validation-py313}"
 PS_PYTHON="${PS_PYTHON:-$PS_ENV/bin/python}"
 
 cd "$PS_ROOT"

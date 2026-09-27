@@ -74,6 +74,9 @@ PACKAGES: list[tuple[str, str, str]] = [
     # These two ARE still genuinely conda-only -- re-verified live the same day:
     # `pip index versions openff-toolkit` / `ambertools` both return nothing at all.
     ("openff-toolkit", "openff.toolkit", "conda-only (real)"),
+    # Complex MD's charges (PLAN.md §43): the network and the model files it loads.
+    ("openff-nagl", "openff.nagl", "conda (complex MD)"),
+    ("openff-nagl-models", "openff.nagl_models", "conda (complex MD)"),
     ("ambertools", "parmed", "conda-only (real)"),  # ambertools ships no single import
     # name; parmed is a real module it installs, used here only as a presence proxy.
     ("snakemake", "snakemake", "workflow"),
@@ -201,8 +204,8 @@ _CONDA_ROOT_CANDIDATES = [
 # env contains cannot be done by importing here -- this process is a different Python.
 _CONDA_PROBE = """
 import json, shutil, sys
-mods = ["openff.toolkit", "pdbfixer", "openmm", "rdkit", "parmed", "vina", "plip",
-        "openbabel", "meeko"]
+mods = ["openff.toolkit", "openff.nagl", "openff.nagl_models", "pdbfixer", "openmm",
+        "rdkit", "parmed", "vina", "plip", "openbabel", "meeko"]
 found = {}
 for m in mods:
     try:
@@ -400,12 +403,14 @@ def print_conda(conda: dict, deep: bool) -> None:
             bins = {k: v for k, v in (env.get("binaries") or {}).items() if v}
             if bins:
                 print("      binaries: " + ", ".join(sorted(bins)))
-            # The exact condition that silently disables AM1-BCC.
+            # Complex MD charges ligands with NAGL; without it the lane skips every candidate.
             mods = env.get("modules") or {}
-            if mods.get("openff.toolkit") and not (env.get("binaries") or {}).get("antechamber"):
-                print("      WARNING: openff.toolkit is present but `antechamber` is NOT in")
-                print("               this env's bin/ -- AM1-BCC charge assignment will fail")
-                print("               with a misleading 'no registered toolkits' error.")
+            if mods.get("openff.toolkit") and not (
+                mods.get("openff.nagl") and mods.get("openff.nagl_models")
+            ):
+                print("      WARNING: openff.toolkit is present but openff-nagl or")
+                print("               openff-nagl-models is NOT -- complex MD will skip")
+                print("               every candidate.")
 
 
 def main() -> None:

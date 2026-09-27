@@ -1,9 +1,15 @@
 # protein-selector. `make help` lists the targets.
 #
 # Two environments, never mixed: a uv venv for everything cheap, and a conda env for the
-# validators (openmm/vina/plip/ambertools). INSTALL.md explains why they cannot merge.
+# validators (openmm/openff/vina/plip). INSTALL.md explains why they cannot merge.
 
-VALIDATION_ENV ?= $(HOME)/miniconda3/envs/protein-selector-validation
+VALIDATION_ENV ?= $(HOME)/miniconda3/envs/protein-selector-validation-py313
+# The pip half of the validation env, as the ex04 notebook installs it on Colab; a conda
+# lockfile cannot record it (environment-validation.yml's pip block, PLAN.md §43).
+# openbabel-wheel goes in a second call, as in ex04: plip pulls the `openbabel` wheel into
+# the same package directory, and the one installed last is the one that imports.
+VALIDATION_PIP      := plip==3.0.1 meeko==0.7.1 gemmi==0.7.5 wheel==0.48.0
+VALIDATION_PIP_LAST := openbabel-wheel==3.1.1.23
 DEMO_DB        ?= demo/demo_run.db
 CALIBRATION_DB  ?= cache/protein_selector.db
 # Per-run analysis output, not a committed artifact: results/ is gitignored.
@@ -21,7 +27,7 @@ RAY_PYTHON ?= ./.venv/bin/python
 CHECK_ENV ?= --extra validate --group ray
 
 .DEFAULT_GOAL := help
-.PHONY: help env env-validation env-validation-solve env-validation-lock doctor check lint typecheck test coverage demo demo-watch \
+.PHONY: help env env-validation env-validation-solve env-validation-pip env-validation-lock doctor check lint typecheck test coverage demo demo-watch \
         calibration serve provenance plan-index docs docs-serve ray-plan ray-run ray-graph ray-status ray-watch \
         ray-head ray-head-validation ray-stop clean
 
@@ -54,27 +60,40 @@ env-validation:  ## conda env from the lockfile, no solving (fast)
 	@test -f environment-validation.lock.txt || { \
 		echo "environment-validation.lock.txt is missing -- use: make env-validation-solve"; \
 		exit 1; }
+	@test ! -e $(VALIDATION_ENV) || { \
+		echo "$(VALIDATION_ENV) already exists; conda would delete it and start again."; \
+		echo "Remove it yourself, or build elsewhere: VALIDATION_ENV=/new/path"; exit 1; }
 	conda create -p $(VALIDATION_ENV) --file environment-validation.lock.txt \
 		--override-channels -c conda-forge -y
-	@echo "Built $(VALIDATION_ENV) from the lockfile."
+	$(MAKE) env-validation-pip
+	@echo "Built $(VALIDATION_ENV) from the lockfile, plus the pip half."
 	@echo "Check it: make doctor DOCTOR_PYTHON=$(VALIDATION_ENV)/bin/python"
 
 # Incremental on purpose: a single solve across these packages has OOM-killed a 15 GB
-# machine twice. Pins must match environment-validation.yml. ambertools goes last with
-# --freeze-installed so its solve cannot walk back the versions the earlier groups pinned.
+# machine twice. Pins must match environment-validation.yml. plip, openbabel and meeko
+# come from pip last: on Python 3.13 conda-forge cannot co-install them (PLAN.md §43).
 env-validation-solve:  ## same env, resolving the pins instead (slow; to move versions)
-	conda create  -p $(VALIDATION_ENV) -c conda-forge --override-channels python=3.12.13 -y
+	@test ! -e $(VALIDATION_ENV) || { \
+		echo "$(VALIDATION_ENV) already exists; conda would delete it and start again."; \
+		echo "Remove it yourself, or build elsewhere: VALIDATION_ENV=/new/path"; exit 1; }
+	conda create  -p $(VALIDATION_ENV) -c conda-forge --override-channels python=3.13.15 -y
 	conda install -p $(VALIDATION_ENV) -c conda-forge --override-channels \
-		openmm=8.5.2 rdkit=2025.09.5 -y
+		openmm=8.6.1 rdkit=2025.09.5 -y
 	conda install -p $(VALIDATION_ENV) -c conda-forge --override-channels \
-		pdbfixer=1.12 openmmforcefields=0.16.0 openff-toolkit=0.18.1 -y
+		pdbfixer=1.12 openmmforcefields=0.16.0 openff-toolkit=0.19.0 \
+		openff-forcefields=2026.09.0 openff-nagl=0.6.1 openff-nagl-models=2026.09.0 -y
 	conda install -p $(VALIDATION_ENV) -c conda-forge --override-channels \
-		vina=1.2.7 plip=3.0.1 openbabel=3.1.1 -y
-	conda install -p $(VALIDATION_ENV) -c conda-forge --override-channels \
-		fpocket=4.2.2 meeko=0.7.1 requests -y
-	conda install -p $(VALIDATION_ENV) -c conda-forge --override-channels \
-		ambertools=24.8 -y --freeze-installed
+		vina=1.2.7 fpocket=4.2.2 requests pip -y
+	$(MAKE) env-validation-pip
 	@echo "Built $(VALIDATION_ENV). Freeze it: make env-validation-lock"
+
+# Also this package itself, editable, with the validate extra (PyMOL for cealign) and the
+# Ray group: the slow lanes run their nodes inside this env, and `make ray-head-validation`
+# starts Ray from it. Conda already holds the rest of the extra, so pip adds only PyMOL.
+env-validation-pip:  ## the pip half of the validation env, into an existing one
+	$(VALIDATION_ENV)/bin/python -m pip install $(VALIDATION_PIP)
+	$(VALIDATION_ENV)/bin/python -m pip install $(VALIDATION_PIP_LAST)
+	$(VALIDATION_ENV)/bin/python -m pip install -e ".[validate]" --group ray
 
 env-validation-lock:  ## rewrite the lockfile from the env you have now
 	@conda list -p $(VALIDATION_ENV) --explicit >/dev/null 2>&1 || { \
