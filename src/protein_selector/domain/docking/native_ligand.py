@@ -140,10 +140,36 @@ def ligand_bounding_box(
     return center, size
 
 
+def modelled_heavy_atoms(crystal_pdb_text: str, ccd_code: str) -> int:
+    """Heavy atoms modelled in the copy of ``ccd_code`` the alignment step extracts.
+
+    ``pymol_align`` saves ``byres first`` of the HETATM copies, and PyMOL orders atoms by
+    chain, then residue number, keeping file order for a tie. Atoms are counted by name, so
+    alternate locations count once. ``0`` when the file holds no copy.
+    """
+    copies: dict[tuple[str, int, str], set[str]] = {}
+    for line in crystal_pdb_text.splitlines():
+        if not line.startswith("HETATM") or line[17:20].strip() != ccd_code:
+            continue
+        try:
+            residue = (line[21], int(line[22:26]), line[26])
+        except ValueError:
+            continue
+        names = copies.setdefault(residue, set())
+        element = line[76:78].strip() or line[12:16].strip()[:1]
+        if element.upper() not in ("H", "D"):
+            names.add(line[12:16].strip())
+    if not copies:
+        return 0
+    first = min(copies, key=lambda residue: residue[:2])  # min keeps file order on a tie
+    return len(copies[first])
+
+
 def pick_largest_organic_ligand(
     ccd_codes: list[str],
     meeko_results: Mapping[str, MeekoParameterizationResult],
     smiles_by_ccd: Mapping[str, str | None],
+    crystal_pdb_text: str | None = None,
 ) -> str | None:
     """PLAN.md §17a.2/§19: among a candidate's bound ligands, pick the largest ORGANIC one.
 
@@ -151,6 +177,10 @@ def pick_largest_organic_ligand(
     real Meeko parameterization (see PLAN.md §19 for why "passed Meeko" alone isn't
     sufficient). "Largest" is heavy-atom count from RDKit on the persisted SMILES. Ties
     broken by CCD code alphabetically. Returns ``None`` if no candidate is dockable.
+
+    Given ``crystal_pdb_text``, a ligand whose extracted copy has fewer heavy atoms than its
+    SMILES is skipped: docking a partial ligand works, but complex MD cannot map the SMILES
+    onto it (PLAN.md §43).
 
     Requires the `validate` extra (rdkit).
     """
@@ -175,6 +205,13 @@ def pick_largest_organic_ligand(
         mol = Chem.MolFromSmiles(smiles)
         return mol.GetNumHeavyAtoms() if mol is not None else 0
 
+    if crystal_pdb_text is not None:
+        candidates = [
+            code for code in candidates
+            if modelled_heavy_atoms(crystal_pdb_text, code) >= heavy_atom_count(code)
+        ]
+        if not candidates:
+            return None
     ranked = sorted(candidates, key=lambda code: (-heavy_atom_count(code), code))
     return ranked[0]
 

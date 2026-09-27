@@ -29,6 +29,7 @@ from protein_selector.domain.docking.native_ligand import (
     is_dockable_ligand_code,
     ligand_bounding_box,
     ligand_centroid,
+    modelled_heavy_atoms,
     pick_largest_organic_ligand,
     prepare_ligand_pdbqt,
 )
@@ -175,6 +176,52 @@ class TestPickLargestOrganicLigand:
         smiles_by_ccd = {"ETH": _ETHANOL_SMILES, "ABC": _ETHANOL_SMILES}
 
         assert pick_largest_organic_ligand(["ETH", "ABC"], meeko_results, smiles_by_ccd) == "ABC"
+
+
+def _hetatm(serial, name, resn, chain, resseq, element, altloc=" "):
+    return (f"HETATM{serial:5d} {name:<4}{altloc}{resn} {chain}{resseq:4d}    "
+            f"   0.000   0.000   0.000  1.00  0.00          {element:>2}")
+
+
+# Three ethanol copies: B 5 is complete; A 9 is missing its oxygen, carries a hydrogen and
+# an alternate location for C1. PyMOL takes A 9 first (chain before residue number).
+_ETHANOL_COPIES = "\n".join([
+    _hetatm(1, "C1", "ETH", "B", 5, "C"), _hetatm(2, "C2", "ETH", "B", 5, "C"),
+    _hetatm(3, "O", "ETH", "B", 5, "O"),
+    _hetatm(4, "C1", "ETH", "A", 9, "C", "A"), _hetatm(5, "C1", "ETH", "A", 9, "C", "B"),
+    _hetatm(6, "C2", "ETH", "A", 9, "C"), _hetatm(7, "H1", "ETH", "A", 9, "H"),
+])
+
+
+class TestModelledHeavyAtoms:
+    def test_counts_the_copy_pymol_takes_first(self):
+        assert modelled_heavy_atoms(_ETHANOL_COPIES, "ETH") == 2
+
+    def test_no_copy_counts_zero(self):
+        assert modelled_heavy_atoms(_ETHANOL_COPIES, "GLC") == 0
+
+
+class TestPickSkipsPartlyModelledLigands:
+    meeko_results = {
+        "GLC": MeekoParameterizationResult(ligand_id="GLC", passed=True),
+        "ETH": MeekoParameterizationResult(ligand_id="ETH", passed=True),
+    }
+    smiles_by_ccd = {"GLC": _GLUCOSE_SMILES, "ETH": _ETHANOL_SMILES}
+
+    def test_a_partial_largest_ligand_gives_way_to_a_complete_one(self):
+        crystal = "\n".join([_hetatm(1, "C1", "GLC", "A", 1, "C"), _hetatm(2, "C1", "ETH", "B", 5, "C"),
+                             _hetatm(3, "C2", "ETH", "B", 5, "C"), _hetatm(4, "O", "ETH", "B", 5, "O")])
+        assert pick_largest_organic_ligand(
+            ["GLC", "ETH"], self.meeko_results, self.smiles_by_ccd, crystal_pdb_text=crystal
+        ) == "ETH"
+
+    def test_only_partial_ligands_pick_nothing(self):
+        assert pick_largest_organic_ligand(
+            ["ETH"], self.meeko_results, self.smiles_by_ccd, crystal_pdb_text=_ETHANOL_COPIES
+        ) is None
+
+    def test_without_the_crystal_the_pick_is_unchanged(self):
+        assert pick_largest_organic_ligand(["GLC", "ETH"], self.meeko_results, self.smiles_by_ccd) == "GLC"
 
 
 class TestPrepareLigandPdbqt:

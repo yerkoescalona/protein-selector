@@ -31,6 +31,7 @@ from protein_selector.domain.docking.ligands import fetch_smiles_for_ccd_codes
 from protein_selector.domain.docking.native_ligand import (
     ligand_bounding_box,
     ligand_centroid,
+    modelled_heavy_atoms,
     pick_largest_organic_ligand,
 )
 from protein_selector.domain.docking.rcsb_pdb_file import fetch_pdb_text
@@ -103,7 +104,7 @@ def _receptor_minimization_converged(pdb_id: str, db_path) -> bool | None:
 
 
 def resolve_docking_target(
-    pdb_id: str, db_path
+    pdb_id: str, db_path, complete_only: bool = False
 ) -> tuple[DockingTarget | None, list[str], FailureMode | None]:
     """Resolve the dockable ligand + self-dock box for one candidate, per PLAN.md §17a/§18/§20.
 
@@ -114,6 +115,10 @@ def resolve_docking_target(
     fpocket's ``pocket_detection`` result is looked up only for the informational
     ``nearby_pocket_druggability`` value -- a missing/empty result no longer blocks docking
     (PLAN.md §20).
+
+    ``complete_only`` is complex MD's variant: it passes over a ligand the crystal models
+    only in part, which docks fine but whose SMILES cannot be mapped onto the pose, and
+    takes the largest complete one instead (PLAN.md §43).
     """
     ccd_codes = load_ligand_ccd_codes(db_path).get(pdb_id, [])
     if not ccd_codes:
@@ -143,6 +148,25 @@ def resolve_docking_target(
         crystal_pdb_text = fetch_pdb_text(pdb_id)
     except requests.RequestException as exc:
         return None, [f"could not download crystal structure: {exc}"], FailureMode.COMPLETENESS
+
+    if complete_only:
+        largest = ccd_code
+        ccd_code = pick_largest_organic_ligand(
+            ccd_codes, meeko_results, smiles_by_ccd, crystal_pdb_text=crystal_pdb_text
+        )
+        if ccd_code is None:
+            return (
+                None,
+                [f"every dockable ligand is only partly modelled in the crystal "
+                 f"({largest}: {modelled_heavy_atoms(crystal_pdb_text, largest)} heavy "
+                 "atoms modelled, fewer than its SMILES)"],
+                FailureMode.PARAMETERIZATION,
+            )
+        if ccd_code != largest:
+            logger.info(
+                "%s: %s is only partly modelled in the crystal; complex MD uses %s",
+                pdb_id, largest, ccd_code,
+            )
 
     alignment = align_ligand_into_md_frame(crystal_pdb_text, receptor_pdb_text, ccd_code)
     if alignment is None:

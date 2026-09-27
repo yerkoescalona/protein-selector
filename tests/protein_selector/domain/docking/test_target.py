@@ -233,3 +233,45 @@ def test_pocket_detection_never_gates_dockability_when_no_pocket_contains_the_li
     assert failure_mode is None
     assert reasons == []
     assert target.nearby_pocket_druggability is None
+
+
+def _patch_through_crystal(monkeypatch, tmp_path, picks):
+    """Everything up to the crystal download succeeds; ``picks`` answers each pick call."""
+    _patch_common(monkeypatch)
+    calls = iter(picks)
+    monkeypatch.setattr(
+        target_module,
+        "pick_largest_organic_ligand",
+        lambda codes, meeko_results, smiles_by_ccd, crystal_pdb_text=None: next(calls),
+    )
+    relaxed_path = tmp_path / "1ABC_relaxed.pdb"
+    relaxed_path.write_text("ATOM some receptor text\n")
+    monkeypatch.setattr(target_module, "relaxed_structure_path", lambda pdb_id: relaxed_path)
+    monkeypatch.setattr(target_module, "fetch_pdb_text", lambda pdb_id: "CRYSTAL TEXT")
+    monkeypatch.setattr(target_module, "modelled_heavy_atoms", lambda text, code: 3)
+
+
+def test_complete_only_fails_when_every_dockable_ligand_is_partial(monkeypatch, tmp_path):
+    _patch_through_crystal(monkeypatch, tmp_path, ["GLC", None])
+
+    target, reasons, failure_mode = resolve_docking_target(
+        "1ABC", db_path="unused", complete_only=True
+    )
+
+    assert target is None
+    assert failure_mode == FailureMode.PARAMETERIZATION
+    assert "partly modelled" in reasons[0] and "GLC" in reasons[0]
+
+
+def test_complete_only_aligns_the_complete_ligand_it_picked(monkeypatch, tmp_path):
+    _patch_through_crystal(monkeypatch, tmp_path, ["GLC", "ETH"])
+    aligned = []
+    monkeypatch.setattr(
+        target_module,
+        "align_ligand_into_md_frame",
+        lambda crystal, receptor, ccd: aligned.append(ccd) or None,
+    )
+
+    resolve_docking_target("1ABC", db_path="unused", complete_only=True)
+
+    assert aligned == ["ETH"]

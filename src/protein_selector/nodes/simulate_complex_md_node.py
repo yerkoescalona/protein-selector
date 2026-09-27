@@ -67,7 +67,9 @@ class SimulateComplexMdNode(Node):
         succeeded = result is not None and result.status.value == "success"
         complex_path = None
         if succeeded:
-            target, _reasons, _mode = resolve_docking_target(ctx.candidate(), ctx.db_path)
+            target, _reasons, _mode = resolve_docking_target(
+                ctx.candidate(), ctx.db_path, complete_only=True
+            )
             if target is not None:
                 complex_path = complex_relaxed_structure_path(
                     ctx.candidate(), target.ccd_code
@@ -97,7 +99,7 @@ def simulate_complex_md(
     if not force_refresh:
         existing = load_validation_results(EXERCISE_NAME, db_path).get(pdb_id)
         if existing is not None:
-            target, _, _ = resolve_docking_target(pdb_id, db_path)
+            target, _, _ = resolve_docking_target(pdb_id, db_path, complete_only=True)
             ccd_code = target.ccd_code if target is not None else None
             stale_success = (
                 existing.status == ValidationStatus.SUCCESS
