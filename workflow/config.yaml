@@ -148,7 +148,7 @@ dock_rmsd_threshold: 2.5  # self-dock "success" cutoff (PLAN.md §21, relaxed fr
 
 # Complex (receptor+ligand) MD slow lane (PLAN.md §43) -- OFF by default, unlike
 # run_md/run_dock: needs openff-toolkit and openff-nagl (ex03's recipe, NAGL charges)
-# in validation_conda_prefix, which `make env-validation` builds. Runs only for
+# in the validation conda env, which `make env-validation` builds. Runs only for
 # candidates whose docking succeeded; the stage skips the rest gracefully
 # (FailureMode.COMPLETENESS), so `run_complex_md=true` is safe before every dock has
 # finished.

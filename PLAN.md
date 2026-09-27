@@ -17,7 +17,7 @@ The single-PDB workflow audit that motivated this rebuild is **§22** (new).
 
 Every open item in this file, in one place. Regenerate with `make plan-index`;
 the source of truth is the `- [ ]` boxes in the sections themselves, each
-carrying its own `Done when:` check. **100 open, 85 done.**
+carrying its own `Done when:` check. **99 open, 86 done.**
 
 | Section | Open | Items |
 |---|---|---|
@@ -40,7 +40,7 @@ carrying its own `Done when:` check. **100 open, 85 done.**
 | §40 | 5 | A.1, A.2, A.4, A.6, A.7 |
 | §41 | 3 | B.1, B.2, B.3 |
 | §42 | 7 | C.1, C.2, C.3, C.4, C.5, C.6, C.7 |
-| §43 | 3 | K.5, K.7, K.8 |
+| §43 | 2 | K.7, K.8 |
 
 ## Section map
 
@@ -3386,13 +3386,20 @@ platform: minutes per candidate, not seconds. The lane stays off by default.
       `openmmforcefields` 0.16.0 (`ambertools >=22,<27`), so switching to
       `openff-toolkit-base` would not remove it. `scripts/demo_run.py`'s complex-MD gate and
       `make doctor` now check `openff-nagl` and `openff-nagl-models` instead (K.9).
-- [ ] **K.5** Two Colab scripts still build the GAFF2/AMBER path.
-      `scripts/colab_end_to_end_pipeline.py` Part B `conda install`s ambertools.
-      `scripts/colab_standalone_2pk4.py` Part B inlines GAFF2 with AM1-BCC, TIP3P-FB,
-      `NoCutoff` and 2 fs, pins its conda env to Python 3.12.13 as "Colab's own interpreter",
-      and writes `{pdb}_{ccd}_complex_relaxed.pdb`, the file name the new validator writes.
-      *Done when:* both install the §43 stack (openff-nagl) and run its recipe, and a real
-      Colab run of each Part B passes.
+- [x] **K.5** (2026-09-27) Both Colab scripts run exercise 3's recipe, and on Python 3.13,
+      where Vina has no wheel. Verified in the colab313 container (Colab's 3.13.15 runtime,
+      rebuilt from a live freeze), not on Colab itself:
+      - `scripts/colab_standalone_2pk4.py`, run whole as a script: Vina now docks in its own
+        small conda env (Miniforge in `/opt/conda`, as ex04 does), and Part B builds the
+        pinned OpenFF stack there and runs the recipe. 2PK4: cealign 0.27 Å, self-dock
+        1.31 Å, PLIP 9 interactions, complex MD 13,294 atoms, 2500 steps at 4 fs, 49 s.
+      - `scripts/colab_end_to_end_pipeline.py`, converted to a notebook and executed with
+        nbconvert: `condacolab` and its restart are gone; Part A runs the cheap lanes and apo
+        MD in Colab's Python, and Part B builds the validation env with `make env-validation`
+        and runs `validate_one.py --complex-md` under it. 2PK4: self-dock 1.25 Å, PLIP 10
+        interactions, complex MD 13,213 atoms in 127 s, no cell errors. Run as a plain
+        script it cannot work: Meeko's spawn-context worker re-imports `__main__`.
+      A run on Colab itself is still worth one pass before relying on either.
 - [x] **K.6** (2026-09-27) `make env` installs the webapp group, and `dash_bootstrap_components`
       2.0.4's wheel drops a `pyproject.toml` into `site-packages`, so Biopython warned
       "importing Biopython from inside the source tree" during `make test`. Harmless, and now

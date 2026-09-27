@@ -34,16 +34,18 @@
 #    order (obabel reorders). Index-order RMSD silently compares unrelated atoms; a real
 #    case read 6.09 Å for what was visually a near-perfect redock.
 # 4. `single_residue_ligand_topology` (Part B) — `AddHs` leaves added hydrogens with no PDB
-#    monomer info, so OpenMM sees two residues (`ACA` + blank) and `GAFFTemplateGenerator`
-#    silently fails to match, raising a misleading "No template found for residue".
+#    monomer info, so OpenMM sees two residues (`ACA` + blank) and the ligand template
+#    generator silently fails to match, raising a misleading "No template found for residue".
 #
 # ## Two parts
 #
-# - **Part A** — stages 1–4 (fetch → apo MD → cealign → dock+PLIP). All pip-installable;
-#   PyMOL via `apt-get`. No runtime restart.
-# - **Part B** — stage 5, GAFF2/AMBER protein+ligand complex MD. `openff-toolkit` and
-#   `ambertools` have **no pip release at all** (re-verified live: `pip index versions`
-#   returns nothing for either), so this needs conda. Miniforge is installed into its own
+# - **Part A** — stages 1–4 (fetch → apo MD → cealign → dock+PLIP). pip-installable except
+#   Vina, which has no wheel for Colab's Python 3.13: like exercise 4, it gets its own small
+#   conda env and docks in a subprocess. No runtime restart.
+# - **Part B** — stage 5, protein+ligand complex MD with exercise 3's recipe: ff14SB and
+#   TIP3P for the protein and water, OpenFF Sage 2.3.0 with NAGL charges for the ligand,
+#   explicit solvent, 4 fs (PLAN.md §43). `openff-toolkit` has **no pip release at all**
+#   (`pip index versions` returns nothing), so this needs conda. Miniforge is installed into its own
 #   prefix (`/opt/conda`) and the step runs as a subprocess under that interpreter — no
 #   kernel restart, and `condacolab` is deliberately avoided because it only works from an
 #   interactive notebook cell (see Part B's own note). Part B reads Part A's outputs from
@@ -81,18 +83,15 @@ MD_TIMESTEP_FS = 2.0
 MD_TEMPERATURE_K = 300.0
 MD_MAX_MINIMIZATION_ITERATIONS = 50  # config.yaml md_max_minimization_iterations
 
-# Complex MD (Part B) — also config.yaml's values, same reasoning.
-COMPLEX_MD_N_STEPS = 200
-COMPLEX_MD_MAX_MINIMIZATION_ITERATIONS = 200
+# Complex MD (Part B) — config.yaml's values, which are the validator's own defaults:
+# 2500 steps at 4 fs (10 ps), minimised to convergence (0 = no iteration cap).
+COMPLEX_MD_N_STEPS = 2500
+COMPLEX_MD_MAX_MINIMIZATION_ITERATIONS = 0
 
 WORK_DIR = "colab_2pk4_run"
 
-# Part B's conda env — matched to Colab's own interpreter (3.12.13), NOT to
-# `environment-validation.yml`'s `python=3.11`. Verified on conda-forge: `ambertools 26.0`
-# publishes linux-64 builds for py310–py314, so 3.12 is fully supported and nothing forces
-# the older pin. Exact patch version confirmed present on conda-forge. Relax to "3.12" if
-# Colab moves and the exact patch is no longer available.
-CONDA_PYTHON_VERSION = "3.12.13"
+# Part B's conda env — Colab's own interpreter, and `environment-validation.yml`'s.
+CONDA_PYTHON_VERSION = "3.13.15"
 
 # %% [markdown]
 # ## Part A, cell 1 — install dependencies
@@ -100,12 +99,12 @@ CONDA_PYTHON_VERSION = "3.12.13"
 # **PyMOL comes from pip (`pymol-open-source`), NOT from `apt`** — live-corrected on Colab
 # 2026-08-02. `apt install pymol` genuinely does not work here, and the failure is
 # misleading: Colab runs Ubuntu 22.04 (glibc 2.35), whose `python3-pymol` apt package
-# targets the system Python **3.10**, while Colab's own interpreter is **3.12**. The apt
-# install therefore puts the `pymol` package in a dist-packages directory 3.12 cannot see —
+# targets the system Python **3.10**, while Colab's own interpreter is **3.13**. The apt
+# install therefore puts the `pymol` package in a dist-packages directory 3.13 cannot see —
 # the `pymol` *binary* lands on `PATH` (so a `shutil.which("pymol")` check reports success!)
 # while `import pymol` still fails from every interpreter the script can reach.
 #
-# `pymol-open-source` now publishes a real `cp312` manylinux wheel, verified to contain
+# `pymol-open-source` publishes real `cp312` and `cp313` manylinux wheels, verified to contain
 # `pymol/__main__.py` (so `python -m pymol -cq` works) — and pip installs it into the
 # *running* interpreter, which is exactly what the alignment step needs. This also
 # contradicts this repo's own `structure_alignment.py` docstring, which still claims PyMOL
@@ -118,7 +117,7 @@ import sys
 for pkg in [
     "requests", "numpy", "scipy", "gemmi", "rdkit",
     "openmm", "pdbfixer",         # apo MD
-    "vina", "plip", "openbabel",  # docking
+    "plip", "openbabel",          # docking; Vina has no cp313 wheel, see cell 6
     "pymol-open-source",          # cealign -- pip, not apt (see markdown above)
 ]:
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg], check=False)
@@ -273,6 +272,73 @@ def obabel_convert(src_path, dest_path, rigid_receptor=False):
     return Path(dest_path)
 
 
+CONDA_PREFIX_DIR = Path("/opt/conda")
+MINIFORGE_URL = (
+    "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
+)
+
+
+def conda_solver():
+    """Miniforge in its own prefix, installed on first use; returns mamba, else conda.
+
+    Never `condacolab`: it restarts the runtime, and outside a notebook cell it crashes
+    (see Part B's note). A separate prefix leaves Colab's own Python untouched.
+    """
+    if not CONDA_PREFIX_DIR.exists():
+        import urllib.request
+
+        installer = Path("/tmp/miniforge.sh")
+        urllib.request.urlretrieve(MINIFORGE_URL, installer)  # no wget needed
+        subprocess.run(["bash", str(installer), "-b", "-p", str(CONDA_PREFIX_DIR)], check=True)
+        print(f"Miniforge installed to {CONDA_PREFIX_DIR}")
+    mamba = CONDA_PREFIX_DIR / "bin" / "mamba"
+    return str(mamba if mamba.exists() else CONDA_PREFIX_DIR / "bin" / "conda")
+
+
+def conda_env(name, packages):
+    """A conda-forge env under the Miniforge prefix, created once; returns its python."""
+    env_dir = CONDA_PREFIX_DIR / "envs" / name
+    if not env_dir.exists():
+        print(f"creating {env_dir} with {packages} ...")
+        subprocess.run(
+            [conda_solver(), "create", "-y", "-p", str(env_dir), "-c", "conda-forge",
+             "--override-channels", *packages],
+            check=True,
+        )
+    return env_dir / "bin" / "python"
+
+
+def conda_env_vars(env_python):
+    """Environment for a conda subprocess, with Colab's own settings scrubbed.
+
+    **Live-diagnosed 2026-08-02 — two real leaks, both silent until they aren't:**
+
+    * ``MPLBACKEND`` — Colab exports ``module://matplotlib_inline.backend_inline``. The
+      conda env's matplotlib has no ``matplotlib_inline`` package, so simply *importing*
+      matplotlib raises ``ValueError: Key backend: ... is not a valid value``. That import
+      is not even ours: ``openff.toolkit`` -> ``openff-nagl`` -> ``pytorch-lightning`` ->
+      ``torchmetrics`` -> ``matplotlib``. Forced to ``Agg`` (headless, always valid) rather
+      than unset, so anything that does plot still works.
+    * ``PYTHONPATH`` — Colab points this at its own package directories. Inherited by the
+      conda interpreter it silently puts foreign packages from a *different distribution*
+      on ``sys.path``. Matching version numbers do NOT make two distributions' binary
+      packages interchangeable (different compilers, libstdc++, and numpy ABI builds).
+      Dropped entirely.
+
+    The env's ``bin`` also goes first on ``PATH``: invoking ``<env>/bin/python`` directly
+    does not activate the env, and tools that look for binaries on ``PATH`` would otherwise
+    find Colab's instead.
+    """
+    import os
+
+    env = dict(os.environ)
+    env["MPLBACKEND"] = "Agg"
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    env["PATH"] = f"{Path(env_python).parent}:{env.get('PATH', '')}"
+    return env
+
+
 print("helpers ready")
 
 # %% [markdown]
@@ -320,7 +386,7 @@ fixer.addMissingAtoms()
 fixer.addMissingHydrogens(7.0)
 print(f"repaired: {fixer.topology.getNumAtoms()} atoms")
 
-forcefield = app.ForceField("amber14-all.xml", "amber14/tip3pfb.xml")
+forcefield = app.ForceField("amber14-all.xml", "amber14/tip3p.xml")
 system = forcefield.createSystem(fixer.topology, nonbondedMethod=app.NoCutoff, constraints=app.HBonds)
 
 integrator = LangevinMiddleIntegrator(
@@ -420,7 +486,7 @@ if interpreter is None:
     raise FileNotFoundError(
         "no interpreter with an importable `pymol` package. On Colab: "
         "`pip install pymol-open-source` (NOT `apt install pymol` -- apt targets system "
-        "Python 3.10 while Colab runs 3.12, so the module stays invisible). Elsewhere: "
+        "Python 3.10 while Colab runs 3.13, so the module stays invisible). Elsewhere: "
         "`conda install -c conda-forge pymol-open-source`."
     )
 print(f"pymol interpreter: {interpreter}")
@@ -460,9 +526,25 @@ print(
 # Ligand PDBQT is built by `obabel` straight from the **aligned crystal coordinates**, not
 # from a SMILES-embedded conformer: an embedded conformer sits in an arbitrary frame,
 # useless both as a docking start point and as an RMSD reference.
+#
+# **Vina runs in its own conda env.** It publishes no wheel for Python 3.13, so on Colab
+# `pip install vina` tries to compile it and fails on Boost. conda-forge builds it; the first
+# run installs Miniforge and a small env (about a minute), exactly as exercise 4 does.
 
 # %%
+VINA_SCRIPT = '''
+import json, sys
 from vina import Vina
+
+a = json.loads(sys.argv[1])
+v = Vina(sf_name="vina")
+v.set_receptor(a["receptor"])
+v.set_ligand_from_file(a["ligand"])
+v.compute_vina_maps(center=a["center"], box_size=a["size"])
+v.dock(exhaustiveness=a["exhaustiveness"], n_poses=a["n_poses"])
+v.write_poses(a["out"], n_poses=1, overwrite=True)
+'''
+vina_python = conda_env("vina", [f"python={CONDA_PYTHON_VERSION}", "vina=1.2.7"])
 
 receptor_pdbqt = obabel_convert(relaxed_path, work / f"{PDB_ID}_receptor.pdbqt", rigid_receptor=True)
 ligand_pdbqt = obabel_convert(native_ligand_path, work / f"{PDB_ID}_{CCD_CODE}_ligand.pdbqt")
@@ -470,18 +552,21 @@ ligand_pdbqt = obabel_convert(native_ligand_path, work / f"{PDB_ID}_{CCD_CODE}_l
 box_center, box_size = ligand_bounding_box(native_ligand_block)
 print(f"box center {tuple(round(c, 2) for c in box_center)}, size {tuple(round(s, 2) for s in box_size)}")
 
+pose_path = work / f"{PDB_ID}_{CCD_CODE}_top_pose.pdbqt"
+dock_args = {
+    "receptor": str(receptor_pdbqt), "ligand": str(ligand_pdbqt), "out": str(pose_path),
+    "center": list(box_center), "size": list(box_size),
+    "exhaustiveness": EXHAUSTIVENESS, "n_poses": N_POSES,
+}
 dock_start = time.monotonic()
-v = Vina(sf_name="vina")
-v.set_receptor(str(receptor_pdbqt))
-v.set_ligand_from_file(str(ligand_pdbqt))
-v.compute_vina_maps(center=list(box_center), box_size=list(box_size))
-v.dock(exhaustiveness=EXHAUSTIVENESS, n_poses=N_POSES)
+proc = subprocess.run(
+    [str(vina_python), "-c", VINA_SCRIPT, json.dumps(dock_args)],
+    capture_output=True, text=True, env=conda_env_vars(vina_python),
+)
 dock_elapsed = time.monotonic() - dock_start
-
-with tempfile.TemporaryDirectory() as tmp:
-    pose_path = Path(tmp) / "top_pose.pdbqt"
-    v.write_poses(str(pose_path), n_poses=1, overwrite=True)
-    pose_text = pose_path.read_text()
+if proc.returncode != 0:
+    raise RuntimeError(f"Vina failed (exit {proc.returncode}):\n{proc.stderr[-1500:]}")
+pose_text = pose_path.read_text()
 
 matched = rmsd_by_atom_name(pose_text, native_ligand_block)
 if matched is None:
@@ -591,10 +676,10 @@ print(f"\nmanifest -> {work / 'manifest.json'} (Part B reads this, not in-memory
 
 # %% [markdown]
 # ---
-# # Part B — protein+ligand complex MD (GAFF2/AMBER)
+# # Part B — protein+ligand complex MD, exercise 3's recipe
 #
-# **Run Part A completely first.** `openff-toolkit` and `ambertools` have no pip release
-# anywhere (re-verified live), so this genuinely needs conda.
+# **Run Part A completely first.** `openff-toolkit` has no pip release anywhere, so this
+# genuinely needs conda.
 #
 # **`condacolab` is deliberately NOT used (live-diagnosed 2026-08-02).** It calls
 # `get_ipython().kernel.do_shutdown(True)` to force a runtime restart — which raises
@@ -602,144 +687,56 @@ print(f"\nmanifest -> {work / 'manifest.json'} (Part B reads this, not in-memory
 # as a plain script (`python colab_standalone_2pk4.py`), because `get_ipython()` returns
 # `None` outside a notebook cell. It can only ever work from an interactive cell.
 #
-# Instead, Miniforge is installed into **its own prefix** (`/opt/conda`) and the complex-MD
-# step runs as a subprocess under *that* interpreter. No kernel restart, no swapping of the
+# Instead, the complex-MD step gets its own env under the Miniforge prefix Part A's Vina
+# cell already installed (`conda_env`, in the helpers), and runs as a subprocess under
+# *that* interpreter. No kernel restart, no swapping of the
 # running Python, no notebook requirement — this works identically as a script or in a cell,
 # and it cannot disturb Part A's already-working environment.
 #
-# **This is the slow part** — the conda solve for `openff-toolkit` + `ambertools` takes
-# several minutes and downloads a few hundred MB. That is inherent to these packages.
-
-# %%
-CONDA_PREFIX_DIR = Path("/opt/conda")
-CONDA_ENV_DIR = CONDA_PREFIX_DIR / "envs" / "psval"
-MINIFORGE_URL = (
-    "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
-)
-
-if not CONDA_PREFIX_DIR.exists():
-    installer = Path("/tmp/miniforge.sh")
-    subprocess.run(["wget", "-qO", str(installer), MINIFORGE_URL], check=True)
-    subprocess.run(["bash", str(installer), "-b", "-p", str(CONDA_PREFIX_DIR)], check=True)
-    print(f"Miniforge installed to {CONDA_PREFIX_DIR}")
-else:
-    print(f"{CONDA_PREFIX_DIR} already present, reusing")
-
-# Miniforge ships mamba; fall back to conda if this build doesn't.
-SOLVER = str(CONDA_PREFIX_DIR / "bin" / "mamba")
-if not Path(SOLVER).exists():
-    SOLVER = str(CONDA_PREFIX_DIR / "bin" / "conda")
-print(f"solver: {SOLVER}")
+# **This is the slow part** — the conda solve for the OpenFF stack takes several minutes and
+# downloads a few hundred MB (NAGL brings PyTorch). That is inherent to these packages.
 
 # %% [markdown]
-# ## Part B, cell 2 — build the env
+# ## Part B, cell 1 — build the env
 #
-# **`openff-toolkit-base` was tried here and ABANDONED — it saves nothing (2026-08-02).**
-# The theory was that the full metapackage's `openff-nagl` dependency (a
-# graph-neural-network charge method this script never calls, since charges come from
-# `am1bcc`/ambertools) drags in `pytorch-lightning` → `torchmetrics` → `pytorch`/`libtorch`
-# + `mkl`, roughly 1 GB. A real install proved otherwise: `openff-toolkit-base` pulled
-# `openff-nagl` and `pytorch-lightning` **anyway**, so the download was identical and the
-# only result was extra moving parts. Reverted to the plain metapackage. (The measured
-# sizes were real — libtorch ~818 MB, mkl ~143 MB — they are simply not avoidable this way.)
-#
-# **Python matches Colab's own 3.12.13.** Verified on conda-forge before changing it:
-# `ambertools 26.0` publishes linux-64 builds for py310 through py314, so the previous
-# `python=3.11` (inherited from `environment-validation.yml`) was never a requirement. This
-# is a consistency fix, not a speed one — the package payload is identical either way.
-#
-# The probe below does not just import: it runs a real AM1-BCC charge assignment, because
-# the failure this stage actually hits (a missing AmberTools *binary* on PATH) is invisible
-# to an import check — see `conda_env_vars()`.
+# The versions are `environment-validation.yml`'s, which are exercise 3's: Sage 2.3.0 was
+# refit to the charges of the NAGL model `openff-gnn-am1bcc-1.0.0.pt`, so the force field and
+# the model travel as a pair. The probe does not just import: it assigns real NAGL charges,
+# because a missing model file is invisible to an import check.
 
 # %%
-if not CONDA_ENV_DIR.exists():
-    subprocess.run(
-        [SOLVER, "create", "-y", "-p", str(CONDA_ENV_DIR), "-c", "conda-forge",
-         f"python={CONDA_PYTHON_VERSION}"],
-        check=True,
-    )
-
-# One solve, not three: the previous three-group split was pointless -- group 2 already
-# pulled everything, so group 3 printed "All requested packages already installed".
-PACKAGES = ["openmm", "rdkit", "openmmforcefields", "openff-toolkit", "ambertools"]
-print(f"installing {PACKAGES} ...")
-subprocess.run(
-    [SOLVER, "install", "-y", "-p", str(CONDA_ENV_DIR), "-c", "conda-forge", *PACKAGES],
-    check=True,
-)
-
-CONDA_PYTHON = CONDA_ENV_DIR / "bin" / "python"
+PACKAGES = [
+    f"python={CONDA_PYTHON_VERSION}",
+    "openmm=8.6.1", "rdkit=2025.09.5", "openmmforcefields=0.16.0", "openff-toolkit=0.19.0",
+    "openff-forcefields=2026.09.0", "openff-nagl=0.6.1", "openff-nagl-models=2026.09.0",
+]
+CONDA_PYTHON = conda_env("psval", PACKAGES)
+LIGAND_CHARGE_MODEL = "openff-gnn-am1bcc-1.0.0.pt"
 
 
-def conda_env_vars():
-    """Environment for the conda subprocess, with Colab's own settings scrubbed.
-
-    **Live-diagnosed 2026-08-02 — two real leaks, both silent until they aren't:**
-
-    * ``MPLBACKEND`` — Colab exports ``module://matplotlib_inline.backend_inline``. The
-      conda env's matplotlib has no ``matplotlib_inline`` package, so simply *importing*
-      matplotlib raises ``ValueError: Key backend: ... is not a valid value``. That import
-      is not even ours: ``openff.toolkit`` -> ``openff-nagl`` -> ``pytorch-lightning`` ->
-      ``torchmetrics`` -> ``matplotlib``. So ``from openff.toolkit import Molecule`` died
-      inside a plotting library four dependencies deep. Forced to ``Agg`` (headless, always
-      valid) rather than unset, so anything that does plot still works.
-    * ``PYTHONPATH`` — Colab points this at its own package directories. Inherited by the
-      conda interpreter it silently puts foreign packages from a *different distribution*
-      on ``sys.path``. Still scrubbed even though both are now 3.12.13: matching version
-      numbers do NOT make two distributions' binary packages interchangeable (different
-      compilers, libstdc++, and numpy ABI builds), and a mixed ``sys.path`` fails in
-      confusing ways rather than cleanly. Dropped entirely.
-    """
-    import os
-
-    env = dict(os.environ)
-    env["MPLBACKEND"] = "Agg"
-    env.pop("PYTHONPATH", None)
-    env.pop("PYTHONHOME", None)
-    # **THIRD leak, and the one that actually broke AM1-BCC (live-diagnosed 2026-08-02).**
-    # Invoking `<env>/bin/python` directly does NOT activate the env, so `<env>/bin` never
-    # reaches PATH. `openff.toolkit`'s AmberToolsToolkitWrapper decides it is "available"
-    # with `shutil.which("antechamber")` -- so with ambertools fully installed but off
-    # PATH, the wrapper silently declines to register and `assign_partial_charges("am1bcc")`
-    # fails with "No registered toolkits can provide ... am1bcc", listing only
-    # NAGL/RDKit/Built-in. Nothing reports the missing binary; the error names the charge
-    # method instead, which points at the wrong culprit entirely. Same class as the
-    # README's own §3 PATH gotcha.
-    env["PATH"] = f"{CONDA_ENV_DIR / 'bin'}:{env.get('PATH', '')}"
-    return env
-
-
-# Exercises the real capability, not just imports: build a molecule and actually reach the
-# AmberTools/sqm AM1-BCC backend. An import check cannot see the failure this stage really
-# hits, because the missing piece is a *binary on PATH*, not a Python module.
 PROBE = (
-    "import shutil, openmm, openmmforcefields, rdkit;"
+    "import openmm, openmmforcefields, rdkit;"
     "from openff.toolkit import Molecule;"
-    "from openff.toolkit.utils.toolkits import GLOBAL_TOOLKIT_REGISTRY as R;"
-    "print('  antechamber on PATH:', shutil.which('antechamber'));"
-    "print('  registered toolkits:', [t.toolkit_name for t in R.registered_toolkits]);"
     "m = Molecule.from_smiles('CCO'); m.generate_conformers(n_conformers=1);"
-    "m.assign_partial_charges('am1bcc');"
-    "print('conda stack OK -- real AM1-BCC charges assigned')"
+    f"m.assign_partial_charges({LIGAND_CHARGE_MODEL!r});"
+    "print('conda stack OK -- real NAGL charges assigned, OpenMM', openmm.__version__)"
 )
 probe = subprocess.run(
-    [str(CONDA_PYTHON), "-c", PROBE], capture_output=True, text=True, env=conda_env_vars()
+    [str(CONDA_PYTHON), "-c", PROBE],
+    capture_output=True, text=True, env=conda_env_vars(CONDA_PYTHON),
 )
 print(probe.stdout.strip() or probe.stderr.strip()[-1500:])
-if probe.returncode != 0:
-    print(
-        "\n^ If 'antechamber on PATH' printed None, ambertools is installed but not visible:\n"
-        "  that is a PATH problem, NOT a missing package -- see conda_env_vars()."
-    )
 
 # %% [markdown]
-# ## Part B, cell 3 — GAFF2/AMBER complex MD from the real crystal pose
+# ## Part B, cell 2 — complex MD from the real crystal pose, exercise 3's recipe
 #
 # The ligand starts from its **real aligned crystal coordinates**, not a re-embedded
-# conformer and not Vina's predicted pose. `AssignBondOrdersFromTemplate` supplies the bond
-# orders PDB format lacks (from SMILES) while leaving heavy-atom coordinates untouched;
-# `AddHs(addCoords=True)` then adds hydrogens in place.
+# conformer and not Vina's predicted pose. Deposited hydrogens are dropped first (the SMILES
+# template is heavy-atom only), `AssignBondOrdersFromTemplate` supplies the bond orders PDB
+# format lacks while leaving heavy-atom coordinates untouched, and `AddHs(addCoords=True)`
+# adds hydrogens in place. Then exercise 3's system: `amber14-all.xml` with
+# `amber14/tip3p.xml`, Sage 2.3.0 through `SMIRNOFFTemplateGenerator`, 1 nm of padding, PME
+# with a 1 nm cut-off, HBonds, 1.5 amu hydrogens, a 4 fs LangevinMiddle step.
 #
 # Runs under the conda interpreter as a subprocess — so, like the PLIP step, a hard crash
 # in a native library cannot take this process down with it.
@@ -755,24 +752,29 @@ import openmm
 import openmm.app as app
 import openmm.unit as unit
 from openff.toolkit import Molecule
-from openmmforcefields.generators import GAFFTemplateGenerator
+from openmmforcefields.generators import SMIRNOFFTemplateGenerator
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
 m = json.loads(Path(sys.argv[1]).read_text())
 native_ligand_block = Path(m["native_ligand"]).read_text()
 
-pdb_mol = Chem.MolFromPDBBlock(native_ligand_block, removeHs=False)
+pdb_mol = Chem.MolFromPDBBlock(native_ligand_block, removeHs=True)
 if pdb_mol is None:
     raise SystemExit("RDKit could not parse the aligned native ligand PDB block")
 template = Chem.MolFromSmiles(m["smiles"])
+if pdb_mol.GetNumHeavyAtoms() < template.GetNumHeavyAtoms():
+    raise SystemExit(
+        f"crystal ligand has {pdb_mol.GetNumHeavyAtoms()} of {template.GetNumHeavyAtoms()} "
+        "heavy atoms modelled; its SMILES cannot be mapped onto the pose"
+    )
 fixed = AllChem.AssignBondOrdersFromTemplate(template, pdb_mol)
 Chem.SanitizeMol(fixed)
 mol_h = Chem.AddHs(fixed, addCoords=True)
 Chem.SanitizeMol(mol_h)
 off_mol = Molecule.from_rdkit(mol_h, allow_undefined_stereo=True)
-print(f"ligand: {off_mol.n_atoms} atoms; assigning AM1-BCC charges (ambertools sqm)...", flush=True)
-off_mol.assign_partial_charges("am1bcc")
+print(f"ligand: {off_mol.n_atoms} atoms; assigning NAGL charges ({m['charge_model']})...", flush=True)
+off_mol.assign_partial_charges(m["charge_model"])
 
 
 def single_residue_ligand_topology(off_mol):
@@ -780,7 +782,7 @@ def single_residue_ligand_topology(off_mol):
 
     off_mol.to_topology().to_openmm() keeps RDKit PDB monomer info: crystal heavy atoms
     carry the real CCD residue name while AddHs-added hydrogens carry none, so OpenMM sees
-    TWO residues. GAFFTemplateGenerator then matches the heavy-atom-only fragment instead
+    TWO residues. The template generator then matches the heavy-atom-only fragment instead
     of the full hydrogenated molecule and fails with a misleading "No template found for
     residue ..." even though the generator IS registered.
     """
@@ -793,20 +795,26 @@ def single_residue_ligand_topology(off_mol):
     return topology
 
 
-gen = GAFFTemplateGenerator(molecules=[off_mol], forcefield="gaff-2.11")
-forcefield = app.ForceField("amber14-all.xml", "amber14/tip3pfb.xml")
+gen = SMIRNOFFTemplateGenerator(molecules=[off_mol], forcefield="openff-2.3.0")
+forcefield = app.ForceField("amber14-all.xml", "amber14/tip3p.xml")
 forcefield.registerTemplateGenerator(gen.generator)
 
 receptor_pdb = app.PDBFile(m["relaxed_receptor"])
 modeller = app.Modeller(receptor_pdb.topology, receptor_pdb.positions)
 modeller.add(single_residue_ligand_topology(off_mol), off_mol.conformers[0].to_openmm())
+modeller.addSolvent(forcefield, padding=1.0 * unit.nanometer)
 
-system = forcefield.createSystem(modeller.topology, nonbondedMethod=app.NoCutoff,
-                                 constraints=app.HBonds)
-print(f"complex system built: {modeller.topology.getNumAtoms()} atoms", flush=True)
+system = forcefield.createSystem(
+    modeller.topology,
+    nonbondedMethod=app.PME,
+    nonbondedCutoff=1.0 * unit.nanometer,
+    constraints=app.HBonds,
+    hydrogenMass=1.5 * unit.amu,
+)
+print(f"solvated complex built: {modeller.topology.getNumAtoms()} atoms", flush=True)
 
 integrator = openmm.LangevinMiddleIntegrator(300.0 * unit.kelvin, 1 / unit.picosecond,
-                                             2.0 * unit.femtoseconds)
+                                             4.0 * unit.femtoseconds)
 simulation = app.Simulation(modeller.topology, system, integrator,
                             openmm.Platform.getPlatformByName("CPU"))
 simulation.context.setPositions(modeller.positions)
@@ -829,14 +837,19 @@ if max_coord >= 10000.0:
 out = Path(m["relaxed_receptor"]).parent / f"{m['pdb_id']}_{m['ccd_code']}_complex_relaxed.pdb"
 with open(out, "w") as fh:
     app.PDBFile.writeFile(simulation.topology, positions, fh)
-print(f"complex MD OK in {elapsed:.1f}s -- final PE {pe:.1f} kJ/mol, max coord {max_coord:.1f} A")
+print(f"complex MD OK in {elapsed:.1f}s -- {m['complex_md_n_steps']} steps at 4 fs, "
+      f"final PE {pe:.1f} kJ/mol, max coord {max_coord:.1f} A")
 print(f"relaxed complex -> {out}")
 '''
 )
 
+manifest = json.loads((work / "manifest.json").read_text())
+manifest["charge_model"] = LIGAND_CHARGE_MODEL
+(work / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
 proc = subprocess.run(
     [str(CONDA_PYTHON), str(complex_md_script), str(work / "manifest.json")],
-    capture_output=True, text=True, env=conda_env_vars(),
+    capture_output=True, text=True, env=conda_env_vars(CONDA_PYTHON),
 )
 print(proc.stdout)
 if proc.returncode != 0:

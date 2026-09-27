@@ -16,23 +16,17 @@
 # PDB ID -- so this one is pulled from this repo's own already-live-verified results, not
 # guessed. It is also the smallest (fastest MD/Vina) row in the whole validated set.
 #
-# **Two parts, because complex MD (protein+ligand) genuinely needs conda:**
-# - **Part A** (cells below, no restart needed): hard filters -> simulability -> ligand
-#   CCD/SMILES -> parameterizability/Meeko -> literature -> AlphaFold DB lookup -> real
-#   apo MD (OpenMM+PDBFixer) -> real docking (Vina self-dock + PLIP). All confirmed live
-#   pip-installable on Colab (re-verified: `pdbfixer`/`vina`/`plip`/`openbabel` now have
-#   working wheels; `fpocket` doesn't, but PLAN.md §20 already made fpocket's pockets
-#   informational-only, never a gate on docking, so that's not a blocker here).
-# - **Part B** (separate section near the bottom, clearly marked): the real
-#   protein+ligand complex MD (GAFF2/AMBER when this script was verified; OpenFF Sage 2.3.0
-#   + NAGL since PLAN.md §43, not yet re-verified here, see §43 K.5). `openff-toolkit`/`ambertools` are confirmed
-#   (re-checked live via `pip index versions`, still true) to have NO pip release at
-#   all -- this genuinely cannot run without a conda bootstrap (`condacolab`), which
-#   force-restarts the Colab runtime. Run Part A fully first, THEN run Part B's
-#   bootstrap cell, THEN (after the automatic restart) run Part B's remaining cells in a
-#   NEW cell -- everything on disk (the sqlite db, the MD-relaxed structure file)
-#   survives the restart; only the previously-pip-installed Python packages don't, so
-#   Part B reinstalls what it needs into the new conda-based Python.
+# **Two parts, because docking and complex MD genuinely need conda on Colab's Python 3.13:**
+# - **Part A** (no restart needed): hard filters -> simulability -> ligand CCD/SMILES ->
+#   parameterizability/Meeko -> literature -> AlphaFold DB lookup -> real apo MD
+#   (OpenMM+PDBFixer), all pip-installed into Colab's own Python.
+# - **Part B**: Vina has no wheel for Python 3.13 and `openff-toolkit` has no pip release at
+#   all, so Part B installs Miniforge into its own prefix, builds the repo's validation env
+#   there with `make env-validation` (exact lockfile, then the pip half), and runs
+#   `scripts/validate_one.py` under that env's Python: pocket, docking (Vina self-dock +
+#   PLIP) and complex MD with exercise 3's recipe (Sage 2.3.0 with NAGL charges, TIP3P,
+#   4 fs; PLAN.md §43). No `condacolab` and no runtime restart: Part A's MD result is reused
+#   from the same sqlite db.
 #
 # Cells are `# %%`-marked (VS Code/Jupytext convention): open this file in VS Code's
 # Python extension to run cell-by-cell, convert to a real notebook first
@@ -76,52 +70,48 @@ else:
 # %% [markdown]
 # ## Part A, cell 2: install dependencies, in dependency-safe order
 #
-# `gemmi`/`scipy`/`numpy` before `meeko` -- meeko doesn't declare them as real
-# dependencies (a live-discovered packaging gap this repo's own `pyproject.toml` already
-# pins around). `openff-toolkit`/`ambertools` deliberately NOT here -- see Part B.
+# The package with its `validate` extra (RDKit, Meeko and the transitive dependencies it
+# does not declare, OpenMM, PyMOL for `cealign`), plus PDBFixer for the apo MD and PyYAML
+# for `workflow/config.yaml`. Docking and `openff-toolkit` are deliberately NOT here -- see
+# Part B.
 
 # %%
 import subprocess
 import sys
 
-PIP_INSTALL_ORDER = [
-    "requests", "pandas", "biopython", "rcsb-api", "tqdm",  # base
-    "numpy", "scipy", "gemmi", "meeko", "rdkit",  # validate extra, gemmi/scipy/numpy first
-    "openmm", "openmmforcefields", "pdbfixer",  # MD (apo -- no openff-toolkit needed)
-    "vina", "plip", "openbabel",  # docking (confirmed live-installable via pip on Colab)
-    "pyyaml",  # workflow/config.yaml loader
-]
+subprocess.run(
+    [sys.executable, "-m", "pip", "install", "--quiet", "-e", f"{REPO_DIR}[validate]",
+     "pdbfixer", "pyyaml"],
+    check=False,
+)
+# A running interpreter reads .pth files only at start-up, so the editable install is not
+# importable yet; re-reading site-packages picks it up without a runtime restart.
+import importlib
+import site
 
-for pkg in PIP_INSTALL_ORDER:
-    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", pkg], check=False)
-
-if REPO_DIR.exists():
-    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "-e", str(REPO_DIR)], check=False)
-
+for site_dir in site.getsitepackages():
+    site.addsitedir(site_dir)
+importlib.invalidate_caches()
 print("Dependency install pass complete.")
 
 # %% [markdown]
-# ## Part A, cell 3: system-level installs (README Setup §0): PyMOL (`cealign`), sqlite3
+# ## Part A, cell 3: check PyMOL imports
 #
-# PyMOL is required here: `docking_common.resolve_docking_target` calls
-# `structure_alignment.align_ligand_into_md_frame` (PyMOL `cealign`) to superpose 2PK4's
-# real crystal ACA pose into the MD-relaxed receptor frame before docking -- this is not
-# optional for the docking stage to succeed.
+# PyMOL comes from the `pymol-open-source` wheel in the `validate` extra, NOT from `apt`:
+# Ubuntu's `python3-pymol` targets the system Python 3.10, so on Colab the binary lands on
+# PATH while `import pymol` fails. `cealign` superposes 2PK4's crystal ACA pose into the
+# MD-relaxed receptor frame before docking, so Part B needs it.
 
 # %%
-import shutil
-
-subprocess.run(["apt-get", "update", "-qq"], check=False)
-subprocess.run(["apt-get", "install", "-y", "-qq", "pymol", "sqlite3"], check=False)
-
-for binary in ("pymol", "sqlite3", "obabel"):
-    print(f"  {binary}: {'found at ' + shutil.which(binary) if shutil.which(binary) else 'MISSING'}")
+probe = subprocess.run([sys.executable, "-c", "import pymol; print(pymol.__file__)"],
+                       capture_output=True, text=True)
+print(f"  import pymol: {probe.stdout.strip() or 'FAILED: ' + probe.stderr.strip()[-200:]}")
 
 # %% [markdown]
-# ## Part A, cell 4: run the real pipeline (metadata -> ... -> MD -> docking) for 2PK4
+# ## Part A, cell 4: run the real pipeline (metadata -> ... -> apo MD) for 2PK4
 #
 # `validate_single_pdb` is the exact function `scripts/validate_one.py` calls -- no
-# reimplementation here. `run_complex_md=False` here on purpose -- that's Part B.
+# reimplementation here. Pocket, docking and complex MD wait for Part B's conda env.
 
 # %%
 import os
@@ -143,9 +133,9 @@ validate_single_pdb(
     db_path,
     config,
     run_md=True,
-    run_pocket=True,  # fpocket likely unavailable on Colab -- fine, informational only (PLAN.md §20)
-    run_dock=True,
-    run_complex_md=False,  # needs ambertools + openff-toolkit -- Part B, below
+    run_pocket=False,  # fpocket, Vina and the OpenFF stack are conda-only: Part B
+    run_dock=False,
+    run_complex_md=False,
     force_refresh=True,
 )
 
@@ -164,84 +154,65 @@ for row in build_report_table(db_path):
 
 # %% [markdown]
 # ---
-# ## Part B: real protein+ligand complex MD -- needs conda, restarts Colab
-# (Written for the GAFF2/AMBER path; since PLAN.md §43 complex MD needs openff-nagl instead
-# of ambertools. Not re-verified on Colab yet: PLAN.md §43 K.5.)
+# ## Part B: docking and complex MD in the repo's validation env
+#
+# Run Part A completely first. Miniforge goes into its own prefix (`/opt/conda`), never over
+# Colab's Python, and `make env-validation` builds the env from
+# `environment-validation.lock.txt`: exact URLs, no solving, then plip, meeko and Open Babel
+# from pip in exercise 4's order, and this package with its `validate` extra. The first run
+# downloads about 1 GB (NAGL brings PyTorch). `condacolab` is not used: it restarts the
+# runtime, and outside a notebook cell it crashes.
 #
 # **Note: the report carries only complex MD's status.** `build_report_table`'s rows have a
 # `complex_md_simulation_status` column (`pass`, `fail` or `not_run`), but not the full
-# assessment `modeling`/`md_simulation`/`docking` get. Part B's last cell below also reads
-# the whole `complex_md_simulation` result (failure mode, notes) from
+# assessment `modeling`/`md_simulation`/`docking` get. The last cell below also reads the
+# whole `complex_md_simulation` result (failure mode, notes) from
 # `core.validation_store.load_validation_results`.
-#
-# Run Part A completely first. `openff-toolkit` and `ambertools` are confirmed (checked
-# live via `pip index versions openff-toolkit`/`ambertools`, both still return "No
-# matching distribution") to have no pip release anywhere -- `condacolab` is the only way
-# to get them on Colab. Its `install()` call **force-restarts the runtime** -- run the
-# next cell ALONE, wait for the restart, then continue with the cells after it in a NEW
-# cell execution (variables from Part A are gone; the sqlite db and MD-relaxed structure
-# file on disk are NOT -- they're just files, unaffected by the Python-environment swap
-# condacolab performs).
-
-# %%
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "condacolab"], check=False)
-import condacolab
-
-condacolab.install()  # <-- kernel restarts here; continue below in a NEW cell after it comes back
-
-# %% [markdown]
-# ### Part B, after the restart: rebuild the conda stack + re-run just complex_md
-#
-# Incrementally, per this repo's own README ("Build incrementally, not via
-# `environment-validation.yml`'s one-shot solve" -- a full one-shot solve has OOM-killed
-# a 15 GB machine before; Colab's RAM is smaller). `force_refresh=False` below on
-# purpose: `md_simulation`/`docking` are already persisted from Part A and will be
-# reused as-is, not recomputed -- only `complex_md_simulation` (never run yet) executes
-# for real.
-
-# %%
-import subprocess
-import sys
-from pathlib import Path
-
-subprocess.run(["conda", "install", "-c", "conda-forge", "openmm", "rdkit", "-y"], check=False)
-subprocess.run(
-    ["conda", "install", "-c", "conda-forge", "pdbfixer", "openmmforcefields", "openff-toolkit", "-y"],
-    check=False,
-)
-subprocess.run(["conda", "install", "-c", "conda-forge", "vina", "plip", "openbabel", "-y"], check=False)
-subprocess.run(
-    ["conda", "install", "-c", "conda-forge", "fpocket", "meeko", "ambertools", "-y", "--freeze-installed"],
-    check=False,
-)
-
-REPO_DIR = Path("protein-selector")
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e", str(REPO_DIR)], check=False)
 
 # %%
 import os
+import urllib.request
 
-os.chdir(REPO_DIR)
-
-import yaml
-
-from protein_selector.pipelines.single_pdb_pipeline import validate_single_pdb
-
-PDB_ID = "2PK4"
-db_path = Path("colab_run/protein_selector_colab_test.db")  # same file Part A wrote to -- survived the restart
-config_path = Path("workflow/config.yaml")
-config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
-
-validate_single_pdb(
-    PDB_ID,
-    db_path,
-    config,
-    run_md=True,
-    run_pocket=True,
-    run_dock=True,  # required alongside run_complex_md -- see stages/validate_one.py: `if run_complex_md and run_dock`
-    run_complex_md=True,
-    force_refresh=False,  # reuse Part A's already-persisted MD/dock results; only compute complex_md
+CONDA_PREFIX_DIR = Path("/opt/conda")
+VALIDATION_ENV = CONDA_PREFIX_DIR / "envs" / "psval"
+MINIFORGE_URL = (
+    "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
 )
+
+if not CONDA_PREFIX_DIR.exists():
+    installer = Path("/tmp/miniforge.sh")
+    urllib.request.urlretrieve(MINIFORGE_URL, installer)
+    subprocess.run(["bash", str(installer), "-b", "-p", str(CONDA_PREFIX_DIR)], check=True)
+
+conda_path = f"{CONDA_PREFIX_DIR / 'bin'}:{os.environ['PATH']}"
+if not VALIDATION_ENV.exists():
+    subprocess.run(
+        ["make", "env-validation", f"VALIDATION_ENV={VALIDATION_ENV}"],
+        env={**os.environ, "PATH": conda_path}, check=True,
+    )
+print(f"validation env: {VALIDATION_ENV}")
+
+# %% [markdown]
+# ### Part B, cell 2: pocket, docking and complex MD for 2PK4
+#
+# The same `scripts/validate_one.py` a local run uses, under the validation env's Python,
+# with that env's `bin` first on PATH so `obabel` and `fpocket` resolve to its copies.
+# Without `--force-refresh`, Part A's metadata and apo MD are reused from the db and only
+# pocket, docking and complex MD run. Colab's `PYTHONPATH` and `MPLBACKEND` are dropped:
+# the first puts Colab's packages on the conda Python's path, the second names a
+# matplotlib backend the conda env does not have.
+
+# %%
+env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+env["MPLBACKEND"] = "Agg"
+env["PATH"] = f"{VALIDATION_ENV / 'bin'}:{env['PATH']}"
+proc = subprocess.run(
+    [str(VALIDATION_ENV / "bin" / "python"), "scripts/validate_one.py", PDB_ID,
+     "--db-path", str(db_path), "--complex-md"],
+    env=env, capture_output=True, text=True,
+)
+print("\n".join(proc.stderr.strip().splitlines()[-25:]))
+print(f"validate_one.py exit code: {proc.returncode}")
 
 # %%
 import dataclasses
