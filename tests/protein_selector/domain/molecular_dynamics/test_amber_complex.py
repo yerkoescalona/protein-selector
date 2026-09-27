@@ -64,15 +64,26 @@ class TestForceFieldPairing:
 class TestEarlyExits:
     def test_no_docking_target_is_a_completeness_failure(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            amber_complex, "resolve_docking_target", lambda pdb_id, db: (None, [], None)
+            amber_complex, "resolve_docking_target", lambda pdb_id, db, complete_only=False: (None, [], None)
         )
         result = amber_complex.run_complex_md_validation("1ABC", tmp_path / "store.db")
         assert result.status == ValidationStatus.FAILURE
         assert result.failure_mode == FailureMode.COMPLETENESS
 
+    def test_asks_for_a_completely_modelled_ligand(self, tmp_path, monkeypatch):
+        asked = {}
+
+        def resolve(pdb_id, db, complete_only=False):
+            asked["complete_only"] = complete_only
+            return None, [], None
+
+        monkeypatch.setattr(amber_complex, "resolve_docking_target", resolve)
+        amber_complex.run_complex_md_validation("1ABC", tmp_path / "store.db")
+        assert asked["complete_only"] is True
+
     def test_missing_conda_stack_raises_with_an_install_hint(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            amber_complex, "resolve_docking_target", lambda pdb_id, db: (_Target(), [], None)
+            amber_complex, "resolve_docking_target", lambda pdb_id, db, complete_only=False: (_Target(), [], None)
         )
         monkeypatch.setitem(sys.modules, "openmmforcefields.generators", None)
         with pytest.raises(ImportError, match="openff-nagl"):
@@ -82,7 +93,7 @@ class TestEarlyExits:
         _install_fake_openmm_stack(monkeypatch)
         monkeypatch.setattr(amber_complex, "require_complex_md_stack", lambda: None)
         monkeypatch.setattr(
-            amber_complex, "resolve_docking_target", lambda pdb_id, db: (_Target(), [], None)
+            amber_complex, "resolve_docking_target", lambda pdb_id, db, complete_only=False: (_Target(), [], None)
         )
         monkeypatch.setattr(amber_complex, "fetch_smiles_for_ccd_codes", lambda codes: {})
         result = amber_complex.run_complex_md_validation("1ABC", tmp_path / "store.db")
@@ -186,10 +197,12 @@ class TestSystemBuild:
         ligand = types.SimpleNamespace(
             assign_partial_charges=lambda model: calls.setdefault("charge_model", model),
             conformers=[types.SimpleNamespace(to_openmm=lambda: [])],
+            total_charge=types.SimpleNamespace(m=-1.0),
         )
+        monkeypatch.setattr(amber_complex, "ph7_smiles", lambda smiles: calls.setdefault("ph7", smiles))
         monkeypatch.setattr(amber_complex, "require_complex_md_stack", lambda: None)
         monkeypatch.setattr(
-            amber_complex, "resolve_docking_target", lambda pdb_id, db: (_Target(), [], None)
+            amber_complex, "resolve_docking_target", lambda pdb_id, db, complete_only=False: (_Target(), [], None)
         )
         monkeypatch.setattr(amber_complex, "fetch_smiles_for_ccd_codes", lambda codes: {"GSH": "C"})
         monkeypatch.setattr(amber_complex, "_crystal_pose_ligand_molecule", lambda block, smiles: ligand)
@@ -200,6 +213,7 @@ class TestSystemBuild:
     def test_create_system_gets_ex03s_settings(self, calls):
         with pytest.raises(_Stop):
             amber_complex.run_complex_md_validation("1ABC", calls["db"])
+        assert calls["ph7"] == "C"  # the SMILES is protonated before the ligand is built
         assert calls["forcefield_files"] == ("amber14-all.xml", "amber14/tip3p.xml")
         assert calls["ligand_forcefield"] == "openff-2.3.0"
         assert calls["charge_model"] == "openff-gnn-am1bcc-1.0.0.pt"
@@ -220,3 +234,34 @@ class TestSystemBuild:
         with pytest.raises(_Stop):
             amber_complex.run_complex_md_validation("1ABC", calls["db"])
         assert calls["properties"] == {}
+
+
+class TestPh7Smiles:
+    """Dimorphite-DL is replaced by a fake returning a fixed state; the RDKit pass is real."""
+
+    @pytest.fixture
+    def dimorphite(self, monkeypatch):
+        pytest.importorskip("rdkit")
+        module = types.ModuleType("dimorphite_dl")
+        answer = {}
+        setattr(module, "protonate_smiles", lambda smiles, **kwargs: [answer.get("state", smiles)])
+        monkeypatch.setitem(sys.modules, "dimorphite_dl", module)
+        return answer
+
+    def test_a_phosphorothioate_proton_dimorphite_leaves_is_removed(self, dimorphite):
+        from rdkit import Chem
+
+        result = amber_complex.ph7_smiles("COP(O)(=S)OC")
+        assert Chem.GetFormalCharge(Chem.MolFromSmiles(result)) == -1
+        assert not Chem.MolFromSmiles(result).HasSubstructMatch(
+            Chem.MolFromSmarts(amber_complex._PHOSPHORUS_ACID_H)
+        )
+
+    def test_dimorphites_state_is_kept_when_nothing_is_left(self, dimorphite):
+        from rdkit import Chem
+
+        dimorphite["state"] = "[NH3+]CCC(=O)[O-]"
+        result = amber_complex.ph7_smiles("NCCC(=O)O")
+        assert Chem.MolToSmiles(Chem.MolFromSmiles(result)) == Chem.MolToSmiles(
+            Chem.MolFromSmiles("[NH3+]CCC(=O)[O-]")
+        )

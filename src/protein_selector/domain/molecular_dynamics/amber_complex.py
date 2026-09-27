@@ -2,10 +2,11 @@
 
 Receptor on AMBER ff14SB, ligand on OpenFF Sage 2.3.0 with its own NAGL charges, solvated
 in TIP3P with PME: the combination Sage 2.3.0 was validated in, and the one the ex03
-notebook runs. Supersedes §24's GAFF2/AM1-BCC-in-vacuum setup. Distinct from
+notebook runs. The ligand is protonated for pH 7 first, as exercise 3's is. Supersedes §24's GAFF2/AM1-BCC-in-vacuum setup. Distinct from
 ``openmm_md.py`` (apo protein only) -- requires ``md_simulation`` (ex03) and ``docking``
 (ex04) to have already succeeded for a candidate. Needs the validation conda environment
-(``openmm``, ``openmmforcefields``, ``openff-toolkit``, ``openff-nagl``, ``rdkit``), lazily
+(``openmm``, ``openmmforcefields``, ``openff-toolkit``, ``openff-nagl``, ``rdkit``,
+``dimorphite_dl``), lazily
 imported inside the one function that needs them.
 """
 
@@ -45,6 +46,11 @@ _DEFAULT_MAX_MINIMIZATION_ITERATIONS = 0
 _MAX_SANE_COORDINATE_ANGSTROM = 10_000.0  # same sanity bound as md_validation.py, same
 # real reason (a finite-but-blown-up structure is not caught by a NaN check alone).
 _VELOCITY_CHECKPOINTS = 100  # states kept during stepping, to name the atom that blew up
+_PH = 7.0
+# A P-OH (or P-SH) on a phosphorus oxyacid. Their first pKa is below 3, so at pH 7 none keeps
+# its proton; Dimorphite-DL has rules for phosphates and phosphonates but not, for one,
+# phosphorothioates.
+_PHOSPHORUS_ACID_H = "[PX4;$(P=[O,S])][OX2H1,SX2H1]"
 _INSTALL_HINT = (
     "install them via the validation conda environment (`make env-validation`), not pip."
 )
@@ -64,13 +70,16 @@ def require_complex_md_stack() -> None:
     list is one ``assign_partial_charges`` refuses.
     """
     try:
-        for name in ("openmm", "openmmforcefields.generators", "openff.toolkit", "openff.nagl"):
+        for name in (
+            "openmm", "openmmforcefields.generators", "openff.toolkit", "openff.nagl",
+            "dimorphite_dl",
+        ):
             importlib.import_module(name)
         nagl_models = importlib.import_module("openff.nagl_models")
     except (ImportError, OSError) as exc:  # OSError: torch's shared libraries fail to load
         raise ImportError(
-            "complex MD requires openmm, openmmforcefields, openff-toolkit, openff-nagl and "
-            f"openff-nagl-models; {_INSTALL_HINT}"
+            "complex MD requires openmm, openmmforcefields, openff-toolkit, openff-nagl, "
+            f"openff-nagl-models and dimorphite_dl; {_INSTALL_HINT}"
         ) from exc
     available = {Path(str(path)).name for path in nagl_models.list_available_nagl_models()}
     if _LIGAND_CHARGE_MODEL not in available:
@@ -87,6 +96,30 @@ def complex_relaxed_structure_path(pdb_id: str, ccd_code: str, base_dir: Path = 
     Written only on a real ``SUCCESS`` (same discipline as ``md_validation.relaxed_structure_path``).
     """
     return ligand_dir(pdb_id, ccd_code, base_dir) / f"{pdb_id}_{ccd_code}_complex_relaxed.pdb"
+
+
+def ph7_smiles(smiles: str) -> str:
+    """The protonation state ``smiles`` takes at pH 7, the way exercise 3 prepares its ligand.
+
+    The chemical component dictionary writes acids neutral. Dimorphite-DL assigns each
+    ionisable group its state from the group's typical pKa (``precision=0``: one state, no
+    enumeration around the pKa); any phosphorus-acid proton it has no rule for is removed
+    after. Left neutral, a phosphate's P-OH proton can collapse onto its geminal oxygen at
+    a 4 fs step (PLAN.md §43).
+    """
+    from dimorphite_dl import protonate_smiles  # ty: ignore[unresolved-import]
+    from rdkit import Chem
+
+    states = protonate_smiles(smiles, ph_min=_PH, ph_max=_PH, precision=0.0)
+    mol = Chem.MolFromSmiles(states[0] if states else smiles)
+    if mol is None:
+        raise ValueError(f"no pH {_PH:g} state could be built for SMILES {smiles!r}")
+    for _phosphorus, acid_atom in mol.GetSubstructMatches(Chem.MolFromSmarts(_PHOSPHORUS_ACID_H)):
+        atom = mol.GetAtomWithIdx(acid_atom)
+        atom.SetFormalCharge(-1)
+        atom.SetNumExplicitHs(0)
+    Chem.SanitizeMol(mol)
+    return Chem.MolToSmiles(mol)
 
 
 def _crystal_pose_ligand_molecule(native_ligand_block: str, smiles: str):
@@ -203,7 +236,7 @@ def run_complex_md_validation(
     ``None`` keeps OpenMM's own default of one thread per core. Raises ``ImportError`` when
     ``require_complex_md_stack`` finds the environment incomplete.
     """
-    target, notes, failure = resolve_docking_target(pdb_id, db_path)
+    target, notes, failure = resolve_docking_target(pdb_id, db_path, complete_only=True)
     if target is None:
         return ValidationResult(
             pdb_id=pdb_id,
@@ -229,7 +262,12 @@ def run_complex_md_validation(
 
     logger.info("🧪 %s: building the ligand from its crystal pose (%s)", pdb_id, target.ccd_code)
     try:
+        smiles = ph7_smiles(smiles)
         off_mol = _crystal_pose_ligand_molecule(target.native_ligand_block, smiles)
+        charge_note = (
+            f"{target.ccd_code} protonated for pH {_PH:g}: net charge "
+            f"{round(off_mol.total_charge.m):+d}"
+        )
         off_mol.assign_partial_charges(_LIGAND_CHARGE_MODEL)
     except IncompleteLigandError as exc:
         logger.warning("❌ %s: %s %s", pdb_id, target.ccd_code, exc)
@@ -314,7 +352,7 @@ def run_complex_md_validation(
             last_good_state = simulation.context.getState(getVelocities=True)
     except Exception as exc:
         logger.warning("❌ %s: complex MD failed to complete: %s", pdb_id, exc)
-        failure_notes = [f"complex MD failed to complete: {exc}"]
+        failure_notes = [f"complex MD failed to complete: {exc}", charge_note]
         if last_good_state is not None:
             fastest = _fastest_atom_note(last_good_state, modeller.topology, unit, last_good_step)
             if fastest is not None:
@@ -387,7 +425,8 @@ def run_complex_md_validation(
         effort_seconds=elapsed,
         notes=[
             f"{n_atoms} atoms (receptor + {target.ccd_code} + TIP3P water), {n_steps} steps "
-            f"at {timestep_fs} fs completed cleanly, final PE {potential_energy:.1f} kJ/mol"
+            f"at {timestep_fs} fs completed cleanly, final PE {potential_energy:.1f} kJ/mol",
+            charge_note,
         ]
         + cap_notes,
     )

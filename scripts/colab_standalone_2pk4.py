@@ -709,6 +709,7 @@ PACKAGES = [
     f"python={CONDA_PYTHON_VERSION}",
     "openmm=8.6.1", "rdkit=2025.09.5", "openmmforcefields=0.16.0", "openff-toolkit=0.19.0",
     "openff-forcefields=2026.09.0", "openff-nagl=0.6.1", "openff-nagl-models=2026.09.0",
+    "dimorphite-dl=2.0.2",
 ]
 CONDA_PYTHON = conda_env("psval", PACKAGES)
 LIGAND_CHARGE_MODEL = "openff-gnn-am1bcc-1.0.0.pt"
@@ -731,8 +732,10 @@ print(probe.stdout.strip() or probe.stderr.strip()[-1500:])
 # ## Part B, cell 2 — complex MD from the real crystal pose, exercise 3's recipe
 #
 # The ligand starts from its **real aligned crystal coordinates**, not a re-embedded
-# conformer and not Vina's predicted pose. Deposited hydrogens are dropped first (the SMILES
-# template is heavy-atom only), `AssignBondOrdersFromTemplate` supplies the bond orders PDB
+# conformer and not Vina's predicted pose. The SMILES is protonated for pH 7 first, as
+# exercise 3 does (Dimorphite-DL, plus any phosphorus-acid proton it has no rule for).
+# Deposited hydrogens are dropped (the SMILES template is heavy-atom only),
+# `AssignBondOrdersFromTemplate` supplies the bond orders PDB
 # format lacks while leaving heavy-atom coordinates untouched, and `AddHs(addCoords=True)`
 # adds hydrogens in place. Then exercise 3's system: `amber14-all.xml` with
 # `amber14/tip3p.xml`, Sage 2.3.0 through `SMIRNOFFTemplateGenerator`, 1 nm of padding, PME
@@ -751,6 +754,7 @@ from pathlib import Path
 import openmm
 import openmm.app as app
 import openmm.unit as unit
+from dimorphite_dl import protonate_smiles
 from openff.toolkit import Molecule
 from openmmforcefields.generators import SMIRNOFFTemplateGenerator
 from rdkit import Chem
@@ -762,7 +766,12 @@ native_ligand_block = Path(m["native_ligand"]).read_text()
 pdb_mol = Chem.MolFromPDBBlock(native_ligand_block, removeHs=True)
 if pdb_mol is None:
     raise SystemExit("RDKit could not parse the aligned native ligand PDB block")
-template = Chem.MolFromSmiles(m["smiles"])
+template = Chem.MolFromSmiles(
+    protonate_smiles(m["smiles"], ph_min=7.0, ph_max=7.0, precision=0.0)[0])
+for _, acid in template.GetSubstructMatches(Chem.MolFromSmarts("[PX4;$(P=[O,S])][OX2H1,SX2H1]")):
+    template.GetAtomWithIdx(acid).SetFormalCharge(-1)  # phosphorus acids: pKa below 3
+    template.GetAtomWithIdx(acid).SetNumExplicitHs(0)
+Chem.SanitizeMol(template)
 if pdb_mol.GetNumHeavyAtoms() < template.GetNumHeavyAtoms():
     raise SystemExit(
         f"crystal ligand has {pdb_mol.GetNumHeavyAtoms()} of {template.GetNumHeavyAtoms()} "
@@ -773,7 +782,8 @@ Chem.SanitizeMol(fixed)
 mol_h = Chem.AddHs(fixed, addCoords=True)
 Chem.SanitizeMol(mol_h)
 off_mol = Molecule.from_rdkit(mol_h, allow_undefined_stereo=True)
-print(f"ligand: {off_mol.n_atoms} atoms; assigning NAGL charges ({m['charge_model']})...", flush=True)
+print(f"ligand: {off_mol.n_atoms} atoms, net charge {Chem.GetFormalCharge(mol_h):+d} at pH 7; "
+      f"assigning NAGL charges ({m['charge_model']})...", flush=True)
 off_mol.assign_partial_charges(m["charge_model"])
 
 

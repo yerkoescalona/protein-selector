@@ -17,7 +17,7 @@ The single-PDB workflow audit that motivated this rebuild is **§22** (new).
 
 Every open item in this file, in one place. Regenerate with `make plan-index`;
 the source of truth is the `- [ ]` boxes in the sections themselves, each
-carrying its own `Done when:` check. **99 open, 86 done.**
+carrying its own `Done when:` check. **97 open, 88 done.**
 
 | Section | Open | Items |
 |---|---|---|
@@ -40,7 +40,6 @@ carrying its own `Done when:` check. **99 open, 86 done.**
 | §40 | 5 | A.1, A.2, A.4, A.6, A.7 |
 | §41 | 3 | B.1, B.2, B.3 |
 | §42 | 7 | C.1, C.2, C.3, C.4, C.5, C.6, C.7 |
-| §43 | 2 | K.7, K.8 |
 
 ## Section map
 
@@ -50,7 +49,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
-| **§43** | **Complex MD on exercise 3's recipe (2026-09-26).** ff14SB, OpenFF Sage 2.3.0 with its NAGL charges, TIP3P, solvated, 4 fs; supersedes §24's GAFF2. Both environments on Python 3.13.15. K.2's re-run: all 11 released candidates pass. Open: K.5-K.8. |
+| **§43** | **Complex MD on exercise 3's recipe (2026-09-26).** ff14SB, OpenFF Sage 2.3.0 with its NAGL charges, TIP3P, solvated, 4 fs; supersedes §24's GAFF2. Both environments on Python 3.13.15. Ligands protonated for pH 7 (K.8), partial ligands skipped (K.7); all 11 released candidates pass. Nothing open. |
 | **§42** | **Ligand context (2026-09-24).** `check_ligand_context`: is the ligand the docking step would pick (the copy `pymol_align` extracts) bonded to anything in `_struct_conn`, or within 4 Å of a metal or a metal-containing group? One row per candidate with a dockable ligand in `ligand_context`. A recorded verdict, never a filter or a ranking input. |
 | **§41** | **Residue numbering (2026-09-24).** `check_numbering`: does the structure number every residue as UniProt does, the residues PDBFixer would rebuild included? SIFTS' residue-level map, three rules per chain, one row per candidate in `residue_numbering`. A recorded verdict, never a filter or a ranking input. |
 | **§40** | **Sequence relatives (2026-09-23).** `align_relatives`: the candidate's UniProt chain searched with phmmer against Swiss-Prot, full-length hits aligned with FAMSA, grouped at 95%, one row per candidate in `sequence_relatives`. A recorded annotation like the literature count: no validator, no filter, no ranking input. |
@@ -3373,11 +3372,11 @@ platform: minutes per candidate, not seconds. The lane stays off by default.
         changed the ligand pick: a partly modelled cofactor (34 of its 48 heavy atoms)
         became the largest dockable ligand, and its crystal block cannot match the SMILES
         template. Forced to the previously picked ligand, that candidate passes the new
-        recipe. K.7 tracks the pick.
+        recipe. K.7 now makes complex MD pick it.
 
       Two released candidates, 1ORE (AMP) and 1A9T (R1P), carry the same neutral phosphate
       from their CCD SMILES and passed one unseeded run each; one run is not evidence of
-      robustness. K.8 tracks the protonation.
+      robustness. K.8 now protonates them for pH 7.
 - [x] **K.3** Drop the glibc tunable: the 3.13.15 env's pytorch 2.10.0 imports on glibc 2.41
       without it (2026-09-26).
 - [x] **K.4** `ambertools` is no longer requested. Complex MD calls neither `antechamber`
@@ -3405,16 +3404,27 @@ platform: minutes per candidate, not seconds. The lane stays off by default.
       "importing Biopython from inside the source tree" during `make test`. Harmless, and now
       filtered in `pyproject.toml`'s pytest config by message: naming its category would
       import Biopython, and so warn, before the filter is installed.
-- [ ] **K.7** The ligand pick (`pick_largest_organic_ligand`, through `resolve_docking_target`)
-      can choose a partly modelled native ligand, which then fails parameterisation (K.2).
-      `amber_complex.py` now names the cause in its note. *Done when:* the pick skips a
-      ligand whose crystal block has fewer heavy atoms than its SMILES, or the lecturer
-      decides against it; the change would move targets, including frozen ones, so it needs
-      that decision first.
-- [ ] **K.8** Acidic phosphates (and carboxylates) arrive neutral from the CCD SMILES and are
-      charged that way; at 4 fs a P-OH proton can collapse and blow the run up (K.2).
-      *Done when:* the lecturer decides whether exercise 3 protonates ligands for pH 7
-      before charging; this validator follows exercise 3 either way.
+- [x] **K.7** (2026-09-27) Complex MD no longer takes a ligand the crystal models only in
+      part. `resolve_docking_target(..., complete_only=True)`, which complex MD and its node
+      use, passes over a ligand whose extracted copy (PyMOL's `byres first`, counted by
+      atom name) has fewer heavy atoms than its SMILES and takes the largest complete one.
+      Docking keeps its pick: obabel docks a partial ligand from its crystal coordinates
+      without trouble, and 14 docked candidates would otherwise have lost their target.
+      Measured over the 258 candidates with a docking success: 15 have a partial largest
+      ligand, none of them a released W2026 candidate. Two gain a complete one, K.2's
+      partly modelled cofactor among them (it passed when forced); the rest now fail at the
+      pick, with a note naming the ligand and its modelled count, instead of inside RDKit.
+- [x] **K.8** (2026-09-27, lecturer's decision: every ligand at pH 7) The ligand is protonated
+      for pH 7 before its charges, in exercise 3 and here alike. `ph7_smiles` runs
+      Dimorphite-DL 2.0.2 (`ph_min=ph_max=7.0, precision=0.0`: one state from each group's
+      typical pKa) and then removes any phosphorus-acid proton it has no rule for (a
+      phosphorothioate keeps its P-OH otherwise; those acids have a pKa below 3). The note
+      records the net charge. Dimorphite-DL comes from pip in the validation env; it requires
+      RDKit before 2026, which is why exercise 3's OpenFF env moved to `rdkit=2025.09.5`.
+      Re-run at 2500 steps and 4 fs: all 11 released W2026 candidates pass, five of them with
+      phosphates now at -1 or -2, and both of K.2's phosphate blow-ups pass. The cost: AshGC
+      deviates most from AM1-BCC for negatively charged molecules (Wang et al. 2026), which
+      now covers most course ligands.
 - [x] **K.9** (2026-09-27) Follow-ups from the 2026-09-26 review of §43, all applied:
       - `make env-validation` now ends in `make env-validation-pip`, which also installs this
         package editable with its `validate` extra (PyMOL) and the `ray` group. A fresh env

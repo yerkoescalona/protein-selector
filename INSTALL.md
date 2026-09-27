@@ -60,7 +60,8 @@ make env-validation VALIDATION_ENV=/path/to/env        # elsewhere
 packages. It is **linux-64 only**: on another platform use the resolving path below. The
 rest comes from pip afterwards, in `make env-validation-pip`, which both make targets run:
 
-- `plip`, `meeko`, `gemmi` and `wheel` (vina declares it), then `openbabel-wheel` in a second
+- `plip`, `meeko`, `gemmi`, `wheel` (vina declares it) and `dimorphite_dl` (pH 7 protonation
+  of the ligand before its charges, as exercise 3 does), then `openbabel-wheel` in a second
   call, as the ex04 notebook installs them on Colab. On Python 3.13 conda-forge cannot
   co-install them (plip's openbabel and lxml disagree on libxml2; meeko 0.7.1 needs prody,
   which has no 3.13 build). plip pulls the `openbabel` wheel into the same package

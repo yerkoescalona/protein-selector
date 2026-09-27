@@ -8,7 +8,7 @@ VALIDATION_ENV ?= $(HOME)/miniconda3/envs/protein-selector-validation-py313
 # lockfile cannot record it (environment-validation.yml's pip block, PLAN.md §43).
 # openbabel-wheel goes in a second call, as in ex04: plip pulls the `openbabel` wheel into
 # the same package directory, and the one installed last is the one that imports.
-VALIDATION_PIP      := plip==3.0.1 meeko==0.7.1 gemmi==0.7.5 wheel==0.48.0
+VALIDATION_PIP      := plip==3.0.1 meeko==0.7.1 gemmi==0.7.5 wheel==0.48.0 dimorphite_dl==2.0.2
 VALIDATION_PIP_LAST := openbabel-wheel==3.1.1.23
 DEMO_DB        ?= demo/demo_run.db
 CALIBRATION_DB  ?= cache/protein_selector.db

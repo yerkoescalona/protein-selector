@@ -204,8 +204,8 @@ _CONDA_ROOT_CANDIDATES = [
 # env contains cannot be done by importing here -- this process is a different Python.
 _CONDA_PROBE = """
 import json, shutil, sys
-mods = ["openff.toolkit", "openff.nagl", "openff.nagl_models", "pdbfixer", "openmm",
-        "rdkit", "parmed", "vina", "plip", "openbabel", "meeko"]
+mods = ["openff.toolkit", "openff.nagl", "openff.nagl_models", "dimorphite_dl", "pdbfixer",
+        "openmm", "rdkit", "parmed", "vina", "plip", "openbabel", "meeko"]
 found = {}
 for m in mods:
     try:

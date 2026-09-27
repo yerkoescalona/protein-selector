@@ -111,6 +111,7 @@ dependencies:
       - meeko==0.7.1
       - gemmi==0.7.5
       - wheel==0.48.0  # vina 1.2.7 declares it; pip check fails without it
+      - dimorphite_dl==2.0.2  # pH 7 protonation before charging, as exercise 3 does
       - openbabel-wheel==3.1.1.23
   # ambertools is no longer listed (PLAN.md §43): its only consumer in this repo was the
   # complex-MD stage's AM1-BCC charges through `sqm`, which NAGL replaced. It still arrives
