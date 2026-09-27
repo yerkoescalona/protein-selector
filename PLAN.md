@@ -13,17 +13,17 @@ The single-PDB workflow audit that motivated this rebuild is **§22** (new).
 
 ---
 
-## Open work (generated 2026-09-25)
+## Open work (generated 2026-09-27)
 
 Every open item in this file, in one place. Regenerate with `make plan-index`;
 the source of truth is the `- [ ]` boxes in the sections themselves, each
-carrying its own `Done when:` check. **97 open, 79 done.**
+carrying its own `Done when:` check. **100 open, 85 done.**
 
 | Section | Open | Items |
 |---|---|---|
 | §17 | 1 | Docking NOT yet live-verified since §20's box change |
 | §22 | 6 | Wire `force_refresh` through the Snakemake scripts., Investigate checkpoint `--forcerun` staleness (§22.3)., MD false-positive stability (§18)., Decide the PLIP gate., Live re-verification debt (§20, §17g)., Per-domain `CONTEXT.md` (ICM Layer 2). |
-| §25 | 8 | `core/db.py`, `molecular_dynamics/complex_md_validation.py` has no test file at all, The remaining ~14 thin stage wrappers, Coverage tooling, `store.py` upsert boilerplate., One layering inversion., `scripts/colab_standalone_2pk4.py` (844 lines), Emoji-prefixed log messages |
+| §25 | 8 | `core/db.py`, `molecular_dynamics/amber_complex.py`'s run path is untested, The remaining ~14 thin stage wrappers, Coverage tooling, `store.py` upsert boilerplate., One layering inversion., `scripts/colab_standalone_2pk4.py` (844 lines), Emoji-prefixed log messages |
 | §27 | 20 | W1.3, W2.4, W5.1, S2.1, S2.2, S2.3, S2.4, S2.5, S4.1, S4.2, S4.3, S4.4, S6.1, S6.2, S6.3, W4.1, W4.2, W4.3, W4.4, W4.5 |
 | §28 | 6 | B.5, B.6, C.2, C.3, C.5, D.2 |
 | §29 | 10 | O.1, O.2, O.3, O.4, O.5, S.1, S.2, S.3, S.4, S.5 |
@@ -40,6 +40,7 @@ carrying its own `Done when:` check. **97 open, 79 done.**
 | §40 | 5 | A.1, A.2, A.4, A.6, A.7 |
 | §41 | 3 | B.1, B.2, B.3 |
 | §42 | 7 | C.1, C.2, C.3, C.4, C.5, C.6, C.7 |
+| §43 | 3 | K.5, K.7, K.8 |
 
 ## Section map
 
@@ -49,6 +50,7 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 
 | Where | What |
 |---|---|
+| **§43** | **Complex MD on exercise 3's recipe (2026-09-26).** ff14SB, OpenFF Sage 2.3.0 with its NAGL charges, TIP3P, solvated, 4 fs; supersedes §24's GAFF2. Both environments on Python 3.13.15. K.2's re-run: all 11 released candidates pass. Open: K.5-K.8. |
 | **§42** | **Ligand context (2026-09-24).** `check_ligand_context`: is the ligand the docking step would pick (the copy `pymol_align` extracts) bonded to anything in `_struct_conn`, or within 4 Å of a metal or a metal-containing group? One row per candidate with a dockable ligand in `ligand_context`. A recorded verdict, never a filter or a ranking input. |
 | **§41** | **Residue numbering (2026-09-24).** `check_numbering`: does the structure number every residue as UniProt does, the residues PDBFixer would rebuild included? SIFTS' residue-level map, three rules per chain, one row per candidate in `residue_numbering`. A recorded verdict, never a filter or a ranking input. |
 | **§40** | **Sequence relatives (2026-09-23).** `align_relatives`: the candidate's UniProt chain searched with phmmer against Swiss-Prot, full-length hits aligned with FAMSA, grouped at 95%, one row per candidate in `sequence_relatives`. A recorded annotation like the literature count: no validator, no filter, no ranking input. |
@@ -70,7 +72,8 @@ them: `grep -c '^- \[ \]' PLAN.md` (open) and `grep -c '^- \[x\]' PLAN.md` (done
 | §22a | Open items from the 2026-07-20 single-PDB audit — `force_refresh` wiring, the PLIP gate decision, live re-verification debt. |
 | §25b, §25f, §25g | Presentation cleanup: loose files, test gaps, optional refactors. |
 | §26 | Why adoption is the framing, and findings F1–F10. |
-| §1–§21, §23, §24 | Design rationale and shipped decisions. Reference material, not work. |
+| §1–§21, §23 | Design rationale and shipped decisions. Reference material, not work. |
+| §24 | Superseded by §43: GAFF2/AM1-BCC complex MD in vacuum. Its crystal-pose and single-residue reasoning still holds. |
 
 Section numbers are **never** reused or renumbered — 168 `§N` citations in `src/`,
 `.claude/CLAUDE.md`, `CONTEXT.md`, `docs/` and `scripts/` resolve against them (§25d).
@@ -560,6 +563,10 @@ similarity ranking.
 
 ## 24. Complex MD (GAFF2/AMBER receptor+ligand) — the section §23a should have been
 
+> **Superseded by §43 (2026-09-26).** The ligand is now parametrised with OpenFF Sage
+> 2.3.0 and its NAGL charges, in solvated TIP3P, as ex03 runs it. The crystal-pose and
+> single-residue reasoning below still holds; the GAFF2/AM1-BCC choice does not.
+
 `README.md` and `.claude/CLAUDE.md` both cite "PLAN.md §23a" for the GAFF2/AMBER
 receptor+ligand complex-MD stage. That section was never written, and §23 is an unrelated
 proposal (RDKit analog re-docking), so the citation resolved to the wrong topic. This
@@ -721,11 +728,14 @@ doc describing each `run_<stage>_stage` as "independently testable". Ranked by r
       flag gating its own stage, config values flowing into the per-stage dataclasses.
 - [ ] **`core/db.py`** — still untested directly; multi-table schema creation has only
       incidental coverage through each domain's store tests.
-- [ ] **`molecular_dynamics/complex_md_validation.py` has no test file at all** — found by
-      task S1.4 while testing **A12** (§27b, 2026-08-23), not previously flagged here.
-      `vina_docking.py`/`plip_analysis.py` at least have mocked-real-call tests; this module
-      has zero. *Done when:* a `test_complex_md_validation.py` exists, mocking the conda-only
-      calls the same way `test_vina_docking.py` does.
+- [ ] **`molecular_dynamics/amber_complex.py`'s run path is untested** (the module was
+      `complex_md_validation.py`, with no test file at all, when task S1.4 found this while
+      testing **A12**, §27b, 2026-08-23). Since §43, `test_amber_complex.py` covers the
+      early exits (no docking target, no SMILES), the install hint, the force-field
+      constants, and the arguments `createSystem` receives (PME, cutoff, `HBonds`, hydrogen
+      mass) through faked conda-only modules. Still unexercised: the MD step, a failure
+      mapped to `STABILITY`, a NaN energy, and the relaxed file written without water and
+      ions. *Done when:* those four are mocked the way `test_vina.py` mocks its run path.
 - [ ] **The remaining ~14 thin stage wrappers** (`search_candidates.py`, `docking.py`,
       `md_simulation.py`, `meeko.py`, `pocket_detection.py`, …) — mocked-loader tests in the
       style of the existing `test_docking_candidates.py`, which already demonstrates the
@@ -3254,3 +3264,172 @@ either (49 codes behind); it now equals the Python set, and
       `ligand_context` only considers non-polymer copies. *Done when:* the PyMOL selection
       also excludes polymer residues (`and not polymer`), checked on a real entry, or the
       decision to leave it is recorded.
+
+## 43. Complex MD runs ex03's recipe: Sage 2.3.0, NAGL charges, TIP3P, solvated (2026-09-26)
+
+**User decision, reversing §24's GAFF2/AMBER choice.** The complex-MD validator exists to
+predict whether a candidate survives the exercises, and it was certifying a different
+pipeline from the one ex03 runs.
+
+What `domain/molecular_dynamics/amber_complex.py` now does. It mirrors exercise 3's recipe
+(`ex03/ex03_guide.ipynb` in `structural-bioinformatics-exercises`) as rewritten on that
+repository's development branch, not yet released to students:
+
+- receptor on AMBER ff14SB (`amber14-all.xml`), water `amber14/tip3p.xml`;
+- ligand from its crystal pose, deposited hydrogens dropped before bond orders are
+  assigned from the SMILES template (heavy-atom only, so matching with hydrogens present
+  fails on valence), charges from NAGL `openff-gnn-am1bcc-1.0.0.pt`, parameters from
+  `SMIRNOFFTemplateGenerator(forcefield="openff-2.3.0")`;
+- solvated with 1 nm padding, PME with a 1 nm cutoff, `HBonds`, hydrogen mass 1.5 amu,
+  `LangevinMiddleIntegrator` at 300 K, 1/ps, 4 fs;
+- the relaxed structure is written **without** water and ions, so the file keeps its
+  pre-solvation meaning for downstream readers.
+
+Force fields, charges, solvation and integrator settings match ex03. The rest is the
+selector's own, and differs:
+
+- **protocol**: minimisation, then one NVT run of 2500 steps (10 ps) by default, with no
+  barostat. ex03 minimises, runs 1000 NVT steps, then adds a `MonteCarloBarostat` and runs
+  10000 NPT steps. Pipeline runs take the length and the minimisation cap from
+  `workflow/config.yaml` (`complex_md_n_steps`, `complex_md_max_minimization_iterations`),
+  not from the function defaults;
+- **receptor**: the vacuum-relaxed apo structure from the MD lane with the crystal ligand
+  superposed by `cealign`, where ex03 uses the PDBFixer-repaired crystal structure;
+- **SMILES**: RCSB's `rcsb_chem_comp_descriptor.SMILES`, where ex03 takes the OpenEye
+  `SMILES_CANONICAL` descriptor;
+- **rdkit**: 2025.09.5 (see the environment below), where ex03 pins 2026.03.1.
+
+`openff.py`'s parameterisability check moved from `openff-2.1.0.offxml` to
+`openff-2.3.0.offxml`, whose `NAGLCharges` handler assigns the same charges itself.
+`openmm_md.py` (apo, vacuum) now loads `amber14/tip3p.xml`; it places no water, so this is
+consistency, not behaviour.
+
+**Why these choices.** Wang et al. 2026, *J Chem Theory Comput* 22, 4507-4531
+(10.1021/acs.jctc.6c00169): Sage 2.3.0 was validated with "Amber ff14SB ... either OpenFF
+2.2.1 or 2.3.0 for ligands, and TIP3P with compatible NaCl" in OpenMM (p. 4514); its
+parameters were "co-optimized to TIP3P water, and as such TIP3P is the recommended water
+model" (p. 4509); "we recommend using AshGC exclusively with Sage 2.3.0 ... mixing charge
+backends and parameter sets ... has not been validated and is not recommended" (p. 4525).
+AshGC is the paper's name for the model `openff-2.3.0.offxml` loads as
+`openff-gnn-am1bcc-1.0.0.pt`. TIP3P-FB, which both MD modules loaded before, is OpenMM's
+example default, not a choice made for OpenFF ligands.
+
+**Environment: both halves on Python 3.13.15, Colab's interpreter.** The validation env was
+pinned to 3.12.13, which its own comment called "Google Colab's own interpreter"; Colab has
+since moved to 3.13.15, so the validators were testing a Python students no longer have.
+Rebuilt 2026-09-26 at `~/miniconda3/envs/protein-selector-validation-py313` (the Makefile's
+new default `VALIDATION_ENV`; the 3.12 env is left in place, unused):
+
+- conda-forge: python 3.13.15, openmm 8.6.1, openff-toolkit 0.19.0, openmmforcefields
+  0.16.0, openff-forcefields 2026.09.0, openff-nagl 0.6.1, openff-nagl-models 2026.09.0
+  (the ex03 development notebook's OpenFF pins), pdbfixer 1.12, rdkit 2025.09.5, vina
+  1.2.7, fpocket 4.2.2. rdkit stays at 2025.09.5 because vina 1.2.7 needs boost 1.86, which
+  rules out rdkit 2026.03.x on 3.13.
+- pip, four packages. Two follow ex04, which on Colab installs `plip==3.0.1` and then, in a
+  second pip call, `openbabel-wheel==3.1.1.23` (prebuilt Open Babel plus the `obabel` CLI
+  that `docking/obabel_prep.py` calls). The other two are the selector's own and appear
+  nowhere in ex04: `meeko==0.7.1` for the Meeko parameterisation check
+  (`docking/meeko_ligand.py`) and `gemmi`, a meeko dependency meeko does not declare. On
+  3.13 conda-forge cannot co-install them: plip's openbabel and lxml disagree on libxml2,
+  and meeko 0.7.1 needs prody, which has no 3.13 build. plip 3.0.1 also requires
+  `openbabel>=3.2.0`, which openbabel-wheel does not satisfy, so pip adds an unpinned
+  `openbabel` 3.2.1 wheel whose files overlap openbabel-wheel's (`openbabel/_openbabel.so`,
+  `bin/obabel`): whichever is installed last provides them. In the rebuilt env that is
+  openbabel-wheel (`obabel -V` reports 3.1.0). The lockfile records only the conda half (225
+  packages); `make env-validation` and `env-validation-solve` run the pip step.
+- The uv venv follows: `.python-version` is now `3.13.15`, so the Ray head and drivers match
+  (§37b I.2 was the 3.12.14 / 3.12.13 mismatch). `uv.lock` needed no change; `make check`
+  passes on 3.13.15 (787 passed).
+- pytorch 2.10.0 comes with it and loads natively. The locked pytorch 2.5.1 of the 3.12 env
+  requested an executable stack, which glibc 2.41 (Debian 13, this workstation) refuses
+  (`libtorch_cpu.so: cannot enable executable stack`); `GLIBC_TUNABLES=
+  glibc.rtld.execstack=2` worked around it but is no longer needed and was removed.
+
+**Cost.** The complex now carries tens of thousands of water atoms and runs on the CPU
+platform: minutes per candidate, not seconds. The lane stays off by default.
+
+- [x] **K.1** Validator switched to ex03's recipe, with `test_amber_complex.py` covering the
+      early exits, the install hint, and the force-field pairing it must not drift from.
+- [x] **K.2** (2026-09-26, diagnosed 2026-09-27) Complex MD re-run with the new recipe
+      for every course candidate that passed §24's GAFF2 run, through
+      `run_complex_md_validation`'s defaults (2500 steps at 4 fs, minimisation to
+      convergence); nothing persisted. The GAFF2 rows are not a like-for-like baseline:
+      they came from `workflow/config.yaml`'s 200 steps at 2 fs, in vacuum.
+
+      **All 11 released W2026 candidates pass:** 1B2L, 1HBP, 2F8P, 1A9T, 1DRW, 1GRQ, 1ORE,
+      1RSN, 1STD, 2ATE, 2IYS (24,599 to 128,120 atoms, 103 to 623 s each). **Of the 21
+      further internal candidates, 18 pass and 3 fail:**
+
+      - two `STABILITY` failures ("Particle coordinate is NaN"), one mechanism. The CCD
+        SMILES gives the ligand's diphosphate neutral, so the built ligand carries a P-OH
+        proton. At 4 fs that proton's P-O-H angle swings from step to step until it
+        collapses onto its geminal oxygen (about 0.7 Å; the Sage 2.3.0 1-4 pair between
+        them is still attractive there), takes a force spike of about 10^5 kJ/mol/nm and
+        the run goes NaN within a few steps. Hydrogen mass repartitioning is not the cause.
+        Both pass at 2 fs, and at 4 fs once the diphosphate is deprotonated as at pH 7 (3 of
+        3 and 2 of 2 seeds). One of the two is stochastic: it passes 2 of 6 seeds at 4 fs.
+      - one `PARAMETERIZATION` failure ("No matching found"), not caused by the recipe. The
+        2026-09-24 Meeko recompute (§42a C.4) turned a crashed Meeko row into a pass, which
+        changed the ligand pick: a partly modelled cofactor (34 of its 48 heavy atoms)
+        became the largest dockable ligand, and its crystal block cannot match the SMILES
+        template. Forced to the previously picked ligand, that candidate passes the new
+        recipe. K.7 tracks the pick.
+
+      Two released candidates, 1ORE (AMP) and 1A9T (R1P), carry the same neutral phosphate
+      from their CCD SMILES and passed one unseeded run each; one run is not evidence of
+      robustness. K.8 tracks the protonation.
+- [x] **K.3** Drop the glibc tunable: the 3.13.15 env's pytorch 2.10.0 imports on glibc 2.41
+      without it (2026-09-26).
+- [x] **K.4** `ambertools` is no longer requested. Complex MD calls neither `antechamber`
+      nor `sqm` (NAGL assigns the charges). Removed from `environment-validation.yml` and the
+      Makefile solve. It still arrives in the lockfile (24.8) as a dependency of
+      `openmmforcefields` 0.16.0 (`ambertools >=22,<27`), so switching to
+      `openff-toolkit-base` would not remove it. `scripts/demo_run.py`'s complex-MD gate and
+      `make doctor` now check `openff-nagl` and `openff-nagl-models` instead (K.9).
+- [ ] **K.5** Two Colab scripts still build the GAFF2/AMBER path.
+      `scripts/colab_end_to_end_pipeline.py` Part B `conda install`s ambertools.
+      `scripts/colab_standalone_2pk4.py` Part B inlines GAFF2 with AM1-BCC, TIP3P-FB,
+      `NoCutoff` and 2 fs, pins its conda env to Python 3.12.13 as "Colab's own interpreter",
+      and writes `{pdb}_{ccd}_complex_relaxed.pdb`, the file name the new validator writes.
+      *Done when:* both install the §43 stack (openff-nagl) and run its recipe, and a real
+      Colab run of each Part B passes.
+- [x] **K.6** (2026-09-27) `make env` installs the webapp group, and `dash_bootstrap_components`
+      2.0.4's wheel drops a `pyproject.toml` into `site-packages`, so Biopython warned
+      "importing Biopython from inside the source tree" during `make test`. Harmless, and now
+      filtered in `pyproject.toml`'s pytest config by message: naming its category would
+      import Biopython, and so warn, before the filter is installed.
+- [ ] **K.7** The ligand pick (`pick_largest_organic_ligand`, through `resolve_docking_target`)
+      can choose a partly modelled native ligand, which then fails parameterisation (K.2).
+      `amber_complex.py` now names the cause in its note. *Done when:* the pick skips a
+      ligand whose crystal block has fewer heavy atoms than its SMILES, or the lecturer
+      decides against it; the change would move targets, including frozen ones, so it needs
+      that decision first.
+- [ ] **K.8** Acidic phosphates (and carboxylates) arrive neutral from the CCD SMILES and are
+      charged that way; at 4 fs a P-OH proton can collapse and blow the run up (K.2).
+      *Done when:* the lecturer decides whether exercise 3 protonates ligands for pH 7
+      before charging; this validator follows exercise 3 either way.
+- [x] **K.9** (2026-09-27) Follow-ups from the 2026-09-26 review of §43, all applied:
+      - `make env-validation` now ends in `make env-validation-pip`, which also installs this
+        package editable with its `validate` extra (PyMOL) and the `ray` group. A fresh env
+        built from the lockfile at a scratch prefix imported every module (Ray 2.58.0,
+        PyMOL 3.2.0a0, rcsb-api, pyfamsa, NAGL), `pip check` was clean, and the 210
+        molecular-dynamics and docking tests passed in it. The live -py313 env predates
+        this and still lacks Ray: `make env-validation-pip` brings it level.
+      - plip 3.0.1 requires `openbabel>=3.2.0`, so the duplicate cannot be avoided without
+        diverging from ex04; the pip step now installs `openbabel-wheel` in a second call,
+        as ex04 does, so the same one (3.1.0) imports in both.
+      - Both env targets refuse to run over an existing prefix.
+      - Top-level pip pins are exact (`gemmi==0.7.5`, `wheel==0.48.0` for vina); their
+        transitive dependencies still float, which a conda lockfile cannot record.
+      - The env name is `-py313` in the README, `slurm/run_pipeline.sbatch`, the yml and
+        the two test docstrings. `notebooks/run_real_pipeline.ipynb` keeps its old kernel
+        name, which is a machine registration, not a path.
+      - `workflow/config.yaml` runs complex MD at the validated 2500 steps, minimised to
+        convergence.
+      - `scripts/demo_run.py` and `make doctor` check NAGL (K.4).
+      - OpenMM's CPU platform now gets the thread count Ray reserves, for MD
+        (`md_threads`) and complex MD (`complex_md_threads`), through a `cpu_threads`
+        field on both configs. A real 1UBQ run capped at two threads passed.
+      - `test_amber_complex.py`'s `TestSystemBuild` reaches `createSystem` through recording
+        fakes and pins its arguments (PME, 1 nm cut-off, HBonds, 1.5 amu hydrogens, 1 nm
+        padding, Sage 2.3.0 with the NAGL model) and the `Threads` property.

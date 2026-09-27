@@ -216,9 +216,10 @@ src/protein_selector/
                                  `ligand_id`) + structure_alignment.py (PyMOL `cealign`
                                  wrapper, superposes a candidate's native ligand into the
                                  MD-relaxed receptor's frame, PLAN.md §21) +
-                                 complex_md_validation.py (GAFF2/AMBER receptor+ligand
-                                 complex MD, needs `ambertools` in the conda env, PLAN.md
-                                 §24).
+                                 complex_md_validation.py (now amber_complex.py:
+                                 receptor+ligand complex MD with ex03's recipe -- ff14SB,
+                                 OpenFF Sage 2.3.0 with NAGL charges, solvated TIP3P --
+                                 PLAN.md §43, which supersedes §24's GAFF2/AMBER).
   domain/modeling/                      ex02 validator: alphafold_lookup.py (fetch-only —
                                  `fetch_alphafold_entry` calls the real AlphaFold DB REST
                                  API, live-verified; deliberately never runs a new
